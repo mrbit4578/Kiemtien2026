@@ -28,4 +28,8 @@ services:
       - key: TOKEN_ENCRYPTION_KEY
         generateValue: true
       - key: APP_URL
-        value: https://kiemtien2026-web.vercel.app # domain frontend Vercel (CORS)
+        value: https://kiemtien2026-web.vercel.app
+      # URL công khai của chính backend — dùng để tạo OAuth callback URL
+      # (auth.service.ts: callbackUrl). BẮT BUỘC phải đúng domain Render của service.
+      - key: API_URL
+        value: https://kiemtien2026-api.onrender.com # domain frontend Vercel (CORS)
