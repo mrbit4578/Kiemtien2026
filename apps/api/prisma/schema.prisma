@@ -1,0 +1,261 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Không lưu email đầy đủ — chỉ hash
+model User {
+  id           String    @id @default(cuid())
+  emailHash    String    @unique
+  displayName  String
+  passwordHash String?   // bcrypt hash — null nếu user chỉ dùng OAuth
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  workspaces  WorkspaceMember[]
+  consents    Consent[]
+
+  @@map("users")
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  ownerId   String
+  name      String
+  plan      String   @default("free") // free | pro | team
+  createdAt DateTime @default(now())
+
+  members     WorkspaceMember[]
+  connections Connection[]
+  aiConnections AiConnection[]
+  contentItems ContentItem[]
+  documents   Document[]
+  entities    Entity[]
+  relations   Relation[]
+  communities Community[]
+  jobs        Job[]
+  auditLogs   AuditLog[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        String    @default("member") // owner | admin | member
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@unique([workspaceId, userId])
+  @@map("workspace_members")
+}
+
+// Token luôn mã hóa — KHÔNG lưu plaintext
+model Connection {
+  id                   String    @id @default(cuid())
+  workspaceId          String
+  provider             String    // google | facebook | instagram | tiktok | github
+  providerUserId       String
+  encryptedAccessToken String    // AES-256-GCM
+  encryptedRefreshToken String?
+  expiresAt            DateTime
+  scopesJson           String[]  // Đúng scope đã được consent
+  status               String    @default("active") // active | reauth_required | revoked | error
+  lastError            String?
+  createdAt            DateTime  @default(now())
+
+  workspace    Workspace @relation(fields: [workspaceId], references: [id])
+  jobs         Job[]
+
+  @@unique([workspaceId, provider, providerUserId])
+  @@map("connections")
+}
+
+// Consent PHẢI tồn tại trước khi gọi API bất kỳ
+model Consent {
+  id            String    @id @default(cuid())
+  userId        String
+  provider      String
+  purpose       String
+  scopesJson    String[]
+  policyVersion String    // CURRENT_POLICY_VERSION
+  grantedAt     DateTime  @default(now())
+  revokedAt     DateTime?
+  ipHash        String    // IP hash (không lưu IP đầy đủ)
+
+  user          User      @relation(fields: [userId], references: [id])
+
+  @@map("consents")
+}
+
+// Content item — phải approved trước khi publish
+model ContentItem {
+  id             String   @id @default(cuid())
+  workspaceId    String
+  assetUrl       String?
+  caption        String
+  scheduledAt    DateTime?
+  status         String   @default("draft") // draft | pending_approval | approved | published | failed
+  approvalStatus String   @default("pending") // pending | approved | rejected
+  createdAt      DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  jobs      Job[]
+
+  @@map("content_items")
+}
+
+// Job queue (BullMQ làm scheduler; bảng này là source of truth)
+model Job {
+  id              String   @id @default(cuid())
+  connectionId    String
+  contentItemId   String?
+  idempotencyKey  String   @unique // ngăn duplicate publish
+  attempts        Int      @default(0)
+  status          String   @default("pending") // pending | running | done | failed | dead_letter
+  nextRunAt       DateTime?
+  lastError       String?
+  workspaceId     String
+
+  connection    Connection  @relation(fields: [connectionId], references: [id])
+  contentItem   ContentItem? @relation(fields: [contentItemId], references: [id])
+  workspace     Workspace    @relation(fields: [workspaceId], references: [id])
+
+  @@map("jobs")
+}
+
+// API key của các nền tảng AI (Gemini, OpenAI, xAI, Anthropic, DeepSeek)
+// Key LUÔN mã hóa AES-256-GCM — KHÔNG bao giờ trả về client hay log
+model AiConnection {
+  id          String    @id @default(cuid())
+  workspaceId String
+  provider    String    // gemini | openai | xai | anthropic | deepseek
+  keyCipher   String    // API key đã mã hóa
+  keyHint     String    // 4 ký tự cuối của key — để user nhận diện
+  status      String    @default("active") // active | invalid
+  validatedAt DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, provider])
+  @@map("ai_connections")
+}
+
+// ─── Kho tri thức RAG ─────────────────────────────────────────────────────
+// Tài liệu do user upload để hỏi AI. Embedding lưu ở cột vector(1536) của
+// pgvector — Prisma không map được kiểu này nên đọc/ghi embedding và cột
+// search (tsvector) CHỈ qua raw SQL. Xem migration 2026092102_rag_vector.
+
+model Document {
+  id          String   @id @default(cuid())
+  workspaceId String
+  title       String
+  sourceType  String   // file | url | text
+  sourceUrl   String?
+  mimeType    String?
+  status      String   @default("processing") // processing | ready | failed
+  chunkCount  Int      @default(0)
+  error       String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chunks    Chunk[]
+  entities  Entity[]
+
+  @@map("documents")
+  @@index([workspaceId])
+}
+
+model Chunk {
+  id          String   @id @default(cuid())
+  documentId  String
+  workspaceId String
+  content     String
+  modality    String   @default("text") // text | table | image
+  tokenCount  Int?
+  // Kiểu vector của pgvector — chỉ đọc/ghi qua raw SQL, KHÔNG qua Prisma Client.
+  embedding   Unsupported("vector(1536)")?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("chunks")
+  @@index([workspaceId])
+  @@index([documentId])
+}
+
+// Đồ thị tri thức (GraphRAG) — trích xuất best-effort lúc ingest
+model Entity {
+  id          String   @id @default(cuid())
+  workspaceId String
+  documentId  String?
+  chunkId     String?
+  name        String
+  type        String   // person | org | concept | product | location | ...
+  summary     String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document  Document?  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("entities")
+  @@index([workspaceId])
+}
+
+model Relation {
+  id          String   @id @default(cuid())
+  workspaceId String
+  fromId      String   // Entity.id
+  toId        String   // Entity.id
+  relation    String
+  description String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("relations")
+  @@index([workspaceId])
+}
+
+model Community {
+  id          String   @id @default(cuid())
+  workspaceId String
+  title       String
+  summary     String
+  entityIds   String[]
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("communities")
+  @@index([workspaceId])
+}
+
+// Immutable audit log — KHÔNG chứa secret
+model AuditLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actorId     String
+  action      String   // consent_granted | token_refreshed | content_published | account_deleted ...
+  provider    String?
+  entityType  String?  // connection | content | oauth | user ...
+  targetId    String?  // id của entity liên quan
+  result      String   // success | failure
+  metadata    String?  // JSON đã sanitize (không secret)
+  ipHash      String?  // hash SHA-256 của IP, không lưu IP đầy đủ
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+
+  @@map("audit_logs")
+}

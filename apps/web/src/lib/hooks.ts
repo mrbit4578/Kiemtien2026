@@ -1,0 +1,290 @@
+'use client'
+
+import { useCallback, useEffect, useState } from 'react'
+import { api, ApiError } from './api'
+import type {
+  AnalyticsOverview,
+  ApiConnection,
+  ApiContentItem,
+  PublishQueued,
+  AiProviderMeta,
+  AiConnectionInfo,
+  ChatMessage,
+  ChatResponse,
+  RagDocument,
+  RagQueryBody,
+  RagQueryResult,
+} from './types'
+
+function toMessage(err: unknown): string {
+  return err instanceof ApiError ? err.message : 'Lỗi không xác định.'
+}
+
+/* ─── Analytics ─────────────────────────────────────────────── */
+
+export function useAnalytics() {
+  const [data, setData] = useState<AnalyticsOverview | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setData(await api.get<AnalyticsOverview>('/analytics/overview'))
+    } catch (err) {
+      // 401 đã được api.ts redirect về /settings/connections
+      setError(toMessage(err))
+      setData(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { data, loading, error, refresh }
+}
+
+/* ─── Connections ───────────────────────────────────────────── */
+
+export function useConnections() {
+  const [connections, setConnections] = useState<ApiConnection[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [unauthorized, setUnauthorized] = useState(false)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setConnections(await api.get<ApiConnection[]>('/connections'))
+      setUnauthorized(false)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setUnauthorized(true)
+        setConnections([])
+      } else {
+        setError(toMessage(err))
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  /** Rút quyền: revoke token ở provider + xóa token trong DB (API thật) */
+  const revoke = useCallback(
+    async (id: string) => {
+      await api.post<{ revoked: boolean; id: string }>(`/connections/${id}/revoke`)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  /** Bắt đầu OAuth: chuyển trình duyệt sang backend, backend redirect tiếp sang provider */
+  const connect = useCallback((provider: string) => {
+    window.location.href = api.oauthStartUrl(provider)
+  }, [])
+
+  return { connections, loading, error, unauthorized, refresh, revoke, connect }
+}
+
+/* ─── Content ───────────────────────────────────────────────── */
+
+export interface CreateContentInput {
+  caption: string
+  assetUrl?: string
+  /** ISO datetime string */
+  scheduledAt?: string
+}
+
+export function useContent() {
+  const [items, setItems] = useState<ApiContentItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setItems(await api.get<ApiContentItem[]>('/content'))
+    } catch (err) {
+      setError(toMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  const create = useCallback(
+    async (input: CreateContentInput) => {
+      const item = await api.post<ApiContentItem>('/content', input)
+      await refresh()
+      return item
+    },
+    [refresh],
+  )
+
+  const approve = useCallback(
+    async (id: string, approved: boolean, note?: string) => {
+      await api.post<ApiContentItem>(`/content/${id}/approve`, { approved, note })
+      await refresh()
+    },
+    [refresh],
+  )
+
+  /**
+   * Đẩy vào queue publish. Backend kiểm tra: đã approve + connection active +
+   * consent hợp lệ, rồi tạo Job idempotent (worker BullMQ xử lý tiếp).
+   */
+  const publish = useCallback(
+    async (id: string, connectionId: string) => {
+      const res = await api.post<PublishQueued>(`/content/${id}/publish`, {
+        connectionId,
+      })
+      await refresh()
+      return res
+    },
+    [refresh],
+  )
+
+  return { items, loading, error, refresh, create, approve, publish }
+}
+
+/* ─── AI Pro ─────────────────────────────────────────────────────────────── */
+
+export function useAiProviders() {
+  const [providers, setProviders] = useState<AiProviderMeta[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setProviders(await api.get<AiProviderMeta[]>('/ai/providers'))
+    } catch (err) {
+      setError(toMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { providers, loading, error, refresh }
+}
+
+export function useAiConnections() {
+  const [connections, setConnections] = useState<AiConnectionInfo[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setConnections(await api.get<AiConnectionInfo[]>('/ai/connections'))
+    } catch (err) {
+      setError(toMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  /** Validate key ở backend rồi mã hóa & lưu. Ném ApiError với message thân thiện. */
+  const connect = useCallback(
+    async (provider: string, apiKey: string) => {
+      const res = await api.post<AiConnectionInfo>('/ai/connections', { provider, apiKey })
+      await refresh()
+      return res
+    },
+    [refresh],
+  )
+
+  const remove = useCallback(
+    async (provider: string) => {
+      await api.del(`/ai/connections/${provider}`)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  return { connections, loading, error, refresh, connect, remove }
+}
+
+/** Gửi chat tới provider đã kết nối. */
+export async function sendAiChat(
+  provider: string,
+  messages: ChatMessage[],
+  model?: string,
+): Promise<ChatResponse> {
+  return api.post<ChatResponse>('/ai/chat', { provider, messages, model })
+}
+
+/* ─── RAG / Kho tri thức ───────────────────────────────────────────── */
+
+export function useRagDocuments() {
+  const [documents, setDocuments] = useState<RagDocument[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setDocuments(await api.get<RagDocument[]>('/rag/documents'))
+    } catch (err) {
+      // 401 đã được api.ts redirect về /login
+      setError(toMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { documents, loading, error, refresh }
+}
+
+export type RagUploadInput =
+  | { file: File }
+  | { text: string; title: string }
+  | { url: string; title?: string }
+
+/** Tải tài liệu lên kho tri thức. File → multipart, còn lại → JSON. */
+export async function uploadRagDocument(input: RagUploadInput): Promise<RagDocument> {
+  if ('file' in input) {
+    const form = new FormData()
+    form.append('file', input.file)
+    return api.uploadFile<RagDocument>('/rag/documents', form)
+  }
+  return api.post<RagDocument>('/rag/documents', input)
+}
+
+/** Xóa tài liệu khỏi kho tri thức. */
+export async function deleteRagDocument(id: string): Promise<{ ok: boolean }> {
+  return api.del<{ ok: boolean }>(`/rag/documents/${id}`)
+}
+
+/** Hỏi đáp trên kho tri thức với 1 trong 5 kiến trúc RAG. */
+export async function queryRag(body: RagQueryBody): Promise<RagQueryResult> {
+  return api.post<RagQueryResult>('/rag/query', body)
+}

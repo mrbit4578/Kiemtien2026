@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.local
+.env.production
+*.local
+.next/
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+*.log
+backup_*.sql
+*.pem
+*.key
+.DS_Store
+coverage/

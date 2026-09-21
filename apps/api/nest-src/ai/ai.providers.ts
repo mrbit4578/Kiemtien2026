@@ -1,0 +1,93 @@
+/**
+ * Metadata các nền tảng AI được hỗ trợ cho chế độ "AI Pro".
+ * - `keyUrl`: link chính thức để user tự tạo API key (key của user, không phải của hệ thống).
+ * - `baseUrl` + `kind`: dùng NỘI BỘ ở service để validate key và gọi chat — không expose qua API.
+ */
+export type AiProviderId = 'gemini' | 'openai' | 'xai' | 'anthropic' | 'deepseek'
+
+type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic'
+
+export interface AiProviderMeta {
+  id: AiProviderId
+  /** Tên hiển thị */
+  name: string
+  /** Link chính thức để lấy API key */
+  keyUrl: string
+  /** Models gợi ý */
+  models: string[]
+  defaultModel: string
+  description: string
+  /** @internal — chỉ dùng ở service */
+  baseUrl: string
+  /** @internal — chỉ dùng ở service */
+  kind: ProviderKind
+}
+
+export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
+  {
+    id: 'gemini',
+    name: 'Google Gemini',
+    keyUrl: 'https://aistudio.google.com/apikey',
+    models: ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+    defaultModel: 'gemini-2.0-flash',
+    description: 'Miễn phí hào phóng, tốc độ nhanh, tốt cho tác vụ hàng ngày.',
+    baseUrl: 'https://generativelanguage.googleapis.com',
+    kind: 'gemini',
+  },
+  {
+    id: 'openai',
+    name: 'ChatGPT (OpenAI)',
+    keyUrl: 'https://platform.openai.com/api-keys',
+    models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+    defaultModel: 'gpt-4o-mini',
+    description: 'Chất lượng cao, hệ sinh thái lớn, nhiều model lựa chọn.',
+    baseUrl: 'https://api.openai.com/v1',
+    kind: 'openai-compatible',
+  },
+  {
+    id: 'xai',
+    name: 'Grok (xAI)',
+    keyUrl: 'https://console.x.ai',
+    models: ['grok-3-mini', 'grok-3', 'grok-4'],
+    defaultModel: 'grok-3-mini',
+    description: 'Cập nhật kiến thức nhanh, phong cách trả lời thẳng thắn.',
+    baseUrl: 'https://api.x.ai/v1',
+    kind: 'openai-compatible',
+  },
+  {
+    id: 'anthropic',
+    name: 'Claude (Anthropic)',
+    keyUrl: 'https://console.anthropic.com',
+    models: ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-1'],
+    defaultModel: 'claude-haiku-4-5',
+    description: 'Viết lách và lập luận xuất sắc, context dài.',
+    baseUrl: 'https://api.anthropic.com',
+    kind: 'anthropic',
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    keyUrl: 'https://platform.deepseek.com',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    defaultModel: 'deepseek-chat',
+    description: 'Chi phí thấp, mạnh về code và toán.',
+    baseUrl: 'https://api.deepseek.com/v1',
+    kind: 'openai-compatible',
+  },
+]
+
+export function getProviderMeta(id: string): AiProviderMeta | undefined {
+  return SUPPORTED_PROVIDERS.find((p) => p.id === id)
+}
+
+/** Metadata public trả về cho frontend — KHÔNG chứa baseUrl/kind nội bộ. */
+export function publicProviderMeta() {
+  return SUPPORTED_PROVIDERS.map(({ id, name, keyUrl, models, defaultModel, description }) => ({
+    id,
+    name,
+    keyUrl,
+    models,
+    defaultModel,
+    description,
+  }))
+}
