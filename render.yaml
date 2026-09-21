@@ -1,0 +1,29 @@
+# Render Blueprint — deploy backend API OpenRemoteHub bằng 1 click.
+# Cách dùng: Render Dashboard → New → Blueprint → chọn repo mrbit4578/Kiemtien2026
+# → điền DATABASE_URL (Neon) và REDIS_URL (Upstash) → Apply.
+# SESSION_SECRET và TOKEN_ENCRYPTION_KEY được Render tự sinh ngẫu nhiên.
+services:
+  - type: web
+    name: kiemtien2026-api
+    runtime: node
+    rootDir: .
+    buildCommand: corepack enable && pnpm install && pnpm --filter @orh/api build
+    # Migrate DB trước mỗi lần deploy (idempotent), rồi mới start server.
+    preDeployCommand: pnpm --filter @orh/api exec prisma migrate deploy --schema prisma/schema.prisma
+    startCommand: pnpm --filter @orh/api start
+    healthCheckPath: /rag/strategies
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false # dán connection string Neon (Postgres + pgvector)
+      - key: REDIS_URL
+        sync: false # dán REDIS_URL của Upstash
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: APP_URL
+        value: https://kiemtien2026-web.vercel.app # domain frontend Vercel (CORS)

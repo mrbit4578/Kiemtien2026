@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto'
 
 /**
  * Envelope encryption cho token.
@@ -10,11 +10,17 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
 const ALGORITHM = 'aes-256-gcm'
 
 function getKey(): Buffer {
-  const hex = process.env.TOKEN_ENCRYPTION_KEY
-  if (!hex || hex.length < 64) {
-    throw new Error('TOKEN_ENCRYPTION_KEY must be a 32-byte hex string (64 chars).')
+  const raw = process.env.TOKEN_ENCRYPTION_KEY
+  if (!raw || raw.length < 32) {
+    throw new Error('TOKEN_ENCRYPTION_KEY phải dài ít nhất 32 ký tự.')
   }
-  return Buffer.from(hex, 'hex')
+  // Tương thích ngược: chuỗi hex 64 ký tự (32 bytes) dùng trực tiếp;
+  // mọi chuỗi bí mật khác được dẫn xuất qua SHA-256 → 32 bytes.
+  // Nhờ vậy secret ngẫu nhiên do nền tảng deploy tự sinh vẫn dùng được.
+  if (/^[0-9a-fA-F]{64}$/.test(raw)) {
+    return Buffer.from(raw, 'hex')
+  }
+  return createHash('sha256').update(raw, 'utf8').digest()
 }
 
 export function encrypt(plaintext: string): string {

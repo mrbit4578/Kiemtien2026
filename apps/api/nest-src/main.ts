@@ -11,6 +11,10 @@ async function bootstrap() {
   // Express adapter (mặc định) — khớp với express types dùng trong controllers
   const app = await NestFactory.create(AppModule)
 
+  // Tin tưởng reverse proxy (Railway/Render terminate TLS phía trước) để
+  // cookie `secure` và req.ip hoạt động đúng sau proxy.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1)
+
   // Security headers (thay cho 3 header set thủ công trước đây)
   app.use(helmet())
 
@@ -25,6 +29,7 @@ async function bootstrap() {
     }
     console.warn('[warn] SESSION_SECRET chưa set — dùng secret tạm thời, KHÔNG dùng cho production.')
   }
+  const isProd = process.env.NODE_ENV === 'production'
   app.use(
     session({
       secret: sessionSecret ?? randomBytes(32).toString('hex'),
@@ -32,8 +37,13 @@ async function bootstrap() {
       saveUninitialized: false,
       cookie: {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
+        secure: isProd,
+        // Frontend (Vercel) và backend (Railway/Render) khác domain → request
+        // cross-site, nên production cần SameSite=None (bắt buộc kèm Secure).
+        // Ghi đè bằng SESSION_SAMESITE nếu deploy cùng domain.
+        sameSite:
+          (process.env.SESSION_SAMESITE as 'lax' | 'strict' | 'none' | undefined) ??
+          (isProd ? 'none' : 'lax'),
         maxAge: 30 * 60 * 1000, // 30 phút
       },
     }),
@@ -51,7 +61,8 @@ async function bootstrap() {
     console.warn('[warn] APP_URL chưa set — CORS tắt (fail-closed).')
   }
 
-  const port = Number(process.env.API_PORT ?? 4000)
+  // Railway/Render cấp PORT động; API_PORT dành cho tự host thủ công.
+  const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000)
   await app.listen(port, '0.0.0.0')
   console.log(`API running on :${port}`)
 }
