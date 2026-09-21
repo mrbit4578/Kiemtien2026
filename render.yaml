@@ -7,7 +7,9 @@ services:
     name: kiemtien2026-api
     runtime: node
     rootDir: .
-    buildCommand: corepack enable && pnpm install && pnpm --filter @orh/api build
+    # Ép NODE_ENV=development lúc build để pnpm cài đủ devDependencies
+    # (@types/node, typescript...). Lúc chạy thật Render vẫn dùng NODE_ENV=production.
+    buildCommand: corepack enable && NODE_ENV=development pnpm install && pnpm --filter @orh/api build
     # Migrate DB trước mỗi lần deploy (idempotent), rồi mới start server.
     preDeployCommand: pnpm --filter @orh/api exec prisma migrate deploy --schema prisma/schema.prisma
     startCommand: pnpm --filter @orh/api start
