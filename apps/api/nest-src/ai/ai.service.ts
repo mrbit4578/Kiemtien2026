@@ -344,7 +344,7 @@ export class AiService {
 
   /**
    * Lấy key để tạo embedding: ưu tiên OpenAI (text-embedding-3-small, 1536 dim),
-   * fallback Gemini (gemini-embedding-001, xin 768 dim → zero-pad lên 1536 ở embed()).
+   * fallback Gemini (gemini-embedding-001, 1536 dim).
    * (text-embedding-004 đã bị Google khai tử từ 14/01/2026.)
    * Ném BadRequestException kèm hướng dẫn khi workspace chưa có key nào.
    */
@@ -370,13 +370,13 @@ export class AiService {
       throw new InternalServerErrorException('Lỗi giải mã key: TOKEN_ENCRYPTION_KEY chưa đúng.')
     }
     // KHÔNG log apiKey
-    return { meta, apiKey, dims: meta.id === 'openai' ? 1536 : 768 }
+    return { meta, apiKey, dims: 1536 }
   }
 
   /**
-   * Tạo embedding cho danh sách text. Luôn trả về vector 1536 chiều:
-   * Gemini 768 dim được zero-pad (cosine similarity được bảo toàn vì
-   * cos([a,0],[b,0]) = cos(a,b)).
+   * Tạo embedding cho danh sách text. Luôn trả về vector 1536 chiều.
+   * embedGemini tự chuẩn hoá mọi số chiều trả về (cắt ngắn nếu dài hơn,
+   * zero-pad nếu ngắn hơn) nên tương thích với chunks đã lưu trước đây.
    */
   async embed(workspaceId: string, texts: string[], ip?: string): Promise<number[][]> {
     if (texts.length === 0) return []
@@ -463,8 +463,9 @@ export class AiService {
           requests: texts.map((t) => ({
             model: 'models/gemini-embedding-001',
             content: { parts: [{ text: t }] },
-            // Giữ 768 dim như pipeline cũ (zero-pad lên 1536 ở embed())
-            outputDimensionality: 768,
+            // Xin đúng 1536 dim (model hỗ trợ Matryoshka 128–3072).
+            // Nếu API bỏ qua field này, đoạn chuẩn hoá bên dưới vẫn xử lý được.
+            outputDimensionality: 1536,
           })),
         }),
       },
@@ -478,8 +479,16 @@ export class AiService {
       )
     }
     const data = JSON.parse(text) as { responses?: Array<{ embedding?: { values?: number[] } }> }
-    const vectors = (data.responses ?? []).map((r) => r.embedding?.values ?? [])
-    if (vectors.length !== texts.length || vectors.some((v) => v.length !== 768)) {
+    // Chuẩn hoá mọi vector về đúng 1536 chiều:
+    // - dài hơn → cắt ngắn (an toàn với Matryoshka embedding như gemini-embedding-001)
+    // - ngắn hơn → zero-pad (cosine similarity được bảo toàn)
+    const vectors = (data.responses ?? []).map((r) => {
+      const v = r.embedding?.values ?? []
+      if (v.length === 1536) return v
+      if (v.length > 1536) return v.slice(0, 1536)
+      return [...v, ...new Array(1536 - v.length).fill(0)]
+    })
+    if (vectors.length !== texts.length || vectors.some((v) => v.length !== 1536)) {
       throw new HttpException(
         `Phản hồi embedding từ ${meta.name} không hợp lệ.`,
         HttpStatus.BAD_GATEWAY,
