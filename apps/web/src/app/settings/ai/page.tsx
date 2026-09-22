@@ -28,6 +28,57 @@ const PROVIDER_ACCENT: Record<string, string> = {
   xai: 'from-slate-400 to-slate-600',
   anthropic: 'from-orange-500 to-amber-400',
   deepseek: 'from-violet-500 to-purple-400',
+  experientiallabs: 'from-fuchsia-500 to-pink-400',
+}
+
+/** Code mẫu gọi trực tiếp API (chuẩn OpenAI) bằng key của user — cho tab "Code mẫu". */
+function codeSamples(baseUrl: string, model: string): { label: string; lang: string; code: string }[] {
+  return [
+    {
+      label: 'cURL',
+      lang: 'bash',
+      code: `curl "${baseUrl}/chat/completions" \\
+  -H "Authorization: Bearer $EXPLABS_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hello from my product"}]}'`,
+    },
+    {
+      label: 'Python',
+      lang: 'python',
+      code: `import os, requests
+
+resp = requests.post(
+    "${baseUrl}/chat/completions",
+    headers={
+        "Authorization": f"Bearer {os.environ['EXPLABS_API_KEY']}",
+        "Content-Type": "application/json",
+    },
+    json={
+        "model": "${model}",
+        "messages": [{"role": "user", "content": "Hello from my product"}],
+    },
+    timeout=60,
+)
+print(resp.json()["choices"][0]["message"]["content"])`,
+    },
+    {
+      label: 'JavaScript',
+      lang: 'javascript',
+      code: `const resp = await fetch("${baseUrl}/chat/completions", {
+  method: "POST",
+  headers: {
+    "Authorization": \`Bearer \${process.env.EXPLABS_API_KEY}\`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model: "${model}",
+    messages: [{ role: "user", content: "Hello from my product" }],
+  }),
+});
+const data = await resp.json();
+console.log(data.choices[0].message.content);`,
+    },
+  ]
 }
 
 function KeyModal({
@@ -44,6 +95,10 @@ function KeyModal({
   const [show, setShow] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [tab, setTab] = useState<'key' | 'code'>('key')
+  const [sampleLang, setSampleLang] = useState(0)
+  const [copied, setCopied] = useState(false)
+  const samples = codeSamples('https://api.experientiallabs.ai/v1', provider.defaultModel || 'grok-4.7')
 
   const handleSave = async () => {
     setError(null)
@@ -84,6 +139,55 @@ function KeyModal({
           </button>
         </div>
 
+        <div className="flex gap-1 p-1 rounded-xl bg-dark-950/60 border border-white/10">
+          {(['key', 'code'] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                tab === t ? 'bg-brand-emerald/20 text-brand-emerald' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              {t === 'key' ? 'Nhập key' : 'Code mẫu'}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'code' ? (
+          <div className="space-y-3">
+            <div className="flex gap-1.5">
+              {samples.map((s, i) => (
+                <button
+                  key={s.label}
+                  onClick={() => { setSampleLang(i); setCopied(false) }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                    sampleLang === i
+                      ? 'border-brand-cyan bg-brand-cyan/10 text-white'
+                      : 'border-white/10 text-slate-400 hover:border-white/25'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(samples[sampleLang].code).then(() => setCopied(true)).catch(() => {})
+                }}
+                className="ml-auto px-3 py-1.5 rounded-lg text-xs font-bold border border-white/10 text-slate-300 hover:border-white/25"
+              >
+                {copied ? 'Đã copy ✓' : 'Copy'}
+              </button>
+            </div>
+            <pre className="max-h-64 overflow-auto rounded-xl bg-dark-950/80 border border-white/10 p-4 text-[11.5px] leading-relaxed text-slate-200 font-mono whitespace-pre-wrap">
+              {samples[sampleLang].code}
+            </pre>
+            <p className="text-[11px] text-slate-500">
+              Code mẫu gọi trực tiếp API chuẩn OpenAI bằng key của bạn — dùng cho script/bot bên ngoài.
+              Trong app, chỉ cần nhập key ở tab "Nhập key" là chat được ngay.
+            </p>
+          </div>
+        ) : (
+        <>
         <SafeLink
           href={provider.keyUrl}
           className="flex items-center gap-2 text-xs text-brand-cyan hover:underline"
@@ -141,6 +245,8 @@ function KeyModal({
             <span>{saving ? 'Đang kiểm tra…' : 'Kiểm tra & Lưu'}</span>
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
   )
@@ -180,7 +286,7 @@ export default function AiSettingsPage() {
           </h1>
           <p className="text-sm text-slate-400 mt-1">
             Dùng API key <span className="text-slate-200 font-semibold">của chính bạn</span> (gói Pro đã
-            đăng ký) cho Gemini, ChatGPT, Grok, Claude và DeepSeek.
+            đăng ký) cho Gemini, ChatGPT, Grok, Claude, DeepSeek và ExperientialLabs.
           </p>
         </div>
         <button

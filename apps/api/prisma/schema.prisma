@@ -139,7 +139,7 @@ model Job {
 model AiConnection {
   id          String    @id @default(cuid())
   workspaceId String
-  provider    String    // gemini | openai | xai | anthropic | deepseek
+  provider    String    // gemini | openai | xai | anthropic | deepseek | experientiallabs
   keyCipher   String    // API key đã mã hóa
   keyHint     String    // 4 ký tự cuối của key — để user nhận diện
   status      String    @default("active") // active | invalid

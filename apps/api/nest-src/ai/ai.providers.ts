@@ -3,7 +3,7 @@
  * - `keyUrl`: link chính thức để user tự tạo API key (key của user, không phải của hệ thống).
  * - `baseUrl` + `kind`: dùng NỘI BỘ ở service để validate key và gọi chat — không expose qua API.
  */
-export type AiProviderId = 'gemini' | 'openai' | 'xai' | 'anthropic' | 'deepseek'
+export type AiProviderId = 'gemini' | 'openai' | 'xai' | 'anthropic' | 'deepseek' | 'experientiallabs'
 
 type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic'
 
@@ -72,6 +72,16 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     defaultModel: 'deepseek-chat',
     description: 'Chi phí thấp, mạnh về code và toán.',
     baseUrl: 'https://api.deepseek.com/v1',
+    kind: 'openai-compatible',
+  },
+  {
+    id: 'experientiallabs',
+    name: 'ExperientialLabs',
+    keyUrl: 'https://platform.experientiallabs.ai/models/grok-4.7',
+    models: ['grok-4.7'],
+    defaultModel: 'grok-4.7',
+    description: 'Grok 4.7 qua ExperientialLabs — API chuẩn OpenAI, key bắt đầu bằng xpl_.',
+    baseUrl: 'https://api.experientiallabs.ai/v1',
     kind: 'openai-compatible',
   },
 ]
