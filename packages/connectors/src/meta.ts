@@ -1,4 +1,5 @@
 import type { SocialConnector } from './interface';
+import { requiredEnv } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider } from '@orh/shared'
 import { buildOAuthUrl, validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -44,7 +45,7 @@ export class MetaConnector implements SocialConnector {
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
     validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
     return buildOAuthUrl(META_AUTH_URL, {
-      clientId: process.env.META_APP_ID!,
+      clientId: requiredEnv('facebook', 'META_APP_ID'),
       redirectUri: input.redirectUri,
       scopes: input.scopes ?? ['public_profile', 'email'],
       state: input.state,
@@ -59,9 +60,9 @@ export class MetaConnector implements SocialConnector {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: process.env.META_APP_ID!,
+        client_id: requiredEnv('facebook', 'META_APP_ID'),
         redirect_uri: input.redirectUri,
-        client_secret: process.env.META_APP_SECRET!,
+        client_secret: requiredEnv('facebook', 'META_APP_SECRET'),
         code: input.code,
       }),
     })

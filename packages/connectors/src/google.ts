@@ -1,4 +1,5 @@
 import type { SocialConnector } from './interface';
+import { requiredEnv } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider } from '@orh/shared'
 import { buildOAuthUrl, validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -56,7 +57,7 @@ export class GoogleConnector implements SocialConnector {
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
     validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
     return buildOAuthUrl(GOOGLE_AUTH_URL, {
-      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientId: requiredEnv('google', 'GOOGLE_CLIENT_ID'),
       redirectUri: input.redirectUri,
       scopes: input.scopes ?? ['openid', 'profile', 'email'],
       state: input.state, // CSRF state ngẫu nhiên, do API layer sinh qua createOAuthState()
@@ -75,8 +76,8 @@ export class GoogleConnector implements SocialConnector {
         grant_type: 'authorization_code',
         code: input.code,
         redirect_uri: input.redirectUri,
-        client_id: process.env.GOOGLE_CLIENT_ID!,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        client_id: requiredEnv('google', 'GOOGLE_CLIENT_ID'),
+        client_secret: requiredEnv('google', 'GOOGLE_CLIENT_SECRET'),
         code_verifier: input.codeVerifier,
       }),
     })
@@ -137,8 +138,8 @@ export class GoogleConnector implements SocialConnector {
       body: new URLSearchParams({
         grant_type: 'refresh_token',
         refresh_token: refreshToken,
-        client_id: process.env.GOOGLE_CLIENT_ID!,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        client_id: requiredEnv('google', 'GOOGLE_CLIENT_ID'),
+        client_secret: requiredEnv('google', 'GOOGLE_CLIENT_SECRET'),
       }),
     })
     if (!res.ok) {

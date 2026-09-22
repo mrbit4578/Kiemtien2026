@@ -4,7 +4,9 @@ import {
   ConflictException,
   UnauthorizedException,
   InternalServerErrorException,
+  ServiceUnavailableException,
 } from '@nestjs/common'
+import { OAuthNotConfiguredError } from '@orh/connectors'
 import { createHash } from 'crypto'
 import * as bcrypt from 'bcryptjs'
 import {
@@ -67,12 +69,20 @@ export class AuthService {
     session.oauthPending = oauthState
     // KHÔNG log codeVerifier hay state.value
 
-    const url = connector.authorizationUrl({
-      workspaceId,
-      redirectUri,
-      codeChallenge,
-      state: oauthState.value,
-    })
+    let url: string
+    try {
+      url = connector.authorizationUrl({
+        workspaceId,
+        redirectUri,
+        codeChallenge,
+        state: oauthState.value,
+      })
+    } catch (e) {
+      // OAuth chưa cấu hình trên server → 503 với message rõ ràng, thay vì
+      // redirect user sang provider với client_id=undefined.
+      if (e instanceof OAuthNotConfiguredError) throw new ServiceUnavailableException(e.message)
+      throw e
+    }
 
     await this.audit.log({
       workspaceId,
@@ -140,7 +150,8 @@ export class AuthService {
           redirectUri: pending.redirectUri,
           codeVerifier: pending.codeVerifier,
         })
-      } catch {
+      } catch (e) {
+        if (e instanceof OAuthNotConfiguredError) throw new ServiceUnavailableException(e.message)
         throw new BadRequestException(`Đổi code lấy token thất bại (${providerName}).`)
       }
 

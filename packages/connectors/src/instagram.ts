@@ -1,4 +1,5 @@
 import type { SocialConnector } from './interface';
+import { requiredEnv } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider, PublishInput, PublishResult } from '@orh/shared'
 import { buildOAuthUrl, validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -47,7 +48,7 @@ export class InstagramConnector implements SocialConnector {
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
     validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
     return buildOAuthUrl('https://api.instagram.com/oauth/authorize', {
-      clientId: process.env.META_APP_ID!,
+      clientId: requiredEnv('instagram', 'META_APP_ID'),
       redirectUri: input.redirectUri,
       scopes: input.scopes ?? ['instagram_basic'],
       state: input.state,
@@ -61,8 +62,8 @@ export class InstagramConnector implements SocialConnector {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: process.env.META_APP_ID!,
-        client_secret: process.env.META_APP_SECRET!,
+        client_id: requiredEnv('instagram', 'META_APP_ID'),
+        client_secret: requiredEnv('instagram', 'META_APP_SECRET'),
         grant_type: 'authorization_code',
         redirect_uri: input.redirectUri,
         code: input.code,

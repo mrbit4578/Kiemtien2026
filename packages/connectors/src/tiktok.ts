@@ -1,4 +1,5 @@
 import type { SocialConnector } from './interface';
+import { requiredEnv } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider, PublishInput, PublishResult } from '@orh/shared'
 import { buildOAuthUrl, validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -47,12 +48,12 @@ export class TikTokConnector implements SocialConnector {
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
     validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
     return buildOAuthUrl(TIKTOK_AUTH_URL, {
-      clientId: process.env.TIKTOK_CLIENT_KEY!,
+      clientId: requiredEnv('tiktok', 'TIKTOK_CLIENT_KEY'),
       redirectUri: input.redirectUri,
       scopes: input.scopes ?? ['user.info.basic'],
       state: input.state,
       codeChallenge: input.codeChallenge,
-      extra: { client_key: process.env.TIKTOK_CLIENT_KEY! },
+      extra: { client_key: requiredEnv('tiktok', 'TIKTOK_CLIENT_KEY') },
     })
   }
 
@@ -62,8 +63,8 @@ export class TikTokConnector implements SocialConnector {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_key: process.env.TIKTOK_CLIENT_KEY!,
-        client_secret: process.env.TIKTOK_CLIENT_SECRET!,
+        client_key: requiredEnv('tiktok', 'TIKTOK_CLIENT_KEY'),
+        client_secret: requiredEnv('tiktok', 'TIKTOK_CLIENT_SECRET'),
         code: input.code,
         grant_type: 'authorization_code',
         redirect_uri: input.redirectUri,

@@ -1,4 +1,5 @@
 import type { SocialConnector } from './interface';
+import { requiredEnv } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider } from '@orh/shared'
 import { buildOAuthUrl, validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -28,7 +29,7 @@ export class GitHubConnector implements SocialConnector {
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
     validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
     return buildOAuthUrl('https://github.com/login/oauth/authorize', {
-      clientId: process.env.GITHUB_CLIENT_ID!,
+      clientId: requiredEnv('github', 'GITHUB_CLIENT_ID'),
       redirectUri: input.redirectUri,
       scopes: ['read:user'],
       state: input.state,
@@ -42,8 +43,8 @@ export class GitHubConnector implements SocialConnector {
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        client_id: process.env.GITHUB_CLIENT_ID!,
-        client_secret: process.env.GITHUB_CLIENT_SECRET!,
+        client_id: requiredEnv('github', 'GITHUB_CLIENT_ID'),
+        client_secret: requiredEnv('github', 'GITHUB_CLIENT_SECRET'),
         code: input.code,
         redirect_uri: input.redirectUri,
         code_verifier: input.codeVerifier,
