@@ -344,7 +344,8 @@ export class AiService {
 
   /**
    * Lấy key để tạo embedding: ưu tiên OpenAI (text-embedding-3-small, 1536 dim),
-   * fallback Gemini (text-embedding-004, 768 dim → zero-pad lên 1536 ở embed()).
+   * fallback Gemini (gemini-embedding-001, xin 768 dim → zero-pad lên 1536 ở embed()).
+   * (text-embedding-004 đã bị Google khai tử từ 14/01/2026.)
    * Ném BadRequestException kèm hướng dẫn khi workspace chưa có key nào.
    */
   async getEmbeddingKey(workspaceId: string): Promise<EmbeddingKeyInfo> {
@@ -454,14 +455,16 @@ export class AiService {
     texts: string[],
   ): Promise<number[][]> {
     const res = await fetchTimeout(
-      `${meta.baseUrl}/v1beta/models/text-embedding-004:batchEmbedContents?key=${encodeURIComponent(apiKey)}`,
+      `${meta.baseUrl}/v1beta/models/gemini-embedding-001:batchEmbedContents?key=${encodeURIComponent(apiKey)}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requests: texts.map((t) => ({
-            model: 'models/text-embedding-004',
+            model: 'models/gemini-embedding-001',
             content: { parts: [{ text: t }] },
+            // Giữ 768 dim như pipeline cũ (zero-pad lên 1536 ở embed())
+            outputDimensionality: 768,
           })),
         }),
       },
