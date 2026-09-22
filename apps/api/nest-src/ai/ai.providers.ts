@@ -78,9 +78,10 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     id: 'experientiallabs',
     name: 'ExperientialLabs',
     keyUrl: 'https://platform.experientiallabs.ai/models/grok-4.7',
-    models: ['grok-4.7'],
-    defaultModel: 'grok-4.7',
-    description: 'Grok 4.7 qua ExperientialLabs — API chuẩn OpenAI, key bắt đầu bằng xpl_.',
+    models: ['deepseek-v4-flash', 'deepseek-v4.1-flash', 'grok-4.7'],
+    defaultModel: 'deepseek-v4-flash',
+    description:
+      'Grok 4.7 qua ExperientialLabs (cần mua credits mới mở khóa). Mặc định dùng deepseek-v4-flash — model miễn phí đã test chạy tốt trên key của bạn.',
     baseUrl: 'https://api.experientiallabs.ai/v1',
     kind: 'openai-compatible',
   },
