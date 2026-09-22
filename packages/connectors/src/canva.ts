@@ -213,10 +213,15 @@ export class CanvaConnector implements SocialConnector {
   }
 
   /** Tạo autofill job: điền data vào brand template → trả về job id. */
-  async createAutofill(connection: Connection, brandTemplateId: string, data: Record<string, string>): Promise<string> {
+  async createAutofill(connection: Connection, brandTemplateId: string, data: Record<string, string>, title?: string): Promise<string> {
+    // Canva yêu cầu mỗi trường là object { type: 'text', text } — không phải string trần.
+    const canvaData: Record<string, { type: 'text'; text: string }> = {}
+    for (const [k, v] of Object.entries(data)) {
+      canvaData[k] = { type: 'text', text: v }
+    }
     const d = await canvaFetch(connection, '/autofills', {
       method: 'POST',
-      body: JSON.stringify({ brand_template_id: brandTemplateId, data }),
+      body: JSON.stringify({ brand_template_id: brandTemplateId, data: canvaData, ...(title ? { title } : {}) }),
     })
     const jobId = d.job?.id ?? d.id
     if (!jobId) throw new OrhError('CONTENT_REJECTED', 'Canva không trả về autofill job id.', true, 'canva')
@@ -230,7 +235,8 @@ export class CanvaConnector implements SocialConnector {
       const d = await canvaFetch(connection, `/autofills/${jobId}`)
       const job = d.job ?? d
       if (job.status === 'success') {
-        const designId = job.result?.design_id ?? job.design_id
+        // Docs Canva: result = { type: 'create_design', design: { id, ... } }
+        const designId = job.result?.design?.id ?? job.result?.design_id ?? job.design_id
         if (!designId) throw new OrhError('CONTENT_REJECTED', 'Autofill xong nhưng không có design id.', false, 'canva')
         return designId
       }
