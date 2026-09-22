@@ -58,6 +58,8 @@ export class MetaConnector implements SocialConnector {
         redirect_uri: input.redirectUri,
         client_secret: requiredEnv('facebook', 'META_APP_SECRET'),
         code: input.code,
+        // PKCE: authorize URL có code_challenge → token request phải gửi code_verifier
+        code_verifier: input.codeVerifier,
       }),
     })
     if (!res.ok) {

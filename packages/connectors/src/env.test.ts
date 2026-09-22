@@ -134,3 +134,39 @@ describe('connector fail-fast khi thiếu client id', () => {
     delete process.env.API_URL
   })
 })
+
+describe('MetaConnector.exchangeCode gửi code_verifier (PKCE)', () => {
+  it('body token request chứa code_verifier — Meta từ chối nếu thiếu', async () => {
+    process.env.API_URL = 'https://api.example.com'
+    process.env.META_APP_ID = 'test-meta-app-id'
+    process.env.META_APP_SECRET = 'test-meta-secret'
+
+    const { MetaConnector } = await import('./meta')
+    const c = new MetaConnector()
+
+    let capturedBody = ''
+    const origFetch = globalThis.fetch
+    globalThis.fetch = (async (_url: unknown, init: any) => {
+      capturedBody = init?.body?.toString() ?? ''
+      return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) }
+    }) as any
+    try {
+      const ts = await c.exchangeCode({
+        code: 'auth-code',
+        state: 's',
+        redirectUri: 'https://api.example.com/auth/facebook/callback',
+        codeVerifier: 'verifier-123',
+      })
+      assert.equal(ts.accessToken, 'tok')
+      assert.ok(
+        capturedBody.includes('code_verifier=verifier-123'),
+        `thiếu code_verifier trong body: ${capturedBody}`,
+      )
+    } finally {
+      globalThis.fetch = origFetch
+    }
+    delete process.env.API_URL
+    delete process.env.META_APP_ID
+    delete process.env.META_APP_SECRET
+  })
+})
