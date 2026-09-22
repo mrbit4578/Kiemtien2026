@@ -205,10 +205,16 @@ export class RagService {
 
       return { id: doc.id, title: doc.title, status: 'ready', chunkCount: all.length }
     } catch (err) {
-      // Lỗi không phải HttpException: hiện tên loại lỗi để dễ chẩn đoán
-      // (chỉ tên class, không chứa nội dung nhạy cảm)
+      // Lỗi không phải HttpException: hiện tên loại lỗi + mã lỗi Prisma (nếu có)
+      // để dễ chẩn đoán (chỉ tên class/mã lỗi, không chứa nội dung nhạy cảm)
+      const prismaCode =
+        (err as { code?: string })?.code && typeof (err as { code?: unknown }).code === 'string'
+          ? `:${(err as { code: string }).code}`
+          : ''
       const errName =
-        err instanceof HttpException ? '' : ` [${(err as Error)?.constructor?.name ?? 'UnknownError'}]`
+        err instanceof HttpException
+          ? ''
+          : ` [${(err as Error)?.constructor?.name ?? 'UnknownError'}${prismaCode}]`
       const message =
         err instanceof HttpException ? err.message : `Xử lý tài liệu thất bại. Hãy thử lại.${errName}`
       // Log đầy đủ phía server để xem trong Render logs
@@ -944,7 +950,9 @@ export class RagService {
         ids[i],
         documentId,
         workspaceId,
-        c.content,
+        // PostgreSQL cột text không chấp nhận byte NUL (\u0000) — PDF extract
+        // đôi khi chứa ký tự này, làm INSERT fail với P2010
+        c.content.replace(/\u0000/g, ''),
         c.modality,
         Math.ceil(c.content.length / 4),
         null, // metadata
