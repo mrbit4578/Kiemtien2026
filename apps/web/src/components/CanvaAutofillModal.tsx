@@ -6,7 +6,7 @@ import { X, Loader2, ImagePlus, CheckCircle2, AlertTriangle } from 'lucide-react
 import { api } from '../lib/api'
 
 type Template = { id: string; title: string; thumbnailUrl?: string }
-type Design = { id: string; title: string; thumbnailUrl?: string }
+type Design = { id: string; title: string; thumbnailUrl?: string; pageCount?: number }
 type DatasetField = { name: string; type: string }
 
 /**
@@ -45,6 +45,10 @@ export function CanvaAutofillModal({ answer, onClose }: { answer: string; onClos
   const [loadingDesigns, setLoadingDesigns] = useState(false)
   const [designsError, setDesignsError] = useState<string | null>(null)
   const [selectedDesignId, setSelectedDesignId] = useState<string>('')
+  const [designPageCount, setDesignPageCount] = useState<number | null>(null)
+  const [loadingPageCount, setLoadingPageCount] = useState(false)
+  /** Các trang được chọn để xuất (1-based). Mảng rỗng = xuất toàn bộ. */
+  const [selectedPages, setSelectedPages] = useState<number[]>([])
   const [selectedId, setSelectedId] = useState<string>('')
   const [fields, setFields] = useState<DatasetField[]>([])
   const [loadingFields, setLoadingFields] = useState(false)
@@ -118,9 +122,42 @@ export function CanvaAutofillModal({ answer, onClose }: { answer: string; onClos
     }
   }
 
+  /** Khi chọn thiết kế: lấy số trang để cho user chọn trang xuất. */
+  useEffect(() => {
+    if (!selectedDesignId) {
+      setDesignPageCount(null)
+      setSelectedPages([])
+      return
+    }
+    setLoadingPageCount(true)
+    setDesignPageCount(null)
+    setSelectedPages([])
+    api
+      .get<{ pageCount?: number }>(`/canva/designs/${selectedDesignId}`)
+      .then((d) => {
+        const n = typeof d.pageCount === 'number' && d.pageCount > 0 ? d.pageCount : 1
+        setDesignPageCount(n)
+        // Mặc định chọn tất cả trang
+        setSelectedPages(Array.from({ length: n }, (_, i) => i + 1))
+      })
+      .catch(() => {
+        setDesignPageCount(1)
+        setSelectedPages([1])
+      })
+      .finally(() => setLoadingPageCount(false))
+  }, [selectedDesignId])
+
+  const togglePage = (p: number) => {
+    setSelectedPages((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p].sort((a, b) => a - b)))
+  }
+
   /** Xuất thiết kế Canva có sẵn → tạo nháp Content Studio (đường vòng cho Pro). */
   const handleExportDesign = async () => {
     if (!selectedDesignId || running) return
+    if (selectedPages.length === 0) {
+      setRunError('Hãy chọn ít nhất một trang để xuất.')
+      return
+    }
     setRunning(true)
     setRunError(null)
     try {
@@ -128,6 +165,8 @@ export function CanvaAutofillModal({ answer, onClose }: { answer: string; onClos
         designId: selectedDesignId,
         caption: answer.trim().slice(0, 2000),
         format,
+        // Xuất toàn bộ → không gửi pages; chọn một phần → gửi danh sách trang
+        pages: designPageCount && selectedPages.length === designPageCount ? undefined : selectedPages,
       })
       setDone(true)
     } catch (err) {
@@ -227,7 +266,51 @@ export function CanvaAutofillModal({ answer, onClose }: { answer: string; onClos
                     </div>
 
                     <div>
-                      <label className="block text-[12.5px] font-bold text-slate-300 mb-2">2. Định dạng xuất</label>
+                      <label className="block text-[12.5px] font-bold text-slate-300 mb-2">2. Chọn trang để xuất</label>
+                      {loadingPageCount ? (
+                        <p className="text-[13px] text-slate-400 flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Đang đọc số trang…
+                        </p>
+                      ) : designPageCount && designPageCount > 1 ? (
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap gap-2">
+                            {Array.from({ length: designPageCount }, (_, i) => i + 1).map((p) => (
+                              <button
+                                key={p}
+                                onClick={() => togglePage(p)}
+                                className={`w-11 h-11 rounded-lg text-[13px] font-bold border transition-colors ${
+                                  selectedPages.includes(p)
+                                    ? 'border-brand-cyan bg-brand-cyan/15 text-white'
+                                    : 'border-white/10 text-slate-500 hover:border-white/25'
+                                }`}
+                                title={selectedPages.includes(p) ? `Bỏ chọn trang ${p}` : `Chọn trang ${p}`}
+                              >
+                                {p}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="flex items-center gap-3 text-[12px]">
+                            <button
+                              onClick={() => setSelectedPages(Array.from({ length: designPageCount }, (_, i) => i + 1))}
+                              className="text-brand-cyan hover:underline"
+                            >
+                              Chọn tất cả
+                            </button>
+                            <button onClick={() => setSelectedPages([])} className="text-slate-400 hover:underline">
+                              Bỏ chọn hết
+                            </button>
+                            <span className="text-slate-500">
+                              Đã chọn {selectedPages.length}/{designPageCount} trang
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-[12.5px] text-slate-500">Thiết kế này có 1 trang — sẽ xuất toàn bộ.</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-[12.5px] font-bold text-slate-300 mb-2">3. Định dạng xuất</label>
                       <div className="flex gap-2">
                         {(['png', 'jpg', 'mp4'] as const).map((f) => (
                           <button

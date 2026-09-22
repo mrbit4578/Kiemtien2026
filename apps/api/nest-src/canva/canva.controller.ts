@@ -56,15 +56,28 @@ export class CanvaController {
   /**
    * POST /canva/export-to-content — đường vòng cho Pro: xuất thiết kế có sẵn →
    * upload imgbb → tạo ContentItem draft chờ duyệt.
-   * Body: { designId, caption, format? }
+   * Body: { designId, caption, format?, pages? } — pages là mảng số trang
+   * (1-based); bỏ qua = xuất toàn bộ trang.
    */
   @Post('export-to-content')
   @HttpCode(200)
   async exportToContent(
-    @Body() body: { designId: string; caption: string; format?: 'png' | 'jpg' | 'mp4' | 'gif' },
+    @Body() body: { designId: string; caption: string; format?: 'png' | 'jpg' | 'mp4' | 'gif'; pages?: number[] },
     @Session() session: any,
   ) {
     const workspaceId = requireWorkspaceId(session)
-    return this.canva.exportDesignToContent(workspaceId, body.designId, body.caption ?? '', body.format ?? 'png')
+    const pages = Array.isArray(body.pages)
+      ? body.pages.filter((p) => Number.isInteger(p) && p >= 1).slice(0, 50)
+      : undefined
+    return this.canva.exportDesignToContent(workspaceId, body.designId, body.caption ?? '', body.format ?? 'png', pages)
+  }
+
+  /**
+   * GET /canva/designs/:id — chi tiết một thiết kế (bao gồm số trang).
+   */
+  @Get('designs/:id')
+  async getDesign(@Param('id') id: string, @Session() session: any) {
+    const workspaceId = requireWorkspaceId(session)
+    return this.canva.getDesignDetail(workspaceId, id)
   }
 }

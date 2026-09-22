@@ -65,6 +65,12 @@ export class CanvaService {
     return this.getCanvaConnector().listDesigns(conn)
   }
 
+  /** Chi tiết một thiết kế (bao gồm số trang) — dùng để chọn trang khi xuất. */
+  async getDesignDetail(workspaceId: string, designId: string) {
+    const conn = await this.getActiveConnection(workspaceId)
+    return this.getCanvaConnector().getDesign(conn, designId)
+  }
+
   /**
    * Xuất file từ URL Canva về rồi host lại lên imgbb.
    * Dùng chung cho cả autofill và xuất design có sẵn.
@@ -183,10 +189,11 @@ export class CanvaService {
     designId: string,
     caption: string,
     format: 'png' | 'jpg' | 'mp4' | 'gif' = 'png',
+    pages?: number[],
   ) {
     const conn = await this.getActiveConnection(workspaceId)
     const connector = this.getCanvaConnector()
-    const exportJobId = await connector.createExport(conn, designId, format)
+    const exportJobId = await connector.createExport(conn, designId, format, pages)
     const urls = await connector.waitExport(conn, exportJobId)
     const assetUrls = await this.hostViaImgbb(urls)
 
@@ -207,7 +214,7 @@ export class CanvaService {
       entityType: 'content',
       targetId: item.id,
       result: 'success',
-      metadata: { designId, source: 'canva_export', format },
+      metadata: { designId, source: 'canva_export', format, pages: pages ?? 'all' },
     })
     return { contentId: item.id, designId, assetUrls }
   }

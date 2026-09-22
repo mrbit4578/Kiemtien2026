@@ -71,6 +71,8 @@ export interface CanvaDesign {
   title: string
   thumbnailUrl?: string
   createdAt?: number
+  /** Số trang của thiết kế (lấy từ trường page_count của API, nếu có). */
+  pageCount?: number
 }
 
 export interface CanvaDatasetField {
@@ -214,7 +216,21 @@ export class CanvaConnector implements SocialConnector {
       title: t.title ?? t.id,
       thumbnailUrl: t.thumbnail?.url,
       createdAt: t.created_at,
+      pageCount: typeof t.page_count === 'number' ? t.page_count : undefined,
     }))
+  }
+
+  /** Lấy chi tiết design (bao gồm số trang) theo id. */
+  async getDesign(connection: Connection, designId: string): Promise<CanvaDesign> {
+    const d = await canvaFetch(connection, `/designs/${designId}`)
+    const t = d.design ?? d
+    return {
+      id: t.id ?? designId,
+      title: t.title ?? designId,
+      thumbnailUrl: t.thumbnail?.url,
+      createdAt: t.created_at,
+      pageCount: typeof t.page_count === 'number' ? t.page_count : undefined,
+    }
   }
 
   async getTemplateDataset(connection: Connection, templateId: string): Promise<CanvaDatasetField[]> {
@@ -267,11 +283,22 @@ export class CanvaConnector implements SocialConnector {
     throw new OrhError('TRANSIENT_NETWORK_ERROR', 'Canva autofill quá thời gian chờ (120s).', true, 'canva')
   }
 
-  /** Tạo export job cho design → trả về job id. */
-  async createExport(connection: Connection, designId: string, format: 'png' | 'jpg' | 'mp4' | 'gif' = 'png'): Promise<string> {
+  /**
+   * Tạo export job cho design → trả về job id.
+   * @param pages — mảng số trang cần xuất (1-based, theo docs Canva). Bỏ qua
+   *   (hoặc mảng rỗng) = xuất toàn bộ trang.
+   */
+  async createExport(
+    connection: Connection,
+    designId: string,
+    format: 'png' | 'jpg' | 'mp4' | 'gif' = 'png',
+    pages?: number[],
+  ): Promise<string> {
+    const body: Record<string, unknown> = { design_id: designId, format: { type: format } }
+    if (pages && pages.length > 0) body.pages = pages
     const d = await canvaFetch(connection, '/exports', {
       method: 'POST',
-      body: JSON.stringify({ design_id: designId, format: { type: format } }),
+      body: JSON.stringify(body),
     })
     const jobId = d.job?.id ?? d.id
     if (!jobId) throw new OrhError('CONTENT_REJECTED', 'Canva không trả về export job id.', true, 'canva')
