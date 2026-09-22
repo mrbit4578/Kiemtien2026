@@ -43,8 +43,8 @@ describe('requiredEnv', () => {
   })
 })
 
-describe('Instagram connector dùng Facebook Login (Meta khai tử Basic Display)', () => {
-  it('authorizationUrl trỏ về facebook.com dialog/oauth, không còn api.instagram.com', async () => {
+describe('Instagram connector dùng Instagram Login (không qua Facebook dialog)', () => {
+  it('authorizationUrl trỏ về instagram.com/oauth/authorize, không PKCE', async () => {
     process.env.API_URL = 'https://api.example.com'
     process.env.META_APP_ID = 'test-meta-app-id'
 
@@ -56,12 +56,13 @@ describe('Instagram connector dùng Facebook Login (Meta khai tử Basic Display
       state: 's',
       codeChallenge: 'c',
     })
-    assert.ok(url.startsWith('https://www.facebook.com/v19.0/dialog/oauth'))
-    assert.ok(!url.includes('api.instagram.com'))
+    assert.ok(url.startsWith('https://www.instagram.com/oauth/authorize'))
+    assert.ok(!url.includes('facebook.com/dialog/oauth'))
+    assert.ok(!url.includes('code_challenge'))
     assert.ok(url.includes('instagram_business_basic'))
     assert.ok(url.includes('instagram_business_content_publish'))
-    assert.ok(url.includes('pages_show_list'))
     assert.ok(url.includes('client_id=test-meta-app-id'))
+    assert.ok(url.includes('response_type=code'))
     delete process.env.API_URL
     delete process.env.META_APP_ID
   })
