@@ -75,6 +75,29 @@ export interface ChatMessage {
   content: string
   /** Metadata RAG khi message được tạo ở chế độ RAG (không có ở chat thường) */
   ragMeta?: RagQueryResult
+  /** Metadata agent khi message được tạo ở chế độ Agent (không có ở chat thường) */
+  agentMeta?: AgentRunResponse
+}
+
+/* ─── AI Agent (gọi tools) ───────────────────────────────────────────── */
+
+/** Một tool call trong trace của agent run. */
+export interface AgentToolCall {
+  name: string
+  ok: boolean
+  ms: number
+  truncated: boolean
+  output: string
+}
+
+/** POST /ai/agent/run */
+export interface AgentRunResponse {
+  content: string
+  model: string
+  provider: string
+  turns: number
+  stoppedReason: string
+  toolCalls: AgentToolCall[]
 }
 
 /* ─── RAG / Kho tri thức ───────────────────────────────────────────── */

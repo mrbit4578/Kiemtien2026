@@ -16,16 +16,18 @@ import {
   Image as ImageIcon,
   AlertTriangle,
   BookOpen,
+  Wrench,
 } from 'lucide-react'
 import {
   useAiProviders,
   useAiConnections,
   sendAiChat,
+  sendAgentRun,
   useRagDocuments,
   queryRag,
 } from '../../lib/hooks'
 import { ApiError } from '../../lib/api'
-import type { ChatMessage, RagQueryResult, RagStrategy } from '../../lib/types'
+import type { ChatMessage, RagQueryResult, RagStrategy, AgentRunResponse } from '../../lib/types'
 
 /** Render markdown cơ bản — escape HTML trước để chống XSS. */
 function renderMarkdown(text: string): React.ReactNode[] {
@@ -152,6 +154,43 @@ function RagMetaBlocks({ meta }: { meta: RagQueryResult }) {
   )
 }
 
+/* ─── Agent ───────────────────────────────────────────────────────────── */
+
+/** Khối "Quá trình agent" dưới câu trả lời ở chế độ Agent: các tool đã gọi. */
+function AgentMetaBlocks({ meta }: { meta: AgentRunResponse }) {
+  return (
+    <div className="mt-3 space-y-3">
+      <div className="rounded-xl bg-dark-900/70 border border-white/10 p-3">
+        <p className="text-[11px] font-extrabold text-slate-300 uppercase tracking-wide mb-2">
+          Quá trình agent · {meta.turns} vòng · {meta.toolCalls.length} tool
+        </p>
+        <div className="space-y-1.5">
+          {meta.toolCalls.map((t, i) => (
+            <div key={i} className="text-xs font-mono flex items-start gap-2">
+              <span
+                className={`shrink-0 font-bold ${
+                  t.ok ? 'text-brand-emerald' : 'text-red-400'
+                }`}
+              >
+                {t.ok ? '✓' : '✗'}
+              </span>
+              <span className="text-brand-violet font-bold shrink-0">{t.name}</span>
+              <span className="text-slate-500 truncate flex-1">
+                {t.output.length > 90 ? `${t.output.slice(0, 90)}…` : t.output}
+                {t.truncated && ' (đã cắt ngắn)'}
+              </span>
+              <span className="text-slate-600 shrink-0">{t.ms}ms</span>
+            </div>
+          ))}
+          {meta.toolCalls.length === 0 && (
+            <p className="text-xs text-slate-500">Agent trả lời trực tiếp, không gọi tool.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function AiChatPage() {
   const { providers } = useAiProviders()
   const { connections, loading } = useAiConnections()
@@ -175,7 +214,18 @@ export default function AiChatPage() {
   const toggleRag = () => {
     const next = !ragMode
     setRagMode(next)
-    if (next) refreshRagDocs()
+    if (next) {
+      setAgentMode(false)
+      refreshRagDocs()
+    }
+  }
+
+  // ── Chế độ Agent (gọi tools) ──
+  const [agentMode, setAgentMode] = useState(false)
+  const toggleAgent = () => {
+    const next = !agentMode
+    setAgentMode(next)
+    if (next) setRagMode(false)
   }
 
   const activeConns = connections.filter((c) => c.status === 'active')
@@ -211,7 +261,10 @@ export default function AiChatPage() {
     setInput('')
     setSending(true)
     try {
-      if (ragMode) {
+      if (agentMode) {
+        const res = await sendAgentRun(providerId, next, model || undefined)
+        setMessages([...next, { role: 'assistant', content: res.content, agentMeta: res }])
+      } else if (ragMode) {
         const res = await queryRag({
           query: content,
           strategy: ragStrategy,
@@ -267,6 +320,36 @@ export default function AiChatPage() {
           AI Chat Pro
         </h1>
         <div className="flex items-center gap-2">
+          {/* Toggle chế độ Agent (gọi tools) */}
+          <button
+            onClick={toggleAgent}
+            className={`flex items-center gap-2 pl-1 pr-3 py-1.5 rounded-xl border transition-colors ${
+              agentMode
+                ? 'bg-brand-violet/10 border-brand-violet/40'
+                : 'bg-dark-950/70 border-white/10 hover:border-white/25'
+            }`}
+            title="Agent tự gọi tools: tìm web, đọc URL, tra giờ, tìm kho tri thức"
+          >
+            <span
+              className={`w-9 h-5 rounded-full p-0.5 transition-colors ${
+                agentMode ? 'bg-brand-violet' : 'bg-white/15'
+              }`}
+            >
+              <span
+                className={`block w-4 h-4 rounded-full bg-white transition-transform ${
+                  agentMode ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </span>
+            <Wrench
+              className={`w-3.5 h-3.5 ${agentMode ? 'text-brand-violet' : 'text-slate-400'}`}
+            />
+            <span
+              className={`text-xs font-bold ${agentMode ? 'text-brand-violet' : 'text-slate-400'}`}
+            >
+              Chế độ Agent
+            </span>
+          </button>
           {/* Toggle chế độ RAG */}
           <button
             onClick={toggleRag}
@@ -394,6 +477,7 @@ export default function AiChatPage() {
                 <>
                   {renderMarkdown(m.content)}
                   {m.ragMeta && <RagMetaBlocks meta={m.ragMeta} />}
+                  {m.agentMeta && <AgentMetaBlocks meta={m.agentMeta} />}
                 </>
               )}
             </div>
@@ -410,7 +494,7 @@ export default function AiChatPage() {
               <Loader2 className="w-4 h-4 text-dark-950 animate-spin" />
             </div>
             <div className="rounded-2xl px-4 py-3 bg-dark-950/70 border border-white/10 text-sm text-slate-400">
-              {currentMeta?.name} đang suy nghĩ…
+              {agentMode ? 'Agent đang chạy tools…' : `${currentMeta?.name} đang suy nghĩ…`}
             </div>
           </div>
         )}
@@ -435,9 +519,11 @@ export default function AiChatPage() {
             }
           }}
           placeholder={
-            ragMode
-              ? 'Hỏi trên kho tri thức… (Enter để gửi, Shift+Enter xuống dòng)'
-              : 'Nhập câu hỏi… (Enter để gửi, Shift+Enter xuống dòng)'
+            agentMode
+              ? 'Hỏi agent… (tự tìm web, đọc URL, tra kho tri thức)'
+              : ragMode
+                ? 'Hỏi trên kho tri thức… (Enter để gửi, Shift+Enter xuống dòng)'
+                : 'Nhập câu hỏi… (Enter để gửi, Shift+Enter xuống dòng)'
           }
           rows={2}
           className="flex-1 px-4 py-3 rounded-xl bg-dark-950/70 border border-white/10 text-white text-sm placeholder:text-slate-600 focus:outline-none focus:border-brand-violet/60 focus:ring-1 focus:ring-brand-violet/30 resize-none"

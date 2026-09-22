@@ -11,6 +11,7 @@ import type {
   AiConnectionInfo,
   ChatMessage,
   ChatResponse,
+  AgentRunResponse,
   RagDocument,
   RagQueryBody,
   RagQueryResult,
@@ -235,6 +236,15 @@ export async function sendAiChat(
   model?: string,
 ): Promise<ChatResponse> {
   return api.post<ChatResponse>('/ai/chat', { provider, messages, model })
+}
+
+/** Chạy agent think→act→observe qua provider đã kết nối. */
+export async function sendAgentRun(
+  provider: string,
+  messages: ChatMessage[],
+  model?: string,
+): Promise<AgentRunResponse> {
+  return api.post<AgentRunResponse>('/ai/agent/run', { provider, messages, model })
 }
 
 /* ─── RAG / Kho tri thức ───────────────────────────────────────────── */
