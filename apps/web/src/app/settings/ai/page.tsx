@@ -18,6 +18,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import { useAiProviders, useAiConnections } from '../../../lib/hooks'
+import SafeLink from '../../../components/SafeLink'
 import { ApiError } from '../../../lib/api'
 import type { AiProviderMeta } from '../../../lib/types'
 
@@ -83,15 +84,13 @@ function KeyModal({
           </button>
         </div>
 
-        <a
+        <SafeLink
           href={provider.keyUrl}
-          target="_blank"
-          rel="noopener noreferrer"
           className="flex items-center gap-2 text-xs text-brand-cyan hover:underline"
         >
           <ExternalLink className="w-3.5 h-3.5" />
           Lấy API key tại trang chính thức của {provider.name}
-        </a>
+        </SafeLink>
 
         {error && (
           <div className="flex items-start gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
@@ -218,14 +217,12 @@ export default function AiSettingsPage() {
                     </div>
                     <div>
                       <h3 className="font-extrabold text-white">{p.name}</h3>
-                      <a
+                      <SafeLink
                         href={p.keyUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
                         className="text-[11px] text-brand-cyan hover:underline flex items-center gap-1"
                       >
                         Lấy API key <ExternalLink className="w-3 h-3" />
-                      </a>
+                      </SafeLink>
                     </div>
                   </div>
                   {conn ? (

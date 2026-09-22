@@ -10,6 +10,11 @@ import { PDFParse } from 'pdf-parse'
 import { decrypt } from '@orh/crypto'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
+import {
+  fetchTimeout,
+  fetchPinnedWithRedirects,
+  SsrfBlockedError,
+} from '../common/safe-fetch'
 import { AiService } from '../ai/ai.service'
 import { getProviderMeta, type AiProviderId } from '../ai/ai.providers'
 import {
@@ -28,16 +33,7 @@ const CHUNK_OVERLAP = 100
 const MAX_CHUNKS = 300
 const RRF_K = 60
 const FETCH_TIMEOUT_MS = 20_000
-
-async function fetchTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), ms)
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal })
-  } finally {
-    clearTimeout(timer)
-  }
-}
+const FETCH_MAX_BYTES = 1_000_000 // 1 MiB
 
 /** Trích JSON object/array đầu tiên trong text LLM (best-effort). */
 function extractJson(text: string): any | null {
@@ -1010,23 +1006,27 @@ export class RagService {
   }
 
   private async extractFromUrl(url: string): Promise<{ title: string; text: string }> {
-    let u: URL
+    // SSRF fail-closed: URL do người dùng nhập — validate + DNS pinning,
+    // mỗi hop redirect đều kiểm tra lại.
+    let res: Awaited<ReturnType<typeof fetchPinnedWithRedirects>>
     try {
-      u = new URL(url)
-    } catch {
-      throw new BadRequestException('URL không hợp lệ.')
-    }
-    if (!['http:', 'https:'].includes(u.protocol)) {
-      throw new BadRequestException('Chỉ hỗ trợ URL http/https.')
-    }
-    let res: Response
-    try {
-      res = await fetchTimeout(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, FETCH_TIMEOUT_MS)
-    } catch {
+      res = await fetchPinnedWithRedirects(url, {
+        timeoutMs: FETCH_TIMEOUT_MS,
+        maxBytes: FETCH_MAX_BYTES,
+      })
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) {
+        throw new BadRequestException('URL không được phép vì lý do bảo mật.')
+      }
       throw new BadRequestException('Không tải được URL. Kiểm tra lại đường dẫn.')
     }
-    if (!res.ok) throw new BadRequestException(`Không tải được URL (HTTP ${res.status}).`)
-    const html = await res.text()
+    if (res.status < 200 || res.status >= 300) {
+      throw new BadRequestException(`Không tải được URL (HTTP ${res.status}).`)
+    }
+    if (!/text|html/i.test(res.contentType)) {
+      throw new BadRequestException('URL này không phải trang web text/HTML.')
+    }
+    const html = res.text
     const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '').trim().slice(0, 200)
     const text = html
       .replace(/<script[\s\S]*?<\/script>/gi, ' ')

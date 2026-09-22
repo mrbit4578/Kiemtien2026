@@ -9,6 +9,7 @@ import {
 import { encrypt, decrypt } from '@orh/crypto'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
+import { fetchTimeout } from '../common/safe-fetch'
 import { getProviderMeta, publicProviderMeta, type AiProviderMeta, type AiProviderId } from './ai.providers'
 import type { ConnectAiDto, ChatDto, ChatMessageDto } from './dto'
 
@@ -30,16 +31,6 @@ export interface EmbeddingKeyInfo {
  * - KHÔNG BAO GIỜ: trả key về frontend, log key, đưa key vào audit metadata hay error message.
  * - Mọi lỗi từ provider đều được sanitize (thay key bằng [redacted]) trước khi trả về.
  */
-
-async function fetchTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), ms)
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal })
-  } finally {
-    clearTimeout(timer)
-  }
-}
 
 function safeBodyText(text: string): string {
   return text.length > 500 ? text.slice(0, 500) + '…' : text

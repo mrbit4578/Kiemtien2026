@@ -5,21 +5,16 @@
  * không có Docker sandbox. Mọi tool ở đây đều là allowlist, có timeout, có trần
  * output và validate args — chạy an toàn trong process API.
  */
-import { assertSafeUrl, SsrfBlockedError } from './ssrf'
+import {
+  fetchTimeout,
+  fetchPinnedWithRedirects,
+  SsrfBlockedError,
+  redactUrlSecrets,
+} from '../common/safe-fetch'
 import type { ToolDefinition } from './tool-registry'
 
 const TOOL_FETCH_TIMEOUT_MS = 15_000
 const MAX_FETCH_BYTES = 1_000_000 // 1 MiB — giống cap ở viewer của Strix
-
-async function fetchTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), ms)
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal })
-  } finally {
-    clearTimeout(timer)
-  }
-}
 
 /** Bóc text thô từ HTML: bỏ script/style, strip tags, gộp whitespace. */
 function htmlToText(html: string): string {
@@ -98,57 +93,24 @@ export const fetchUrlTool: ToolDefinition = {
   },
   execute: async (args) => {
     const rawUrl = args['url'] as string
-    let url: URL
     try {
-      url = await assertSafeUrl(rawUrl)
+      // Transport pinned: DNS pinning + mỗi hop redirect đều re-validate.
+      const res = await fetchPinnedWithRedirects(rawUrl, {
+        timeoutMs: TOOL_FETCH_TIMEOUT_MS,
+        maxBytes: MAX_FETCH_BYTES,
+      })
+      if (res.status < 200 || res.status >= 300) {
+        return `Không đọc được trang (HTTP ${res.status}).`
+      }
+      if (!/text|html|json|xml/i.test(res.contentType)) {
+        return `Không đọc được: content-type "${res.contentType}" không phải text.`
+      }
+      const text = htmlToText(res.text)
+      if (!text) return 'Trang không có nội dung text đọc được.'
+      return res.truncated ? text + '\n…[đã cắt ở 1 MiB]' : text
     } catch (err) {
       if (err instanceof SsrfBlockedError) return err.message
-      return `URL không hợp lệ: ${rawUrl}`
-    }
-    try {
-      const res = await fetchTimeout(
-        url.toString(),
-        {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OpenRemoteHub/1.0)' },
-          redirect: 'manual', // không follow redirect — redirect có thể trỏ vào nội bộ
-        },
-        TOOL_FETCH_TIMEOUT_MS,
-      )
-      if (res.status >= 300 && res.status < 400) {
-        return 'Trang yêu cầu chuyển hướng — tool không follow redirect vì lý do bảo mật.'
-      }
-      if (!res.ok) return `Không đọc được trang (HTTP ${res.status}).`
-      const contentType = res.headers.get('content-type') ?? ''
-      if (!/text|html|json|xml/i.test(contentType)) {
-        return `Không đọc được: content-type "${contentType}" không phải text.`
-      }
-      const reader = res.body?.getReader()
-      if (!reader) return 'Không đọc được nội dung trang.'
-      const chunks: Uint8Array[] = []
-      let received = 0
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        received += value.byteLength
-        if (received > MAX_FETCH_BYTES) {
-          await reader.cancel().catch(() => {})
-          break
-        }
-        chunks.push(value)
-      }
-      const total = chunks.reduce((n, c) => n + c.byteLength, 0)
-      const buf = new Uint8Array(total)
-      let offset = 0
-      for (const c of chunks) {
-        buf.set(c, offset)
-        offset += c.byteLength
-      }
-      const html = new TextDecoder('utf-8', { fatal: false }).decode(buf)
-      const text = htmlToText(html)
-      if (!text) return 'Trang không có nội dung text đọc được.'
-      return received > MAX_FETCH_BYTES ? text + '\n…[đã cắt ở 1 MiB]' : text
-    } catch {
-      return 'Không đọc được trang (lỗi mạng/timeout).'
+      return `Không đọc được trang (lỗi mạng/timeout): ${redactUrlSecrets(rawUrl)}`
     }
   },
 }

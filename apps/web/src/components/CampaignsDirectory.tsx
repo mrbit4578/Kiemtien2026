@@ -14,6 +14,7 @@ import {
   Award
 } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
+import SafeLink from './SafeLink'
 
 export interface Campaign {
   id: string
@@ -243,15 +244,14 @@ export function CampaignsDirectory() {
                   )}
                 </button>
 
-                <a
+                <SafeLink
                   href={campaign.affiliateUrl}
-                  target="_blank"
-                  rel="noreferrer"
                   className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10"
-                  title="Mở link đối tác"
                 >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
+                  <span title="Mở link đối tác">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </span>
+                </SafeLink>
               </div>
             </div>
           </div>
