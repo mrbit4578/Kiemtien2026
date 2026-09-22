@@ -46,7 +46,7 @@ describe('requiredEnv', () => {
 describe('Instagram connector dùng Instagram Login (không qua Facebook dialog)', () => {
   it('authorizationUrl trỏ về instagram.com/oauth/authorize, không PKCE', async () => {
     process.env.API_URL = 'https://api.example.com'
-    process.env.META_APP_ID = 'test-meta-app-id'
+    process.env.INSTAGRAM_APP_ID = 'test-ig-app-id'
 
     const { InstagramConnector } = await import('./instagram')
     const c = new InstagramConnector()
@@ -61,15 +61,15 @@ describe('Instagram connector dùng Instagram Login (không qua Facebook dialog)
     assert.ok(!url.includes('code_challenge'))
     assert.ok(url.includes('instagram_business_basic'))
     assert.ok(url.includes('instagram_business_content_publish'))
-    assert.ok(url.includes('client_id=test-meta-app-id'))
+    assert.ok(url.includes('client_id=test-ig-app-id'))
     assert.ok(url.includes('response_type=code'))
     delete process.env.API_URL
-    delete process.env.META_APP_ID
+    delete process.env.INSTAGRAM_APP_ID
   })
 
-  it('InstagramConnector.authorizationUrl throw OAuthNotConfiguredError khi thiếu META_APP_ID', async () => {
+  it('InstagramConnector.authorizationUrl throw OAuthNotConfiguredError khi thiếu INSTAGRAM_APP_ID', async () => {
     process.env.API_URL = 'https://api.example.com'
-    delete process.env.META_APP_ID
+    delete process.env.INSTAGRAM_APP_ID
 
     const { InstagramConnector } = await import('./instagram')
     const c = new InstagramConnector()
@@ -83,7 +83,7 @@ describe('Instagram connector dùng Instagram Login (không qua Facebook dialog)
         }),
       (e: unknown) => {
         assert.ok(e instanceof OAuthNotConfiguredError)
-        assert.equal(e.missingVar, 'META_APP_ID')
+        assert.equal(e.missingVar, 'INSTAGRAM_APP_ID')
         return true
       },
     )

@@ -17,10 +17,16 @@ import { OrhError } from '@orh/shared'
  *    → long-lived token (60 ngày)
  * 4. Graph API tại graph.instagram.com (KHÔNG cần Facebook Page)
  *
- * Yêu cầu trên dashboard Meta: thêm product "Instagram" → chọn
- * "API setup with Instagram login", khai báo redirect URI trong product đó,
- * tài khoản IG phải là Business/Creator, được thêm làm Instagram Tester
- * và accept invite trong app Instagram.
+ * Yêu cầu trên dashboard Meta: TẠO APP MỚI với use case
+ * "Manage messaging and content on Instagram" (app cũ dùng Facebook Login
+ * không thêm được use case Instagram — Meta yêu cầu tạo app mới).
+ * Trong app mới: Instagram → "API setup with Instagram login", khai báo
+ * redirect URI https://<api>/auth/instagram/callback, tài khoản IG phải là
+ * Business/Creator, được thêm làm Instagram Tester và accept invite trong
+ * app Instagram.
+ *
+ * Env riêng (KHÔNG dùng chung với Facebook): INSTAGRAM_APP_ID,
+ * INSTAGRAM_APP_SECRET.
  *
  * Publish flow:
  * 1. POST /{ig-user-id}/media → tạo container
@@ -63,7 +69,7 @@ export class InstagramConnector implements SocialConnector {
     validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
     // Instagram Login không dùng PKCE → build URL thủ công, không gắn code_challenge
     const url = new URL(IG_AUTH_URL)
-    url.searchParams.set('client_id', requiredEnv('instagram', 'META_APP_ID'))
+    url.searchParams.set('client_id', requiredEnv('instagram', 'INSTAGRAM_APP_ID'))
     url.searchParams.set('redirect_uri', input.redirectUri)
     url.searchParams.set('response_type', 'code')
     url.searchParams.set('scope', (input.scopes ?? DEFAULT_SCOPES).join(' '))
@@ -75,8 +81,8 @@ export class InstagramConnector implements SocialConnector {
     validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
     // Instagram trả code kèm hậu tố '#_' — strip trước khi dùng
     const code = input.code.split('#')[0]
-    const appId = requiredEnv('instagram', 'META_APP_ID')
-    const appSecret = requiredEnv('instagram', 'META_APP_SECRET')
+    const appId = requiredEnv('instagram', 'INSTAGRAM_APP_ID')
+    const appSecret = requiredEnv('instagram', 'INSTAGRAM_APP_SECRET')
 
     // 1. code → short-lived token (+ user_id)
     const res = await fetch(IG_TOKEN_URL, {
