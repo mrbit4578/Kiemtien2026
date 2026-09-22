@@ -18,6 +18,8 @@ import {
 } from 'lucide-react'
 
 import { useSession } from '../context/SessionContext'
+import { useContent } from '../lib/hooks'
+import { useRouter } from 'next/navigation'
 
 interface ReActStep {
   type: 'thought' | 'action' | 'observation' | 'answer'
@@ -27,6 +29,26 @@ interface ReActStep {
 
 export function AICopilotStudio() {
   const { sessionData, setCampaign, runManualStep } = useSession()
+  const { create } = useContent()
+  const router = useRouter()
+  const [pushing, setPushing] = useState(false)
+  const [pushError, setPushError] = useState<string | null>(null)
+
+  /** Đưa kết quả ReAct vào Content Studio: tạo bản nháp KHÔNG lên lịch
+   *  (scheduledAt = undefined) để có thể phê duyệt + push ngay tại trang /content. */
+  const handlePushToContentStudio = async (answerContent: string) => {
+    if (pushing) return
+    setPushing(true)
+    setPushError(null)
+    try {
+      await create({ caption: answerContent.trim() })
+      router.push('/content')
+    } catch (err) {
+      setPushError(err instanceof Error ? err.message : 'Đưa vào Content Studio thất bại.')
+    } finally {
+      setPushing(false)
+    }
+  }
   const [prompt, setPrompt] = useState('')
   const [selectedModel, setSelectedModel] = useState('Gemini 1.5 Pro')
   const [isGenerating, setIsGenerating] = useState(false)
@@ -284,17 +306,22 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
                       <Sparkles className="w-3.5 h-3.5" />
                       <span>Nạp Vào Kịch Bản Phiên #1</span>
                     </button>
-                    <a
-                      href="/content"
-                      className="px-3.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-semibold flex items-center gap-1.5 border border-white/10 transition-all"
+                    <button
+                      onClick={() => handlePushToContentStudio(step.content)}
+                      disabled={pushing}
+                      title="Tạo bản nháp trong Content Studio — không lên lịch, có thể phê duyệt và push ngay"
+                      className="px-3.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-semibold flex items-center gap-1.5 border border-white/10 transition-all disabled:opacity-50"
                     >
                       <CalendarPlus className="w-3.5 h-3.5 text-brand-emerald" />
-                      <span>Đưa vào Content Studio</span>
-                    </a>
+                      <span>{pushing ? 'Đang đưa vào...' : 'Đưa vào Content Studio'}</span>
+                    </button>
                     <span className="text-[11px] text-slate-400 flex items-center gap-1 font-mono">
                       <ShieldCheck className="w-3.5 h-3.5 text-brand-cyan" />
                       Tuân thủ ToS Platform
                     </span>
+                    {pushError && (
+                      <p className="w-full text-[11px] text-red-300">{pushError}</p>
+                    )}
                   </div>
                 )}
               </div>
