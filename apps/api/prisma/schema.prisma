@@ -2,13 +2,12 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Migrate/deploy dùng direct (non-pooler) connection: advisory lock của Postgres
+// là session-scoped, chạy qua pooler dễ bị kẹt lock từ session cũ → P1002.
+// Xem apps/api/scripts/migrate-with-retry.sh
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  # Migrate/deploy dùng direct (non-pooler) connection: advisory lock của
-  # Postgres là session-scoped, chạy qua pooler dễ bị kẹt lock từ session cũ
-  # (deploy trước bị SIGTERM giữa chừng) hoặc cold-start chậm → P1002.
-  # Xem apps/api/scripts/migrate-with-retry.sh
   directUrl = env("DIRECT_DATABASE_URL")
 }
 
