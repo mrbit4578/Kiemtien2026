@@ -6,6 +6,7 @@ import { X, Loader2, ImagePlus, CheckCircle2, AlertTriangle } from 'lucide-react
 import { api } from '../lib/api'
 
 type Template = { id: string; title: string; thumbnailUrl?: string }
+type Design = { id: string; title: string; thumbnailUrl?: string }
 type DatasetField = { name: string; type: string }
 
 /**
@@ -40,6 +41,10 @@ export function CanvaAutofillModal({ answer, onClose }: { answer: string; onClos
   const [templates, setTemplates] = useState<Template[]>([])
   const [loadingTemplates, setLoadingTemplates] = useState(true)
   const [templatesError, setTemplatesError] = useState<string | null>(null)
+  const [designs, setDesigns] = useState<Design[]>([])
+  const [loadingDesigns, setLoadingDesigns] = useState(false)
+  const [designsError, setDesignsError] = useState<string | null>(null)
+  const [selectedDesignId, setSelectedDesignId] = useState<string>('')
   const [selectedId, setSelectedId] = useState<string>('')
   const [fields, setFields] = useState<DatasetField[]>([])
   const [loadingFields, setLoadingFields] = useState(false)
@@ -53,8 +58,23 @@ export function CanvaAutofillModal({ answer, onClose }: { answer: string; onClos
     api
       .get<{ templates: Template[] }>('/canva/templates')
       .then((d) => {
-        setTemplates(d.templates ?? [])
-        if ((d.templates ?? []).length === 1) setSelectedId(d.templates[0].id)
+        const ts = d.templates ?? []
+        setTemplates(ts)
+        if (ts.length === 1) setSelectedId(ts[0].id)
+        // Không có Brand Template (Pro không có tính năng Enterprise) →
+        // fallback sang liệt kê thiết kế có sẵn.
+        if (ts.length === 0) {
+          setLoadingDesigns(true)
+          api
+            .get<{ designs: Design[] }>('/canva/designs')
+            .then((dd) => {
+              const ds = dd.designs ?? []
+              setDesigns(ds)
+              if (ds.length === 1) setSelectedDesignId(ds[0].id)
+            })
+            .catch((err) => setDesignsError(err instanceof Error ? err.message : 'Không tải được danh sách thiết kế.'))
+            .finally(() => setLoadingDesigns(false))
+        }
       })
       .catch((err) => setTemplatesError(err instanceof Error ? err.message : 'Không tải được danh sách mẫu.'))
       .finally(() => setLoadingTemplates(false))
@@ -93,6 +113,25 @@ export function CanvaAutofillModal({ answer, onClose }: { answer: string; onClos
       setDone(true)
     } catch (err) {
       setRunError(err instanceof Error ? err.message : 'Chạy autofill thất bại.')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  /** Xuất thiết kế Canva có sẵn → tạo nháp Content Studio (đường vòng cho Pro). */
+  const handleExportDesign = async () => {
+    if (!selectedDesignId || running) return
+    setRunning(true)
+    setRunError(null)
+    try {
+      await api.post('/canva/export-to-content', {
+        designId: selectedDesignId,
+        caption: answer.trim().slice(0, 2000),
+        format,
+      })
+      setDone(true)
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : 'Xuất thiết kế thất bại.')
     } finally {
       setRunning(false)
     }
@@ -144,9 +183,89 @@ export function CanvaAutofillModal({ answer, onClose }: { answer: string; onClos
                 <span>{templatesError}</span>
               </div>
             ) : templates.length === 0 ? (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-[13px] text-amber-200">
-                Không tìm thấy Brand Template nào trong tài khoản Canva của bạn. Autofill yêu cầu Brand
-                Template (theo tài liệu Canva là tính năng Enterprise) — hãy tạo mẫu trong Canva rồi thử lại.
+              <div className="space-y-4">
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-[13px] text-amber-200">
+                  Tài khoản Canva của bạn không có Brand Template (tính năng Enterprise).
+                  Dưới đây là các thiết kế có sẵn — chọn một cái để xuất file đưa vào Content Studio.
+                </div>
+                {loadingDesigns ? (
+                  <p className="text-[13px] text-slate-400 flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Đang tải thiết kế từ Canva…
+                  </p>
+                ) : designsError ? (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-[13px] text-amber-200 flex gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{designsError}</span>
+                  </div>
+                ) : designs.length === 0 ? (
+                  <p className="text-[13px] text-slate-500">
+                    Không tìm thấy thiết kế nào trong tài khoản Canva. Hãy tạo một thiết kế trong Canva rồi thử lại.
+                  </p>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-[12.5px] font-bold text-slate-300 mb-2">1. Chọn thiết kế có sẵn</label>
+                      <div className="grid grid-cols-2 gap-2 max-h-44 overflow-y-auto">
+                        {designs.map((d) => (
+                          <button
+                            key={d.id}
+                            onClick={() => setSelectedDesignId(d.id)}
+                            className={`rounded-xl border p-2.5 text-left transition-colors ${
+                              selectedDesignId === d.id
+                                ? 'border-brand-cyan bg-brand-cyan/10'
+                                : 'border-white/10 hover:border-white/25'
+                            }`}
+                          >
+                            {d.thumbnailUrl && (
+                              <img src={d.thumbnailUrl} alt={d.title} className="w-full h-20 object-cover rounded-lg mb-1.5" />
+                            )}
+                            <span className="block text-[12.5px] font-bold text-white truncate">{d.title}</span>
+                            <span className="block text-[11px] text-slate-500 font-mono truncate">{d.id}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[12.5px] font-bold text-slate-300 mb-2">2. Định dạng xuất</label>
+                      <div className="flex gap-2">
+                        {(['png', 'jpg', 'mp4'] as const).map((f) => (
+                          <button
+                            key={f}
+                            onClick={() => setFormat(f)}
+                            className={`px-4 py-1.5 rounded-lg text-[12.5px] font-bold uppercase border transition-colors ${
+                              format === f
+                                ? 'border-brand-cyan bg-brand-cyan/10 text-white'
+                                : 'border-white/10 text-slate-400 hover:border-white/25'
+                            }`}
+                          >
+                            {f}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {runError && <p className="text-[12.5px] text-red-300">{runError}</p>}
+
+                    <button
+                      onClick={handleExportDesign}
+                      disabled={!selectedDesignId || running}
+                      className="w-full py-3 rounded-xl bg-gradient-to-r from-brand-emerald to-brand-cyan text-dark-950 font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {running ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Đang xuất file… (có thể mất 1–2 phút)
+                        </>
+                      ) : (
+                        <>
+                          <ImagePlus className="w-4 h-4" />
+                          Xuất thiết kế → tạo nháp Content Studio
+                        </>
+                      )}
+                    </button>
+                  </>
+                )}
               </div>
             ) : (
               <div className="space-y-4">

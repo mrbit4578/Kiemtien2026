@@ -66,6 +66,13 @@ export interface CanvaBrandTemplate {
   thumbnailUrl?: string
 }
 
+export interface CanvaDesign {
+  id: string
+  title: string
+  thumbnailUrl?: string
+  createdAt?: number
+}
+
 export interface CanvaDatasetField {
   name: string
   type: string
@@ -195,6 +202,18 @@ export class CanvaConnector implements SocialConnector {
       id: t.id,
       title: t.title ?? t.name ?? t.id,
       thumbnailUrl: t.thumbnail?.url,
+    }))
+  }
+
+  /** Liệt kê thiết kế có sẵn của user (Pro dùng được — không cần Enterprise). */
+  async listDesigns(connection: Connection): Promise<CanvaDesign[]> {
+    const d = await canvaFetch(connection, '/designs?sort_by=modified_descending')
+    const items = d.items ?? []
+    return items.map((t: any) => ({
+      id: t.id,
+      title: t.title ?? t.id,
+      thumbnailUrl: t.thumbnail?.url,
+      createdAt: t.created_at,
     }))
   }
 

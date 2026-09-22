@@ -59,6 +59,49 @@ export class CanvaService {
     return this.getCanvaConnector().listBrandTemplates(conn)
   }
 
+  /** Liệt kê thiết kế Canva có sẵn (fallback khi không có Brand Template). */
+  async listDesigns(workspaceId: string) {
+    const conn = await this.getActiveConnection(workspaceId)
+    return this.getCanvaConnector().listDesigns(conn)
+  }
+
+  /**
+   * Xuất file từ URL Canva về rồi host lại lên imgbb.
+   * Dùng chung cho cả autofill và xuất design có sẵn.
+   */
+  private async hostViaImgbb(urls: string[]): Promise<string[]> {
+    const apiKey = process.env.IMGBB_API_KEY?.trim()
+    if (!apiKey) {
+      throw new ServiceUnavailableException(
+        'Thiếu biến môi trường IMGBB_API_KEY trên server — cần để host file từ Canva. ' +
+          'Thêm key vào Environment Variables của API service và deploy lại.',
+      )
+    }
+    const assetUrls: string[] = []
+    for (const url of urls) {
+      let buf: Buffer
+      try {
+        const res = await fetchTimeout(url, {}, 60000)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        buf = Buffer.from(await res.arrayBuffer())
+      } catch (err) {
+        throw new BadRequestException(
+          `Không tải được file export từ Canva (${err instanceof Error ? err.message : String(err)}). URL export hết hạn sau ~24h — hãy chạy lại.`,
+        )
+      }
+      const form = new FormData()
+      form.append('key', apiKey)
+      form.append('image', buf.toString('base64'))
+      const up = await fetchTimeout('https://api.imgbb.com/1/upload', { method: 'POST', body: form }, 60000)
+      const upData = (await up.json().catch(() => null)) as { data?: { url?: string } } | null
+      if (!up.ok || !upData?.data?.url) {
+        throw new BadRequestException('imgbb từ chối upload file từ Canva. Kiểm tra lại IMGBB_API_KEY.')
+      }
+      assetUrls.push(upData.data.url)
+    }
+    return assetUrls
+  }
+
   async getDataset(workspaceId: string, templateId: string) {
     const conn = await this.getActiveConnection(workspaceId)
     return this.getCanvaConnector().getTemplateDataset(conn, templateId)
@@ -107,35 +150,7 @@ export class CanvaService {
     const { designId, urls } = await this.runAutofill(workspaceId, brandTemplateId, data, format)
 
     // Tải file export về rồi host lại lên imgbb để có URL ổn định cho Instagram
-    const apiKey = process.env.IMGBB_API_KEY?.trim()
-    if (!apiKey) {
-      throw new ServiceUnavailableException(
-        'Thiếu biến môi trường IMGBB_API_KEY trên server — cần để host file từ Canva. ' +
-          'Thêm key vào Environment Variables của API service và deploy lại.',
-      )
-    }
-    const assetUrls: string[] = []
-    for (const url of urls) {
-      let buf: Buffer
-      try {
-        const res = await fetchTimeout(url, {}, 60000)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        buf = Buffer.from(await res.arrayBuffer())
-      } catch (err) {
-        throw new BadRequestException(
-          `Không tải được file export từ Canva (${err instanceof Error ? err.message : String(err)}). URL export hết hạn sau ~24h — hãy chạy lại autofill.`,
-        )
-      }
-      const form = new FormData()
-      form.append('key', apiKey)
-      form.append('image', buf.toString('base64'))
-      const up = await fetchTimeout('https://api.imgbb.com/1/upload', { method: 'POST', body: form }, 60000)
-      const upData = (await up.json().catch(() => null)) as { data?: { url?: string } } | null
-      if (!up.ok || !upData?.data?.url) {
-        throw new BadRequestException('imgbb từ chối upload file từ Canva. Kiểm tra lại IMGBB_API_KEY.')
-      }
-      assetUrls.push(upData.data.url)
-    }
+    const assetUrls = await this.hostViaImgbb(urls)
 
     const item = await this.prisma.contentItem.create({
       data: {
@@ -155,6 +170,44 @@ export class CanvaService {
       targetId: item.id,
       result: 'success',
       metadata: { designId, source: 'canva_autofill', brandTemplateId },
+    })
+    return { contentId: item.id, designId, assetUrls }
+  }
+
+  /**
+   * Đường vòng cho tài khoản Pro (không có Brand Template):
+   * xuất thiết kế Canva có sẵn → imgbb → tạo ContentItem draft chờ duyệt.
+   */
+  async exportDesignToContent(
+    workspaceId: string,
+    designId: string,
+    caption: string,
+    format: 'png' | 'jpg' | 'mp4' | 'gif' = 'png',
+  ) {
+    const conn = await this.getActiveConnection(workspaceId)
+    const connector = this.getCanvaConnector()
+    const exportJobId = await connector.createExport(conn, designId, format)
+    const urls = await connector.waitExport(conn, exportJobId)
+    const assetUrls = await this.hostViaImgbb(urls)
+
+    const item = await this.prisma.contentItem.create({
+      data: {
+        workspaceId,
+        caption,
+        assetUrl: assetUrls.join('\n'),
+        status: 'draft',
+        approvalStatus: 'pending',
+      },
+    })
+    await this.audit.log({
+      workspaceId,
+      actorId: workspaceId,
+      action: 'content_created',
+      provider: 'canva',
+      entityType: 'content',
+      targetId: item.id,
+      result: 'success',
+      metadata: { designId, source: 'canva_export', format },
     })
     return { contentId: item.id, designId, assetUrls }
   }

@@ -13,6 +13,13 @@ export class CanvaController {
     return { templates: await this.canva.listTemplates(workspaceId) }
   }
 
+  /** GET /canva/designs — liệt kê thiết kế có sẵn (fallback cho Pro, không cần Brand Template) */
+  @Get('designs')
+  async designs(@Session() session: any) {
+    const workspaceId = requireWorkspaceId(session)
+    return { designs: await this.canva.listDesigns(workspaceId) }
+  }
+
   /** GET /canva/templates/:id/dataset — các trường điền được của mẫu */
   @Get('templates/:id/dataset')
   async dataset(@Param('id') id: string, @Session() session: any) {
@@ -44,5 +51,20 @@ export class CanvaController {
   ) {
     const workspaceId = requireWorkspaceId(session)
     return this.canva.autofillToContent(workspaceId, body.brandTemplateId, body.data ?? {}, body.caption ?? '', body.format ?? 'png')
+  }
+
+  /**
+   * POST /canva/export-to-content — đường vòng cho Pro: xuất thiết kế có sẵn →
+   * upload imgbb → tạo ContentItem draft chờ duyệt.
+   * Body: { designId, caption, format? }
+   */
+  @Post('export-to-content')
+  @HttpCode(200)
+  async exportToContent(
+    @Body() body: { designId: string; caption: string; format?: 'png' | 'jpg' | 'mp4' | 'gif' },
+    @Session() session: any,
+  ) {
+    const workspaceId = requireWorkspaceId(session)
+    return this.canva.exportDesignToContent(workspaceId, body.designId, body.caption ?? '', body.format ?? 'png')
   }
 }
