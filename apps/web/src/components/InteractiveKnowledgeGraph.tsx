@@ -138,6 +138,27 @@ const DEFAULT_LINKS: GraphLink[] = [
   { source: 'prod_mic', target: 'chan_tiktok', label: 'Gắn link mua' },
 ]
 
+/**
+ * Dựng sẵn prompt tạo kịch bản từ dữ liệu của node đang chọn, để trang AI Copilot
+ * tự nạp vào ô nhập liệu (qua query param ?prompt=...).
+ */
+function buildNodePrompt(node: GraphNode | null): string {
+  if (!node) return 'Tạo kịch bản video TikTok 60 giây.'
+  const d = node.details
+  const lines = [`Tạo kịch bản video TikTok 60 giây cho ${node.label}.`]
+  if (d) {
+    lines.push(`Hiệu quả kỳ vọng: ${d.roi}.`)
+    lines.push(`Tỷ lệ hoa hồng: ${d.commission}.`)
+    lines.push(`Chiến lược kéo traffic: ${d.trafficStrategy}.`)
+    lines.push(`Mô hình AI khuyến nghị: ${d.recommendedModel}.`)
+    lines.push(`Bắt buộc tuân thủ ToS: ${d.tosCaution}.`)
+  }
+  lines.push(
+    'Kịch bản gồm: hook 3 giây giữ chân người xem, 3 phân đoạn nội dung (mỗi đoạn có gợi ý hình ảnh + lời thoại), caption gợi ý kèm hashtag, và phần kiểm tra tuân thủ ToS ở cuối.',
+  )
+  return lines.join('\n')
+}
+
 export function InteractiveKnowledgeGraph() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(DEFAULT_NODES[0])
@@ -420,7 +441,7 @@ export function InteractiveKnowledgeGraph() {
 
           <div className="pt-4 border-t border-white/10 mt-4">
             <a
-              href="/ai-copilot"
+              href={`/ai-copilot?prompt=${encodeURIComponent(buildNodePrompt(selectedNode))}`}
               className="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-brand-emerald to-brand-cyan text-dark-950 font-bold text-xs flex items-center justify-center gap-2 hover:opacity-95 shadow-glow-emerald transition-all"
             >
               <span>Dùng AI Copilot Tạo Kịch Bản Cho Node Này</span>

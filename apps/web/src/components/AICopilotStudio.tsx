@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { 
   Bot, 
   Sparkles, 
@@ -50,6 +50,17 @@ export function AICopilotStudio() {
     }
   }
   const [prompt, setPrompt] = useState('')
+
+  // Nhận prompt dựng sẵn từ trang khác (ví dụ: nút "Dùng AI Copilot Tạo Kịch Bản
+  // Cho Node Này" ở sơ đồ ngách) qua query param ?prompt=... → tự nạp vào ô nhập.
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get('prompt')
+      if (q && q.trim()) setPrompt(q)
+    } catch {
+      // bỏ qua nếu không đọc được query string
+    }
+  }, [])
   const [selectedModel, setSelectedModel] = useState('Gemini 1.5 Pro')
   const [isGenerating, setIsGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
