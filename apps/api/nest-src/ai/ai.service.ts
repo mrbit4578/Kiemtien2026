@@ -9,7 +9,7 @@ import {
 import { encrypt, decrypt } from '@orh/crypto'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
-import { getProviderMeta, publicProviderMeta, type AiProviderMeta } from './ai.providers'
+import { getProviderMeta, publicProviderMeta, type AiProviderMeta, type AiProviderId } from './ai.providers'
 import type { ConnectAiDto, ChatDto, ChatMessageDto } from './dto'
 
 const VALIDATE_TIMEOUT_MS = 10_000
@@ -236,6 +236,38 @@ export class AiService {
   }
 
   // ─── Chat ────────────────────────────────────────────────────────────────
+
+  /**
+   * Lấy key chat đã giải mã cho agent loop / các service nội bộ khác.
+   * Ném BadRequestException khi chưa kết nối hoặc key bị vô hiệu — cùng UX với chat().
+   * KHÔNG log apiKey.
+   */
+  async getChatKey(
+    workspaceId: string,
+    provider: AiProviderId,
+  ): Promise<{ meta: AiProviderMeta; apiKey: string; connId: string }> {
+    const meta = getProviderMeta(provider)
+    if (!meta) throw new BadRequestException('Provider không được hỗ trợ.')
+
+    const conn = await this.prisma.aiConnection.findUnique({
+      where: { workspaceId_provider: { workspaceId, provider: meta.id } },
+    })
+    if (!conn || conn.status !== 'active') {
+      throw new BadRequestException(
+        `Chưa kết nối ${meta.name} hoặc key đã bị vô hiệu. Hãy kết nối lại ở Cài đặt → AI Pro.`,
+      )
+    }
+
+    let apiKey: string
+    try {
+      apiKey = decrypt(conn.keyCipher)
+    } catch {
+      throw new InternalServerErrorException(
+        'Lỗi giải mã key: TOKEN_ENCRYPTION_KEY chưa được cấu hình đúng.',
+      )
+    }
+    return { meta, apiKey, connId: conn.id }
+  }
 
   /** POST /ai/chat — giải mã key server-side rồi proxy tới provider. */
   async chat(workspaceId: string, dto: ChatDto, ip?: string) {

@@ -321,6 +321,20 @@ export class RagService {
     return result
   }
 
+  /**
+   * Retrieval-only cho agent tool `knowledge_search`: hybrid dense+sparse (RRF),
+   * KHÔNG gọi LLM. Trả về tối đa `topK` chunk (mặc định 5, trần 10).
+   */
+  async searchChunks(
+    workspaceId: string,
+    query: string,
+    topK = 5,
+  ): Promise<Array<{ title: string; content: string; score: number }>> {
+    const k = Math.min(Math.max(topK, 1), 10)
+    const chunks = await this.hybridRetrieve(workspaceId, query, k)
+    return chunks.map((c) => ({ title: c.documentTitle, content: c.content, score: c.score }))
+  }
+
   // ── Strategy 1: Hybrid RAG (dense + sparse + RRF) ─────────────────────────
 
   private async strategyHybrid(

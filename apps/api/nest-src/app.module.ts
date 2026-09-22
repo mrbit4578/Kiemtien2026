@@ -10,6 +10,7 @@ import { AnalyticsModule } from './analytics/analytics.module'
 import { PrivacyModule } from './privacy/privacy.module'
 import { AiModule } from './ai/ai.module'
 import { RagModule } from './rag/rag.module'
+import { AgentModule } from './agent/agent.module'
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { RagModule } from './rag/rag.module'
     PrivacyModule,
     AiModule,
     RagModule,
+    AgentModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
