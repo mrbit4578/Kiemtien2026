@@ -14,12 +14,14 @@ import {
   ShieldCheck, 
   CalendarPlus,
   RefreshCw,
-  Clock
+  Clock,
+  ImagePlus
 } from 'lucide-react'
 
 import { useSession } from '../context/SessionContext'
 import { useContent } from '../lib/hooks'
 import { useRouter } from 'next/navigation'
+import { CanvaAutofillModal } from './CanvaAutofillModal'
 
 interface ReActStep {
   type: 'thought' | 'action' | 'observation' | 'answer'
@@ -33,6 +35,7 @@ export function AICopilotStudio() {
   const router = useRouter()
   const [pushing, setPushing] = useState(false)
   const [pushError, setPushError] = useState<string | null>(null)
+  const [canvaAnswer, setCanvaAnswer] = useState<string | null>(null)
 
   /** Đưa kết quả ReAct vào Content Studio: tạo bản nháp KHÔNG lên lịch
    *  (scheduledAt = undefined) để có thể phê duyệt + push ngay tại trang /content. */
@@ -326,6 +329,14 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
                       <CalendarPlus className="w-3.5 h-3.5 text-brand-emerald" />
                       <span>{pushing ? 'Đang đưa vào...' : 'Đưa vào Content Studio'}</span>
                     </button>
+                    <button
+                      onClick={() => setCanvaAnswer(step.content)}
+                      title="Điền kịch bản vào mẫu Canva (autofill) rồi tự tạo nháp Content Studio"
+                      className="px-3.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-semibold flex items-center gap-1.5 border border-white/10 transition-all"
+                    >
+                      <ImagePlus className="w-3.5 h-3.5 text-brand-cyan" />
+                      <span>Gửi sang Canva</span>
+                    </button>
                     <span className="text-[11px] text-slate-400 flex items-center gap-1 font-mono">
                       <ShieldCheck className="w-3.5 h-3.5 text-brand-cyan" />
                       Tuân thủ ToS Platform
@@ -340,6 +351,10 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
           })}
         </div>
       </div>
+
+      {canvaAnswer && (
+        <CanvaAutofillModal answer={canvaAnswer} onClose={() => setCanvaAnswer(null)} />
+      )}
     </div>
   )
 }

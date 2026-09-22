@@ -1,4 +1,4 @@
-export type Provider = 'google' | 'facebook' | 'instagram' | 'tiktok' | 'github';
+export type Provider = 'google' | 'facebook' | 'instagram' | 'tiktok' | 'github' | 'canva';
 export type ReviewStatus = 'approved' | 'pending_review' | 'not_supported';
 export type ConnectionStatus = 'active' | 'reauth_required' | 'revoked' | 'error';
 export type ContentStatus = 'draft' | 'pending_approval' | 'approved' | 'published' | 'failed';

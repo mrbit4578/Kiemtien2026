@@ -64,6 +64,13 @@ const PROVIDER_CATALOG: ProviderMeta[] = [
     scopes: ['read:user'],
     encryption: 'AES-256-GCM Envelope',
   },
+  {
+    id: 'canva',
+    label: 'Canva Pro',
+    description: 'Autofill mẫu thiết kế từ kịch bản AI rồi đẩy vào Content Studio.',
+    scopes: ['design:content:write', 'brandtemplate:content:write'],
+    encryption: 'AES-256-GCM Envelope',
+  },
 ]
 
 function toUiStatus(conn?: ApiConnection): ProviderStatus {

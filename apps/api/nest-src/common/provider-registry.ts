@@ -6,6 +6,7 @@ import {
   InstagramConnector,
   TikTokConnector,
   GitHubConnector,
+  CanvaConnector,
 } from '@orh/connectors'
 
 const REGISTRY: Record<string, SocialConnector> = {
@@ -14,6 +15,7 @@ const REGISTRY: Record<string, SocialConnector> = {
   instagram: new InstagramConnector(),
   tiktok: new TikTokConnector(),
   github: new GitHubConnector(),
+  canva: new CanvaConnector(),
 }
 
 export function getConnector(provider: string): SocialConnector {

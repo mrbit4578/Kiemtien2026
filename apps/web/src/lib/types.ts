@@ -3,7 +3,7 @@
  * Không bịa field: chỉ khai báo những gì backend thực sự trả về.
  */
 
-export type ApiProvider = 'google' | 'facebook' | 'instagram' | 'tiktok' | 'github'
+export type ApiProvider = 'google' | 'facebook' | 'instagram' | 'tiktok' | 'github' | 'canva'
 
 export type ApiConnectionStatus = 'active' | 'reauth_required' | 'revoked' | 'error'
 

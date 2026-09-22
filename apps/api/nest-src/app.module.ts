@@ -11,6 +11,7 @@ import { PrivacyModule } from './privacy/privacy.module'
 import { AiModule } from './ai/ai.module'
 import { RagModule } from './rag/rag.module'
 import { AgentModule } from './agent/agent.module'
+import { CanvaModule } from './canva/canva.module'
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { AgentModule } from './agent/agent.module'
     AiModule,
     RagModule,
     AgentModule,
+    CanvaModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
