@@ -303,7 +303,14 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    const mediaUrls = item.assetUrl ? [item.assetUrl] : []
+    // assetUrl có thể chứa nhiều URL (mỗi dòng một link, cách nhau bởi xuống dòng
+    // hoặc dấu phẩy) — nhiều ảnh → connector Instagram đăng dạng carousel.
+    const mediaUrls = item.assetUrl
+      ? item.assetUrl
+          .split(/[\n,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : []
     if (connection.provider === 'instagram' && mediaUrls.length === 0) {
       throw new OrhError(
         'CONTENT_REJECTED',

@@ -164,43 +164,61 @@ export class InstagramConnector implements SocialConnector {
 
   /**
    * Publish flow:
-   * 1. POST /{ig-user-id}/media → tạo container
-   * 2. POST /{ig-user-id}/media_publish → publish container
+   * 1 ảnh: POST /{ig-user-id}/media → tạo container → POST /media_publish.
+   * Nhiều ảnh: tạo từng item container (is_carousel_item=true), gom thành
+   * carousel container (media_type=CAROUSEL + children), rồi publish.
    *
    * KHÔNG tự động publish — phải có approval_status = 'approved'
    */
   async publish(input: PublishInput): Promise<PublishResult> {
     const token = decrypt(input.connection.encryptedAccessToken)
     const igUserId = input.connection.providerUserId
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    }
 
-    // Step 1: Tạo container
-    const containerRes = await fetch(`${IG_GRAPH_URL}/${igUserId}/media`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
+    const createContainer = async (body: Record<string, unknown>): Promise<string> => {
+      const res = await fetch(`${IG_GRAPH_URL}/${igUserId}/media`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        if (err.error?.code === 36000) {
+          throw new OrhError('RATE_LIMITED', 'Đạt giới hạn 400 containers/24h.', false, 'instagram')
+        }
+        throw new OrhError('CONTENT_REJECTED', err.error?.message ?? 'Container creation failed.', false, 'instagram')
+      }
+      const { id } = await res.json()
+      return id as string
+    }
+
+    let containerId: string
+    if (input.mediaUrls.length > 1) {
+      // Carousel: mỗi ảnh một item container, caption gắn ở carousel cha
+      const children: string[] = []
+      for (const image_url of input.mediaUrls) {
+        children.push(await createContainer({ image_url, is_carousel_item: true }))
+      }
+      containerId = await createContainer({
+        media_type: 'CAROUSEL',
+        children,
+        caption: input.caption,
+      })
+    } else {
+      // Step 1: Tạo container
+      containerId = await createContainer({
         image_url: input.mediaUrls[0],
         caption: input.caption,
-      }),
-    })
-    if (!containerRes.ok) {
-      const err = await containerRes.json().catch(() => ({}))
-      if (err.error?.code === 36000) {
-        throw new OrhError('RATE_LIMITED', 'Đạt giới hạn 400 containers/24h.', false, 'instagram')
-      }
-      throw new OrhError('CONTENT_REJECTED', err.error?.message ?? 'Container creation failed.', false, 'instagram')
+      })
     }
-    const { id: containerId } = await containerRes.json()
 
     // Step 2: Publish container
     const publishRes = await fetch(`${IG_GRAPH_URL}/${igUserId}/media_publish`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
       body: JSON.stringify({ creation_id: containerId }),
     })
     if (!publishRes.ok) {

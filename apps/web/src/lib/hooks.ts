@@ -184,17 +184,18 @@ export function useContent() {
   )
 
   /**
-   * Upload ảnh từ máy lên host (imgbb) → trả về direct URL để gắn assetUrl.
+   * Upload một hoặc nhiều ảnh từ máy lên host (imgbb) → trả về danh sách
+   * direct URL để gắn assetUrl (nhiều ảnh → Instagram đăng carousel).
    * Backend trả 503 nếu chưa cấu hình IMGBB_API_KEY.
    */
-  const uploadImage = useCallback(async (file: File) => {
+  const uploadImages = useCallback(async (files: File[]) => {
     const form = new FormData()
-    form.append('file', file)
-    const res = await api.uploadFile<{ url: string }>('/content/upload-image', form)
-    return res.url
+    for (const f of files) form.append('files', f)
+    const res = await api.uploadFile<{ urls: string[] }>('/content/upload-image', form)
+    return res.urls
   }, [])
 
-  return { items, loading, error, refresh, create, approve, publish, updateContent, retryPublish, uploadImage }
+  return { items, loading, error, refresh, create, approve, publish, updateContent, retryPublish, uploadImages }
 }
 
 /* ─── AI Pro ─────────────────────────────────────────────────────────────── */

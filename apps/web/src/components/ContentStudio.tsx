@@ -95,7 +95,7 @@ function toUiItem(a: ApiContentItem): ContentItem {
 
 export function ContentStudio() {
   const { sessionData, currentStep, startAutoPilot } = useSession()
-  const { items, loading, error, create, approve, publish, updateContent, retryPublish, uploadImage } = useContent()
+  const { items, loading, error, create, approve, publish, updateContent, retryPublish, uploadImages } = useContent()
   const { connections } = useConnections()
   const activeConnections = useMemo(
     () => connections.filter((c) => c.status === 'active'),
@@ -180,22 +180,24 @@ export function ContentStudio() {
   const [uploading, setUploading] = useState<null | 'editor' | 'create'>(null)
 
   /**
-   * Chọn file ảnh từ máy → upload lên host → điền direct URL vào ô link ảnh.
+   * Chọn một hoặc nhiều file ảnh từ máy → upload lên host → điền các direct
+   * URL (mỗi dòng một link) vào ô link ảnh. Nhiều ảnh → Instagram đăng carousel.
    * `target`: 'editor' điền vào editor sửa bài, 'create' điền vào modal tạo bài.
    */
-  const handleImageFile = async (file: File | undefined, target: 'editor' | 'create') => {
-    if (!file) return
-    if (!file.type.startsWith('image/')) {
+  const handleImageFile = async (fileList: FileList | null | undefined, target: 'editor' | 'create') => {
+    const files = Array.from(fileList ?? []).filter((f) => f.type.startsWith('image/'))
+    if (files.length === 0) {
       setOpError('Chỉ nhận file ảnh (JPG/PNG/WebP).')
       return
     }
     setUploading(target)
     setOpError(null)
     try {
-      const url = await uploadImage(file)
-      if (target === 'editor') setAssetUrlValue(url)
-      else setNewAssetUrl(url)
-      setOpOk('Đã tải ảnh lên — link đã được điền vào ô.')
+      const urls = await uploadImages(files)
+      const joined = urls.join('\n')
+      if (target === 'editor') setAssetUrlValue(joined)
+      else setNewAssetUrl(joined)
+      setOpOk(`Đã tải lên ${urls.length} ảnh — link đã được điền vào ô${urls.length > 1 ? ' (đăng carousel)' : ''}.`)
     } catch (err) {
       setOpError(err instanceof Error ? err.message : 'Tải ảnh lên thất bại.')
     } finally {
@@ -565,10 +567,11 @@ export function ContentStudio() {
                         <input
                           type="file"
                           accept="image/*"
+                          multiple
                           className="hidden"
                           disabled={uploading === 'editor'}
                           onChange={(e) => {
-                            handleImageFile(e.target.files?.[0], 'editor')
+                            handleImageFile(e.target.files, 'editor')
                             e.target.value = ''
                           }}
                         />
@@ -753,10 +756,11 @@ export function ContentStudio() {
                     <input
                       type="file"
                       accept="image/*"
+                      multiple
                       className="hidden"
                       disabled={uploading === 'create'}
                       onChange={(e) => {
-                        handleImageFile(e.target.files?.[0], 'create')
+                        handleImageFile(e.target.files, 'create')
                         e.target.value = ''
                       }}
                     />
