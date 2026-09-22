@@ -3,8 +3,8 @@ import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
 import { getConnector } from '../common/provider-registry'
 import { encrypt } from '@orh/crypto'
-import { OrhError } from '@orh/shared'
-import type { Connection, Provider, PublishInput } from '@orh/shared'
+import { OrhError, detectMediaKind } from '@orh/shared'
+import type { Connection, Provider, PublishInput, MediaKind } from '@orh/shared'
 
 /**
  * Publish worker — xử lý các Job publish content còn kẹt ở trạng thái 'pending'.
@@ -49,7 +49,10 @@ export type RetryDecision =
 
 export function decideRetry(err: unknown, attempts: number): RetryDecision {
   const isRateLimited = err instanceof OrhError && err.code === 'RATE_LIMITED'
-  const retryable = isRateLimited || (err instanceof OrhError && err.retryable)
+  // Lỗi lạ không phải OrhError (ví dụ TypeError do fetch rớt mạng, DNS fail)
+  // không chứng minh được là vĩnh viễn → coi như transient, retry với backoff.
+  // Chỉ OrhError có retryable=false mới là lỗi vĩnh viễn (fail ngay).
+  const retryable = isRateLimited || !(err instanceof OrhError) || err.retryable
   if (retryable && attempts < MAX_ATTEMPTS) {
     return { kind: 'retry', delayMs: computeBackoffMs(attempts, isRateLimited) }
   }
@@ -58,6 +61,61 @@ export function decideRetry(err: unknown, attempts: number): RetryDecision {
     return { kind: 'terminal', status: 'dead_letter' }
   }
   return { kind: 'terminal', status: attempts >= MAX_ATTEMPTS ? 'dead_letter' : 'failed' }
+}
+
+/** Timeout cho mỗi lần probe URL media — fail nhanh để không kẹt worker. */
+const MEDIA_PROBE_TIMEOUT_MS = 15_000
+
+/**
+ * Kiểm tra URL media có thật sự trỏ tới ảnh/video TRƯỚC KHI gọi API Instagram.
+ * Fail-fast với message tiếng Việt rõ ràng thay vì để Instagram trả lỗi khó
+ * hiểu ("Only photo or video can be accepted as media type") sau nhiều retry.
+ *
+ * - Lỗi mạng/timeout khi probe → OrhError TRANSIENT_NETWORK_ERROR (retryable=true):
+ *   link có thể vẫn tốt, chỉ là mạng lúc probe gặp sự cố.
+ * - HTTP >= 400 → CONTENT_REJECTED (vĩnh viễn): link hỏng/hết hạn.
+ * - content-type không phải image/* hay video/* → CONTENT_REJECTED (vĩnh viễn):
+ *   thường do dán nhầm link trang web (ví dụ trang xem ảnh ibb.co) thay vì
+ *   link ảnh trực tiếp, hoặc export Canva đã hết hạn trả về trang HTML.
+ */
+export async function probeMediaUrl(url: string): Promise<MediaKind> {
+  let res: Response
+  try {
+    res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(MEDIA_PROBE_TIMEOUT_MS) })
+    if (res.status === 405 || res.status === 501) {
+      // Host không hỗ trợ HEAD → GET 1 byte đầu chỉ để đọc content-type
+      res = await fetch(url, {
+        headers: { Range: 'bytes=0-0' },
+        signal: AbortSignal.timeout(MEDIA_PROBE_TIMEOUT_MS),
+      })
+      await res.arrayBuffer().catch(() => null)
+    }
+  } catch (err) {
+    throw new OrhError(
+      'TRANSIENT_NETWORK_ERROR',
+      `Không kiểm tra được link media (${err instanceof Error ? err.message : String(err)}). Sẽ thử lại sau.`,
+      true,
+    )
+  }
+  if (res.status >= 400) {
+    throw new OrhError(
+      'CONTENT_REJECTED',
+      `Link media không tải được (HTTP ${res.status}) — link hỏng hoặc đã hết hạn. Kiểm tra lại ô link ảnh/video của content.`,
+      false,
+    )
+  }
+  const ct = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+  if (ct.startsWith('video/')) return 'video'
+  if (ct.startsWith('image/')) return 'image'
+  if (!ct) {
+    // Server không trả content-type → đoán theo đuôi file (best effort)
+    return detectMediaKind(url)
+  }
+  throw new OrhError(
+    'CONTENT_REJECTED',
+    `Link media không phải ảnh/video (server trả về "${ct}"). Instagram chỉ nhận link ảnh/video trực tiếp — đừng dán link trang web (ví dụ trang xem ảnh ibb.co thay vì link i.ibb.co).`,
+    false,
+  )
 }
 
 function workerEnabled(): boolean {
@@ -138,8 +196,20 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
           data: { status: 'running', attempts: { increment: 1 }, lastError: null },
         })
         if (claimed.count === 1) {
-          await this.processJob(id).catch((err: unknown) => {
+          await this.processJob(id).catch(async (err: unknown) => {
+            // Lỗi ngoài dự kiến (thường là DB fail giữa chừng khi update status).
+            // Trả job về pending để không kẹt ở 'running' tới lần deploy sau.
             this.logger.error(`Lỗi không mong đợi khi xử lý job ${id}: ${(err as Error).message}`)
+            try {
+              await this.prisma.job.updateMany({
+                where: { id, status: 'running' },
+                data: { status: 'pending', nextRunAt: null },
+              })
+            } catch (resetErr) {
+              this.logger.error(
+                `Không reset được job ${id} về pending: ${(resetErr as Error).message}`,
+              )
+            }
           })
         }
       }
@@ -322,10 +392,18 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
       )
     }
 
+    // Probe từng URL trước khi gọi Instagram: fail-fast với message rõ ràng
+    // thay vì để Instagram trả lỗi khó hiểu sau nhiều lần retry.
+    const mediaKinds: MediaKind[] = []
+    for (const u of mediaUrls) {
+      mediaKinds.push(await probeMediaUrl(u))
+    }
+
     const input: PublishInput = {
       connection: sharedConnection,
       caption: item.caption,
       mediaUrls,
+      mediaKinds,
     }
     if (typeof connector.publish !== 'function') {
       // Provider chỉ dùng để tạo nội dung (ví dụ Canva — công cụ thiết kế,

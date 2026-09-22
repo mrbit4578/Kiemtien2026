@@ -263,6 +263,11 @@ export function CanvaAutofillModal({ answer, onClose }: { answer: string; onClos
                           </button>
                         ))}
                       </div>
+                      {format === 'mp4' && (
+                        <p className="mt-2 text-[12px] text-slate-400">
+                          File MP4 khi đăng lên Instagram sẽ lên dạng <span className="text-slate-200 font-semibold">Reels</span>.
+                        </p>
+                      )}
                     </div>
 
                     <div>
@@ -326,6 +331,11 @@ export function CanvaAutofillModal({ answer, onClose }: { answer: string; onClos
                           </button>
                         ))}
                       </div>
+                      {format === 'mp4' && (
+                        <p className="mt-2 text-[12px] text-slate-400">
+                          File MP4 khi đăng lên Instagram sẽ lên dạng <span className="text-slate-200 font-semibold">Reels</span>.
+                        </p>
+                      )}
                     </div>
 
                     {runError && <p className="text-[12.5px] text-red-300">{runError}</p>}

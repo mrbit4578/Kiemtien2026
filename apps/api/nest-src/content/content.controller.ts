@@ -159,7 +159,7 @@ export class ContentController {
           cb(null, true)
         } else {
           cb(
-            new BadRequestException('Chỉ nhận file ảnh (JPG/PNG/WebP, tối đa 10MB mỗi ảnh).'),
+            new BadRequestException('Chỉ nhận file ảnh (tối đa 10MB mỗi ảnh).'),
             false,
           )
         }

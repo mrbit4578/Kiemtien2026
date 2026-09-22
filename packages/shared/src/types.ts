@@ -81,6 +81,29 @@ export interface PublishInput {
   caption: string
   mediaUrls: string[]
   scheduledAt?: Date
+  /**
+   * Loại media đã được probe trước (song song với mediaUrls).
+   * Worker điền sau khi kiểm tra content-type của từng URL; connector dùng để
+   * chọn đúng tham số Instagram (image_url vs video_url + REELS). Không có thì
+   * connector tự đoán theo đuôi file.
+   */
+  mediaKinds?: MediaKind[]
+}
+
+/** Loại media cho publish: ảnh hoặc video. */
+export type MediaKind = 'image' | 'video'
+
+const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm'])
+
+/**
+ * Đoán loại media theo đuôi file trong URL (bỏ query string và fragment).
+ * Không chắc chắn 100% — worker nên probe content-type thật qua probeMediaUrl;
+ * đây chỉ là fallback nhanh phía connector.
+ */
+export function detectMediaKind(url: string): MediaKind {
+  const clean = url.split('?')[0].split('#')[0]
+  const ext = clean.slice(clean.lastIndexOf('.') + 1).toLowerCase()
+  return VIDEO_EXTENSIONS.has(ext) ? 'video' : 'image'
 }
 
 export interface PublishResult {

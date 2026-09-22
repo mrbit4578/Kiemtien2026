@@ -1,9 +1,9 @@
 import type { SocialConnector } from './interface';
 import { requiredEnv } from './env';
-import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider, PublishInput, PublishResult } from '@orh/shared'
+import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider, PublishInput, PublishResult, MediaKind } from '@orh/shared'
 import { validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
-import { OrhError } from '@orh/shared'
+import { OrhError, detectMediaKind } from '@orh/shared'
 
 /**
  * Instagram connector (Instagram API with Instagram Login)
@@ -165,14 +165,19 @@ export class InstagramConnector implements SocialConnector {
   /**
    * Publish flow:
    * 1 ảnh: POST /{ig-user-id}/media → tạo container → POST /media_publish.
+   * 1 video: container với video_url + media_type=REELS → chờ FINISHED → publish.
    * Nhiều ảnh: tạo từng item container (is_carousel_item=true), gom thành
    * carousel container (media_type=CAROUSEL + children), rồi publish.
+   * Carousel có video chưa hỗ trợ → báo lỗi rõ ràng (đăng video riêng lẻ).
    *
    * KHÔNG tự động publish — phải có approval_status = 'approved'
    */
   async publish(input: PublishInput): Promise<PublishResult> {
     const token = decrypt(input.connection.encryptedAccessToken)
     const igUserId = input.connection.providerUserId
+    // Loại media: ưu tiên kết quả probe từ worker (mediaKinds), fallback đoán
+    // theo đuôi file nếu connector được gọi trực tiếp mà không qua worker.
+    const kinds = input.mediaKinds ?? input.mediaUrls.map((u) => detectMediaKind(u))
     const headers = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
@@ -227,7 +232,22 @@ export class InstagramConnector implements SocialConnector {
     }
 
     let containerId: string
-    if (input.mediaUrls.length > 1) {
+    if (input.mediaUrls.length === 1 && kinds[0] === 'video') {
+      // 1 video → đăng dạng Reels (video_url + media_type=REELS)
+      containerId = await createContainer({
+        video_url: input.mediaUrls[0],
+        media_type: 'REELS',
+        caption: input.caption,
+      })
+    } else if (input.mediaUrls.length > 1) {
+      if (kinds.some((k) => k === 'video')) {
+        throw new OrhError(
+          'CONTENT_REJECTED',
+          'Carousel có video chưa được hỗ trợ — hãy đăng video riêng lẻ (1 video/bài, sẽ lên dạng Reels).',
+          false,
+          'instagram',
+        )
+      }
       // Carousel: mỗi ảnh một item container, caption gắn ở carousel cha
       const children: string[] = []
       for (const image_url of input.mediaUrls) {
