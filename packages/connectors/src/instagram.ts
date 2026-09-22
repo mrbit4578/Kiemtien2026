@@ -6,15 +6,23 @@ import { decrypt } from '@orh/crypto'
 import { OrhError } from '@orh/shared'
 
 /**
- * Instagram connector (Instagram Graph API via Facebook Login for Business)
+ * Instagram connector (Instagram API with Facebook Login for Business)
+ *
+ * Meta đã khai tử Instagram Basic Display (api.instagram.com) — luồng mới:
+ * 1. Facebook Login dialog (www.facebook.com/vXX/dialog/oauth) với scope instagram_*
+ * 2. Đổi code tại graph.facebook.com/vXX/oauth/access_token
+ * 3. Lấy IG professional account qua /me/accounts?fields=instagram_business_account
+ * 4. Publish qua /{ig-user-id}/media + /{ig-user-id}/media_publish
+ *
+ * Yêu cầu: tài khoản Instagram professional (business/creator) đã liên kết
+ * với một Facebook Page mà user quản lý.
  *
  * Publish flow:
  * 1. Tạo container (media object)
- * 2. Upload media
- * 3. Publish container
+ * 2. Publish container
  * Container hết hạn sau 24 giờ; giới hạn 400 container/24h
  *
- * Ref: https://developers.facebook.com/docs/instagram-platform/
+ * Ref: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login
  */
 
 export const INSTAGRAM_MANIFEST: PermissionManifest = {
@@ -35,10 +43,12 @@ export const INSTAGRAM_MANIFEST: PermissionManifest = {
       sensitivityLevel: 'sensitive',
     },
   ],
-  notes: 'Cần tài khoản professional. Container hết hạn 24h. Giới hạn 400 containers/24h. User phải có task MANAGE hoặc CREATE_CONTENT.',
+  notes: 'Cần tài khoản professional liên kết với Facebook Page. Container hết hạn 24h. Giới hạn 400 containers/24h. User phải có task MANAGE hoặc CREATE_CONTENT.',
 }
 
-const IG_GRAPH_URL = 'https://graph.instagram.com'
+const FB_DIALOG_URL = 'https://www.facebook.com/v19.0/dialog/oauth'
+const FB_TOKEN_URL = 'https://graph.facebook.com/v19.0/oauth/access_token'
+const GRAPH_URL = 'https://graph.facebook.com/v19.0'
 const ALLOWED_REDIRECT_URIS = [`${process.env.API_URL}/auth/instagram/callback`]
 
 export class InstagramConnector implements SocialConnector {
@@ -47,10 +57,10 @@ export class InstagramConnector implements SocialConnector {
 
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
     validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
-    return buildOAuthUrl('https://api.instagram.com/oauth/authorize', {
+    return buildOAuthUrl(FB_DIALOG_URL, {
       clientId: requiredEnv('instagram', 'META_APP_ID'),
       redirectUri: input.redirectUri,
-      scopes: input.scopes ?? ['instagram_basic'],
+      scopes: input.scopes ?? ['instagram_basic', 'instagram_content_publish'],
       state: input.state,
       codeChallenge: input.codeChallenge,
     })
@@ -58,14 +68,14 @@ export class InstagramConnector implements SocialConnector {
 
   async exchangeCode(input: OAuthCallbackInput): Promise<TokenSet> {
     validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
-    const res = await fetch('https://api.instagram.com/oauth/access_token', {
+    // A2: client_secret và code đi trong POST body, KHÔNG qua query string
+    const res = await fetch(FB_TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         client_id: requiredEnv('instagram', 'META_APP_ID'),
-        client_secret: requiredEnv('instagram', 'META_APP_SECRET'),
-        grant_type: 'authorization_code',
         redirect_uri: input.redirectUri,
+        client_secret: requiredEnv('instagram', 'META_APP_SECRET'),
         code: input.code,
       }),
     })
@@ -73,7 +83,7 @@ export class InstagramConnector implements SocialConnector {
     const d = await res.json()
     return {
       accessToken: d.access_token,
-      expiresAt: new Date(Date.now() + 3600 * 1000),
+      expiresAt: new Date(Date.now() + (d.expires_in ?? 3600) * 1000),
       scopes: [],
       tokenType: 'Bearer',
     }
@@ -82,23 +92,42 @@ export class InstagramConnector implements SocialConnector {
   async getIdentity(connection: Connection): Promise<ProviderIdentity> {
     const token = decrypt(connection.encryptedAccessToken)
     // A2: token qua Authorization header, KHÔNG qua query string
-    const res = await fetch(`${IG_GRAPH_URL}/me?fields=id,username`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    // Tìm IG professional account liên kết với Page user quản lý
+    const res = await fetch(
+      `${GRAPH_URL}/me/accounts?fields=id,name,instagram_business_account{id,username}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
     if (!res.ok) throw new OrhError('TOKEN_EXPIRED', 'Instagram token invalid.', true, 'instagram')
     const d = await res.json()
-    return { providerUserId: d.id, displayName: d.username }
+    const page = (d.data ?? []).find((p: any) => p.instagram_business_account?.id)
+    if (!page) {
+      throw new OrhError(
+        'CONTENT_REJECTED',
+        'Không tìm thấy tài khoản Instagram professional liên kết với Facebook Page. Hãy liên kết IG business/creator với Page rồi thử lại.',
+        false,
+        'instagram',
+      )
+    }
+    return {
+      providerUserId: page.instagram_business_account.id,
+      displayName: page.instagram_business_account.username,
+    }
   }
 
   async revoke(connection: Connection): Promise<void> {
-    // Instagram không có revoke endpoint riêng → xóa token phía local
-    // User revoke qua Settings > Apps and Websites trên Facebook
+    // Thu hồi quyền qua Graph API (best effort); user cũng có thể gỡ
+    // qua Settings > Apps and Websites trên Facebook.
+    const token = decrypt(connection.encryptedAccessToken)
+    await fetch(`${GRAPH_URL}/${connection.providerUserId}/permissions`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
   }
 
   /**
    * Publish flow:
-   * 1. POST /me/media → tạo container
-   * 2. POST /me/media_publish → publish container
+   * 1. POST /{ig-user-id}/media → tạo container
+   * 2. POST /{ig-user-id}/media_publish → publish container
    *
    * KHÔNG tự động publish — phải có approval_status = 'approved'
    */
@@ -107,13 +136,15 @@ export class InstagramConnector implements SocialConnector {
     const igUserId = input.connection.providerUserId
 
     // Step 1: Tạo container
-    const containerRes = await fetch(`${IG_GRAPH_URL}/${igUserId}/media`, {
+    const containerRes = await fetch(`${GRAPH_URL}/${igUserId}/media`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify({
         image_url: input.mediaUrls[0],
         caption: input.caption,
-        access_token: token,
       }),
     })
     if (!containerRes.ok) {
@@ -126,10 +157,13 @@ export class InstagramConnector implements SocialConnector {
     const { id: containerId } = await containerRes.json()
 
     // Step 2: Publish container
-    const publishRes = await fetch(`${IG_GRAPH_URL}/${igUserId}/media_publish`, {
+    const publishRes = await fetch(`${GRAPH_URL}/${igUserId}/media_publish`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ creation_id: containerId, access_token: token }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ creation_id: containerId }),
     })
     if (!publishRes.ok) {
       throw new OrhError('CONTENT_REJECTED', 'Instagram publish failed.', false, 'instagram')

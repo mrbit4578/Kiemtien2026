@@ -43,6 +43,52 @@ describe('requiredEnv', () => {
   })
 })
 
+describe('Instagram connector dùng Facebook Login (Meta khai tử Basic Display)', () => {
+  it('authorizationUrl trỏ về facebook.com dialog/oauth, không còn api.instagram.com', async () => {
+    process.env.API_URL = 'https://api.example.com'
+    process.env.META_APP_ID = 'test-meta-app-id'
+
+    const { InstagramConnector } = await import('./instagram')
+    const c = new InstagramConnector()
+    const url = c.authorizationUrl({
+      workspaceId: 'w1',
+      redirectUri: 'https://api.example.com/auth/instagram/callback',
+      state: 's',
+      codeChallenge: 'c',
+    })
+    assert.ok(url.startsWith('https://www.facebook.com/v19.0/dialog/oauth'))
+    assert.ok(!url.includes('api.instagram.com'))
+    assert.ok(url.includes('instagram_basic'))
+    assert.ok(url.includes('instagram_content_publish'))
+    assert.ok(url.includes('client_id=test-meta-app-id'))
+    delete process.env.API_URL
+    delete process.env.META_APP_ID
+  })
+
+  it('InstagramConnector.authorizationUrl throw OAuthNotConfiguredError khi thiếu META_APP_ID', async () => {
+    process.env.API_URL = 'https://api.example.com'
+    delete process.env.META_APP_ID
+
+    const { InstagramConnector } = await import('./instagram')
+    const c = new InstagramConnector()
+    assert.throws(
+      () =>
+        c.authorizationUrl({
+          workspaceId: 'w1',
+          redirectUri: 'https://api.example.com/auth/instagram/callback',
+          state: 's',
+          codeChallenge: 'c',
+        }),
+      (e: unknown) => {
+        assert.ok(e instanceof OAuthNotConfiguredError)
+        assert.equal(e.missingVar, 'META_APP_ID')
+        return true
+      },
+    )
+    delete process.env.API_URL
+  })
+})
+
 describe('connector fail-fast khi thiếu client id', () => {
   it('GoogleConnector.authorizationUrl throw OAuthNotConfiguredError (không còn client_id=undefined)', async () => {
     // ALLOWED_REDIRECT_URIS được build lúc module load → set API_URL trước dynamic import
