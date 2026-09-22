@@ -92,7 +92,9 @@ export function ContentStudio() {
   const [newTitle, setNewTitle] = useState('')
   const [newCaption, setNewCaption] = useState('')
   const [newProduct, setNewProduct] = useState('')
-  const [newScheduled, setNewScheduled] = useState('2026-09-25 19:00')
+  // Mặc định "Đăng ngay" — không lên lịch; bật tắt để chọn giờ cụ thể.
+  const [publishNow, setPublishNow] = useState(true)
+  const [newScheduled, setNewScheduled] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
   const [opError, setOpError] = useState<string | null>(null)
   const [opOk, setOpOk] = useState<string | null>(null)
@@ -176,7 +178,17 @@ export function ContentStudio() {
         title: newTitle,
         caption: newCaption,
         channels: ['tiktok', 'instagram'],
-        scheduledAt: newScheduled,
+        scheduledAt: publishNow
+          ? 'Đăng ngay'
+          : newScheduled
+            ? new Date(newScheduled).toLocaleString('vi-VN', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            : 'Chưa lên lịch',
         status: 'pending_approval',
         affiliateProduct: newProduct || 'Sản phẩm tiếp thị',
         commission: '15% - 30%',
@@ -184,17 +196,23 @@ export function ContentStudio() {
       setDemoPosts([newPost, ...demoPosts])
     } else {
       // Backend không có field `title` — gộp tiêu đề vào đầu caption.
-      // scheduledAt chuyển sang ISO để qua được @IsDateString của backend.
+      // "Đăng ngay": scheduledAt = undefined → job chạy ngay khi đẩy queue.
+      // "Lên lịch": scheduledAt chuyển sang ISO để qua được @IsDateString của backend.
       setBusyId('__create')
       setOpError(null)
       try {
         const caption = `${newTitle.trim()}\n\n${newCaption.trim()}`
-        const d = new Date(newScheduled.replace(' ', 'T'))
-        await create({
-          caption,
-          scheduledAt: !isNaN(d.getTime()) ? d.toISOString() : undefined,
-        })
-        setOpOk('Đã tạo bài viết (bản nháp, chờ phê duyệt).')
+        let scheduledAt: string | undefined
+        if (!publishNow && newScheduled) {
+          const d = new Date(newScheduled)
+          if (!isNaN(d.getTime())) scheduledAt = d.toISOString()
+        }
+        await create({ caption, scheduledAt })
+        setOpOk(
+          publishNow
+            ? 'Đã tạo bài viết (bản nháp, chờ phê duyệt). Khi đẩy lên queue sẽ đăng ngay.'
+            : 'Đã tạo bài viết (bản nháp, chờ phê duyệt). Sẽ đăng theo lịch đã chọn.',
+        )
       } catch (err) {
         setOpError(err instanceof Error ? err.message : 'Tạo bài viết thất bại.')
       } finally {
@@ -483,14 +501,39 @@ export function ContentStudio() {
                 />
               </div>
 
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1">Thời gian lên lịch xuất bản:</label>
-                <input
-                  type="text"
-                  value={newScheduled}
-                  onChange={(e) => setNewScheduled(e.target.value)}
-                  className="w-full bg-dark-950 p-2.5 rounded-lg border border-white/10 text-white font-mono focus:border-brand-emerald focus:outline-none"
-                />
+              <div className="rounded-lg border border-white/10 bg-dark-950/60 p-3 space-y-2.5">
+                <span className="block text-slate-300 font-semibold">Thời điểm đăng:</span>
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="publish-mode"
+                    checked={publishNow}
+                    onChange={() => setPublishNow(true)}
+                    className="w-4 h-4 accent-emerald-500"
+                  />
+                  <span className="text-slate-200">
+                    <strong className="text-brand-emerald">Đăng ngay</strong>
+                    <span className="text-slate-400"> — đẩy lên queue là đăng luôn (mặc định)</span>
+                  </span>
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="publish-mode"
+                    checked={!publishNow}
+                    onChange={() => setPublishNow(false)}
+                    className="w-4 h-4 accent-emerald-500"
+                  />
+                  <span className="text-slate-200">Lên lịch cụ thể</span>
+                </label>
+                {!publishNow && (
+                  <input
+                    type="datetime-local"
+                    value={newScheduled}
+                    onChange={(e) => setNewScheduled(e.target.value)}
+                    className="w-full bg-dark-950 p-2.5 rounded-lg border border-white/10 text-white focus:border-brand-emerald focus:outline-none [color-scheme:dark]"
+                  />
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">
