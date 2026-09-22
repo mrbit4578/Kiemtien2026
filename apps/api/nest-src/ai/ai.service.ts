@@ -479,18 +479,25 @@ export class AiService {
       )
     }
     const data = JSON.parse(text) as { responses?: Array<{ embedding?: { values?: number[] } }> }
+    const responses = data.responses ?? []
     // Chuẩn hoá mọi vector về đúng 1536 chiều:
     // - dài hơn → cắt ngắn (an toàn với Matryoshka embedding như gemini-embedding-001)
     // - ngắn hơn → zero-pad (cosine similarity được bảo toàn)
-    const vectors = (data.responses ?? []).map((r) => {
+    const vectors = responses.map((r) => {
       const v = r.embedding?.values ?? []
       if (v.length === 1536) return v
       if (v.length > 1536) return v.slice(0, 1536)
       return [...v, ...new Array(1536 - v.length).fill(0)]
     })
     if (vectors.length !== texts.length || vectors.some((v) => v.length !== 1536)) {
+      // Chẩn đoán không nhạy cảm: chỉ đếm số lượng, số chiều và tên field gốc
+      const firstDim =
+        responses.length > 0 ? (responses[0]?.embedding?.values?.length ?? -1) : -1
+      const topKeys = Object.keys(data ?? {}).join(',')
       throw new HttpException(
-        `Phản hồi embedding từ ${meta.name} không hợp lệ.`,
+        `Phản hồi embedding từ ${meta.name} không hợp lệ ` +
+          `(gửi ${texts.length}, nhận ${responses.length} responses, ` +
+          `dim đầu: ${firstDim}, keys: ${topKeys}).`,
         HttpStatus.BAD_GATEWAY,
       )
     }
