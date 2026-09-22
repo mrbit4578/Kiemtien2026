@@ -12,7 +12,11 @@ import {
   BadRequestException,
   ForbiddenException,
   ConflictException,
+  ServiceUnavailableException,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common'
+import { FileInterceptor } from '@nestjs/platform-express'
 import {
   IsString,
   IsOptional,
@@ -29,6 +33,7 @@ import { isConsentRequired } from '@orh/policy'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
 import { requireWorkspaceId } from '../common/session'
+import { fetchTimeout } from '../common/safe-fetch'
 
 /**
  * Luồng content:
@@ -136,6 +141,68 @@ export class ContentController {
       ip: req.ip,
     })
     return item
+  }
+
+  /**
+   * POST /content/upload-image — upload ảnh từ máy, host lên imgbb, trả về
+   * direct URL để gắn vào assetUrl (Instagram yêu cầu link ảnh trực tiếp).
+   * Cần env IMGBB_API_KEY (key miễn phí tại https://api.imgbb.com) — thiếu thì
+   * trả 503 với message tiếng Việt (fail-fast, giống pattern OAuth).
+   */
+  @Post('upload-image')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 10 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        if (file.mimetype?.startsWith('image/')) {
+          cb(null, true)
+        } else {
+          cb(
+            new BadRequestException('Chỉ nhận file ảnh (JPG/PNG/WebP, tối đa 10MB).'),
+            false,
+          )
+        }
+      },
+    }),
+  )
+  @HttpCode(200)
+  async uploadImage(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Session() session: any,
+  ) {
+    requireWorkspaceId(session)
+    const apiKey = process.env.IMGBB_API_KEY?.trim()
+    if (!apiKey) {
+      throw new ServiceUnavailableException(
+        'Chưa cấu hình upload ảnh: thiếu biến môi trường IMGBB_API_KEY trên server. ' +
+          'Lấy key miễn phí tại https://api.imgbb.com rồi thêm vào Environment Variables ' +
+          'của API service và deploy lại.',
+      )
+    }
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Chưa chọn file ảnh.')
+    }
+    const form = new FormData()
+    form.append('key', apiKey)
+    form.append('image', file.buffer.toString('base64'))
+    let res: Response
+    try {
+      res = await fetchTimeout('https://api.imgbb.com/1/upload', { method: 'POST', body: form }, 30000)
+    } catch (err) {
+      throw new ServiceUnavailableException(
+        `Upload ảnh thất bại: không kết nối được tới imgbb (${err instanceof Error ? err.message : String(err)}).`,
+      )
+    }
+    const data = (await res.json().catch(() => null)) as {
+      data?: { url?: string }
+      error?: { message?: string }
+    } | null
+    if (!res.ok || !data?.data?.url) {
+      throw new BadRequestException(
+        `imgbb từ chối upload (${data?.error?.message ?? `HTTP ${res.status}`}). Kiểm tra lại IMGBB_API_KEY.`,
+      )
+    }
+    return { url: data.data.url }
   }
 
   /** GET /content — danh sách content của workspace (kèm job publish mới nhất để hiện lỗi) */

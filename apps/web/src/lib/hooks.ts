@@ -183,7 +183,18 @@ export function useContent() {
     [refresh],
   )
 
-  return { items, loading, error, refresh, create, approve, publish, updateContent, retryPublish }
+  /**
+   * Upload ảnh từ máy lên host (imgbb) → trả về direct URL để gắn assetUrl.
+   * Backend trả 503 nếu chưa cấu hình IMGBB_API_KEY.
+   */
+  const uploadImage = useCallback(async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await api.uploadFile<{ url: string }>('/content/upload-image', form)
+    return res.url
+  }, [])
+
+  return { items, loading, error, refresh, create, approve, publish, updateContent, retryPublish, uploadImage }
 }
 
 /* ─── AI Pro ─────────────────────────────────────────────────────────────── */

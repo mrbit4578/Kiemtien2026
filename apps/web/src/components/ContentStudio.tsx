@@ -95,7 +95,7 @@ function toUiItem(a: ApiContentItem): ContentItem {
 
 export function ContentStudio() {
   const { sessionData, currentStep, startAutoPilot } = useSession()
-  const { items, loading, error, create, approve, publish, updateContent, retryPublish } = useContent()
+  const { items, loading, error, create, approve, publish, updateContent, retryPublish, uploadImage } = useContent()
   const { connections } = useConnections()
   const activeConnections = useMemo(
     () => connections.filter((c) => c.status === 'active'),
@@ -174,6 +174,33 @@ export function ContentStudio() {
       return
     }
     runOp(post.id, () => retryPublish(post.id, connectionId), 'Đã đưa job vào queue — worker sẽ thử lại ngay.')
+  }
+
+  // Upload ảnh: null = rảnh, 'editor' = đang upload trong editor sửa bài, 'create' = trong modal tạo bài
+  const [uploading, setUploading] = useState<null | 'editor' | 'create'>(null)
+
+  /**
+   * Chọn file ảnh từ máy → upload lên host → điền direct URL vào ô link ảnh.
+   * `target`: 'editor' điền vào editor sửa bài, 'create' điền vào modal tạo bài.
+   */
+  const handleImageFile = async (file: File | undefined, target: 'editor' | 'create') => {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setOpError('Chỉ nhận file ảnh (JPG/PNG/WebP).')
+      return
+    }
+    setUploading(target)
+    setOpError(null)
+    try {
+      const url = await uploadImage(file)
+      if (target === 'editor') setAssetUrlValue(url)
+      else setNewAssetUrl(url)
+      setOpOk('Đã tải ảnh lên — link đã được điền vào ô.')
+    } catch (err) {
+      setOpError(err instanceof Error ? err.message : 'Tải ảnh lên thất bại.')
+    } finally {
+      setUploading(null)
+    }
   }
 
   // ─── DEMO MODE: giữ hành vi giả lập cũ (auto-inject Session #1) ───
@@ -519,13 +546,34 @@ export function ContentStudio() {
                     <span className="block text-slate-300 font-semibold mb-1">
                       Link ảnh/video <span className="text-brand-amber">(Instagram bắt buộc phải có)</span>
                     </span>
-                    <input
-                      type="url"
-                      value={assetUrlValue}
-                      onChange={(e) => setAssetUrlValue(e.target.value)}
-                      placeholder="https://...jpg / mp4"
-                      className="w-full bg-dark-950 p-2 rounded-lg border border-white/10 text-white placeholder:text-slate-600 focus:border-brand-emerald focus:outline-none font-sans"
-                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="url"
+                        value={assetUrlValue}
+                        onChange={(e) => setAssetUrlValue(e.target.value)}
+                        placeholder="https://...jpg / mp4"
+                        className="flex-1 min-w-0 bg-dark-950 p-2 rounded-lg border border-white/10 text-white placeholder:text-slate-600 focus:border-brand-emerald focus:outline-none font-sans"
+                      />
+                      <label
+                        className={`shrink-0 px-3 py-2 rounded-lg font-bold text-xs cursor-pointer transition-all border ${
+                          uploading === 'editor'
+                            ? 'bg-dark-850 text-slate-500 border-white/10 pointer-events-none'
+                            : 'bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan border-brand-cyan/30'
+                        }`}
+                      >
+                        {uploading === 'editor' ? 'Đang tải...' : 'Tải ảnh lên'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={uploading === 'editor'}
+                          onChange={(e) => {
+                            handleImageFile(e.target.files?.[0], 'editor')
+                            e.target.value = ''
+                          }}
+                        />
+                      </label>
+                    </div>
                   </div>
                   <div className="flex items-center justify-end gap-2">
                     <button
@@ -686,13 +734,34 @@ export function ContentStudio() {
                 <label className="block text-slate-300 font-semibold mb-1">
                   Link ảnh/video <span className="text-brand-amber text-xs">(Instagram bắt buộc phải có)</span>
                 </label>
-                <input
-                  type="url"
-                  value={newAssetUrl}
-                  onChange={(e) => setNewAssetUrl(e.target.value)}
-                  placeholder="https://...jpg / mp4"
-                  className="w-full bg-dark-950 p-2.5 rounded-lg border border-white/10 text-white placeholder:text-slate-600 focus:border-brand-emerald focus:outline-none"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="url"
+                    value={newAssetUrl}
+                    onChange={(e) => setNewAssetUrl(e.target.value)}
+                    placeholder="https://...jpg / mp4"
+                    className="flex-1 min-w-0 bg-dark-950 p-2.5 rounded-lg border border-white/10 text-white placeholder:text-slate-600 focus:border-brand-emerald focus:outline-none"
+                  />
+                  <label
+                    className={`shrink-0 px-3 py-2 rounded-lg font-bold text-xs cursor-pointer transition-all border ${
+                      uploading === 'create'
+                        ? 'bg-dark-850 text-slate-500 border-white/10 pointer-events-none'
+                        : 'bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan border-brand-cyan/30'
+                    }`}
+                  >
+                    {uploading === 'create' ? 'Đang tải...' : 'Tải ảnh lên'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={uploading === 'create'}
+                      onChange={(e) => {
+                        handleImageFile(e.target.files?.[0], 'create')
+                        e.target.value = ''
+                      }}
+                    />
+                  </label>
+                </div>
               </div>
 
               <div className="rounded-lg border border-white/10 bg-dark-950/60 p-3 space-y-2.5">
