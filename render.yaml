@@ -11,7 +11,9 @@ services:
     # (@types/node, typescript...). Lúc chạy thật Render vẫn dùng NODE_ENV=production.
     buildCommand: corepack enable && NODE_ENV=development pnpm install && pnpm --filter @orh/api build
     # Migrate DB trước mỗi lần deploy (idempotent), rồi mới start server.
-    preDeployCommand: pnpm --filter @orh/api exec prisma migrate deploy --schema prisma/schema.prisma
+    # Script tự retry 5 lần (mỗi lần cách 20s) nếu Neon kẹt advisory lock (P1002)
+    # — deploy tự hồi phục, không cần bấm Manual Deploy tay.
+    preDeployCommand: sh apps/api/scripts/migrate-with-retry.sh
     startCommand: pnpm --filter @orh/api start
     healthCheckPath: /rag/strategies
     envVars:
