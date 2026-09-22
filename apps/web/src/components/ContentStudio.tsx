@@ -101,6 +101,12 @@ export function ContentStudio() {
     () => connections.filter((c) => c.status === 'active'),
     [connections],
   )
+  // Canva là công cụ thiết kế (sản xuất nội dung), không phải mạng xã hội —
+  // connector không có publish() nên ẩn khỏi dropdown chọn kênh đăng.
+  const publishableConnections = useMemo(
+    () => activeConnections.filter((c) => c.provider !== 'canva'),
+    [activeConnections],
+  )
 
   const [activeFilter, setActiveFilter] = useState<string>('all')
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -168,7 +174,7 @@ export function ContentStudio() {
 
   /** Thử lại job publish đã thất bại (dùng connection của job cũ, fallback connection đang chọn) */
   const handleRetryPublish = (post: ContentItem) => {
-    const connectionId = post.lastJobConnectionId ?? publishConn[post.id] ?? activeConnections[0]?.id
+    const connectionId = post.lastJobConnectionId ?? publishConn[post.id] ?? publishableConnections[0]?.id
     if (!connectionId) {
       setOpError('Chưa có connection nào để thử lại.')
       return
@@ -263,7 +269,7 @@ export function ContentStudio() {
       setDemoPosts((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'published' } : p)))
       return
     }
-    const connectionId = publishConn[id] ?? activeConnections[0]?.id
+    const connectionId = publishConn[id] ?? publishableConnections[0]?.id
     if (!connectionId) {
       setOpError('Chưa có tài khoản nào đang kết nối. Hãy kết nối OAuth trước khi publish.')
       return
@@ -650,16 +656,16 @@ export function ContentStudio() {
 
                   {post.status === 'approved' && (
                     <>
-                      {!DEMO_MODE && activeConnections.length > 1 && (
+                      {!DEMO_MODE && publishableConnections.length > 1 && (
                         <select
-                          value={publishConn[post.id] ?? activeConnections[0]?.id ?? ''}
+                          value={publishConn[post.id] ?? publishableConnections[0]?.id ?? ''}
                           onChange={(e) =>
                             setPublishConn((prev) => ({ ...prev, [post.id]: e.target.value }))
                           }
                           className="text-xs bg-dark-950 border border-white/10 rounded-lg px-2 py-1.5 text-slate-200 focus:border-brand-emerald focus:outline-none"
                           title="Chọn tài khoản để publish"
                         >
-                          {activeConnections.map((c) => (
+                          {publishableConnections.map((c) => (
                             <option key={c.id} value={c.id}>
                               {c.provider} ({c.providerUserId})
                             </option>

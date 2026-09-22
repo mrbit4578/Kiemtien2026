@@ -325,6 +325,16 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
       caption: item.caption,
       mediaUrls,
     }
+    if (typeof connector.publish !== 'function') {
+      // Provider chỉ dùng để tạo nội dung (ví dụ Canva — công cụ thiết kế,
+      // không phải mạng xã hội) thì không có khả năng đăng bài trực tiếp.
+      throw new OrhError(
+        'CONTENT_REJECTED',
+        `Kênh ${connection.provider} không hỗ trợ đăng bài trực tiếp (chỉ dùng để tạo/sản xuất nội dung). Hãy chọn Instagram, TikTok hoặc Facebook làm kênh đăng.`,
+        false,
+        connection.provider,
+      )
+    }
     return connector.publish(input)
   }
 }
