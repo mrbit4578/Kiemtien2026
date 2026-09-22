@@ -34,7 +34,7 @@ import { requireWorkspaceId } from '../common/session'
  * 1. Tạo content item (draft)
  * 2. Manager approve (approvalStatus = approved)
  * 3. Publish → kiểm tra consent + approval, tạo Job với idempotency key
- *    (KHÔNG publish trực tiếp — worker/BullMQ xử lý)
+ *    (KHÔNG publish trực tiếp — PublishWorkerService poll và xử lý)
  */
 
 class CreateContentDto {
@@ -250,5 +250,39 @@ export class ContentController {
       }
       throw err
     }
+  }
+
+  /**
+   * POST /content/:id/retry-publish — thử lại job publish đã thất bại.
+   * Chỉ áp dụng cho job ở trạng thái cuối 'failed' | 'dead_letter'; đưa về
+   * 'pending' để PublishWorkerService xử lý lại (giữ nguyên idempotency key nên
+   * không tạo job trùng).
+   */
+  @Post(':id/retry-publish')
+  @HttpCode(200)
+  async retryPublish(@Param('id') id: string, @Body() dto: PublishContentDto, @Session() session: any) {
+    const workspaceId = requireWorkspaceId(session)
+    const item = await this.prisma.contentItem.findFirst({ where: { id, workspaceId } })
+    if (!item) throw new NotFoundException('Không tìm thấy content.')
+    const connection = await this.prisma.connection.findFirst({
+      where: { id: dto.connectionId, workspaceId },
+    })
+    if (!connection) throw new NotFoundException('Không tìm thấy connection.')
+
+    const idempotencyKey = `publish:${item.id}:${connection.id}`
+    const job = await this.prisma.job.findUnique({ where: { idempotencyKey } })
+    if (!job) throw new NotFoundException('Chưa có job publish cho content này.')
+    if (job.status !== 'failed' && job.status !== 'dead_letter') {
+      throw new BadRequestException(`Job đang ở trạng thái ${job.status}, không cần thử lại.`)
+    }
+    const updated = await this.prisma.job.update({
+      where: { id: job.id },
+      data: { status: 'pending', nextRunAt: null, lastError: null },
+    })
+    await this.prisma.contentItem.update({
+      where: { id: item.id },
+      data: { status: 'approved' },
+    })
+    return { id: item.id, jobId: updated.id, queued: true }
   }
 }
