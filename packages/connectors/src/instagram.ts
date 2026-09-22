@@ -90,7 +90,13 @@ export class InstagramConnector implements SocialConnector {
         code,
       }),
     })
-    if (!res.ok) throw new OrhError('TRANSIENT_NETWORK_ERROR', 'Instagram token exchange failed.', true, 'instagram')
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      const detail = body?.error?.message
+        ? `Meta: ${body.error.message}${body.error.code ? ` (code ${body.error.code})` : ''}`
+        : `Meta HTTP ${res.status}`
+      throw new OrhError('TRANSIENT_NETWORK_ERROR', `Token exchange failed (${detail}).`, true, 'instagram')
+    }
     const d = await res.json()
     const shortToken: string | undefined = d.access_token ?? d.data?.[0]?.access_token
     if (!shortToken) throw new OrhError('TRANSIENT_NETWORK_ERROR', 'Instagram không trả access_token.', true, 'instagram')
@@ -102,7 +108,13 @@ export class InstagramConnector implements SocialConnector {
         `&client_secret=${encodeURIComponent(appSecret)}` +
         `&access_token=${encodeURIComponent(shortToken)}`,
     )
-    if (!llRes.ok) throw new OrhError('TRANSIENT_NETWORK_ERROR', 'Instagram long-lived token exchange failed.', true, 'instagram')
+    if (!llRes.ok) {
+      const body = await llRes.json().catch(() => ({}))
+      const detail = body?.error?.message
+        ? `Meta: ${body.error.message}${body.error.code ? ` (code ${body.error.code})` : ''}`
+        : `Meta HTTP ${llRes.status}`
+      throw new OrhError('TRANSIENT_NETWORK_ERROR', `Long-lived token exchange failed (${detail}).`, true, 'instagram')
+    }
     const ll = await llRes.json()
     return {
       accessToken: ll.access_token,

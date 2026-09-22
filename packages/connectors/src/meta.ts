@@ -60,7 +60,14 @@ export class MetaConnector implements SocialConnector {
         code: input.code,
       }),
     })
-    if (!res.ok) throw new OrhError('TRANSIENT_NETWORK_ERROR', 'Meta token exchange failed.', true, 'facebook')
+    if (!res.ok) {
+      // Đọc message lỗi thật của Meta để chẩn đoán (không bao giờ chứa secret)
+      const body = await res.json().catch(() => ({}))
+      const detail = body?.error?.message
+        ? `Meta: ${body.error.message}${body.error.code ? ` (code ${body.error.code})` : ''}`
+        : `Meta HTTP ${res.status}`
+      throw new OrhError('TRANSIENT_NETWORK_ERROR', `Token exchange failed (${detail}).`, true, 'facebook')
+    }
 
     const data = await res.json()
     return {

@@ -152,7 +152,9 @@ export class AuthService {
         })
       } catch (e) {
         if (e instanceof OAuthNotConfiguredError) throw new ServiceUnavailableException(e.message)
-        throw new BadRequestException(`Đổi code lấy token thất bại (${providerName}).`)
+        // Hiện lý do thật từ provider để chẩn đoán (đã được connector làm sạch, không chứa secret)
+        const detail = e instanceof Error ? e.message : 'unknown'
+        throw new BadRequestException(`Đổi code lấy token thất bại (${providerName}): ${detail}`)
       }
 
       // 4. Mã hóa token trước khi lưu — KHÔNG bao giờ lưu plaintext
