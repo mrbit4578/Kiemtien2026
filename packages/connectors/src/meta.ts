@@ -24,14 +24,8 @@ export const META_MANIFEST: PermissionManifest = {
       dataRetentionDays: 0,
       sensitivityLevel: 'basic',
     },
-    {
-      scope: 'email',
-      purpose: 'Nhận dạng tài khoản',
-      dataRetentionDays: 0,
-      sensitivityLevel: 'basic',
-    },
   ],
-  notes: 'Advanced Access cần Business Verification. Không yêu cầu scope rộng hơn cần thiết.',
+  notes: 'Chỉ xin public_profile để tránh lỗi Invalid Scopes (scope email cần bật riêng trong dashboard). Định danh qua Facebook user ID.',
 }
 
 const META_AUTH_URL = 'https://www.facebook.com/v19.0/dialog/oauth'
@@ -47,7 +41,7 @@ export class MetaConnector implements SocialConnector {
     return buildOAuthUrl(META_AUTH_URL, {
       clientId: requiredEnv('facebook', 'META_APP_ID'),
       redirectUri: input.redirectUri,
-      scopes: input.scopes ?? ['public_profile', 'email'],
+      scopes: input.scopes ?? ['public_profile'],
       state: input.state,
       codeChallenge: input.codeChallenge,
     })
