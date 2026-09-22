@@ -72,6 +72,11 @@ class UpdateScheduleDto {
   @IsOptional()
   @IsDateString()
   scheduledAt?: string | null
+
+  /** Link ảnh/video; null = xóa; undefined = không đổi. Instagram bắt buộc phải có. */
+  @IsOptional()
+  @IsUrl()
+  assetUrl?: string | null
 }
 
 /**
@@ -133,13 +138,20 @@ export class ContentController {
     return item
   }
 
-  /** GET /content — danh sách content của workspace */
+  /** GET /content — danh sách content của workspace (kèm job publish mới nhất để hiện lỗi) */
   @Get()
   async list(@Session() session: any) {
     const workspaceId = requireWorkspaceId(session)
     return this.prisma.contentItem.findMany({
       where: { workspaceId },
       orderBy: { createdAt: 'desc' },
+      include: {
+        jobs: {
+          orderBy: { id: 'desc' },
+          take: 1,
+          select: { id: true, status: true, lastError: true, connectionId: true, nextRunAt: true },
+        },
+      },
     })
   }
 
@@ -295,16 +307,17 @@ export class ContentController {
   }
 
   /**
-   * PATCH /content/:id/schedule — đổi lịch đăng của content.
+   * PATCH /content/:id — cập nhật cài đặt publish của content (lịch đăng, media).
    * - scheduledAt = ISO string → dời lịch sang giờ mới
    * - scheduledAt = null → xóa lịch (đăng ngay khi đẩy queue)
-   * - không truyền scheduledAt → không đổi
+   * - assetUrl = link ảnh/video (Instagram bắt buộc); null = xóa
+   * - không truyền field nào → không đổi
    * Job publish đang 'pending' của content này cũng được cập nhật nextRunAt
    * theo để worker xử lý đúng giờ mới. Không áp dụng cho content đã published.
    */
-  @Patch(':id/schedule')
+  @Patch(':id')
   @HttpCode(200)
-  async updateSchedule(
+  async updateContent(
     @Param('id') id: string,
     @Body() dto: UpdateScheduleDto,
     @Session() session: any,
@@ -314,26 +327,36 @@ export class ContentController {
     const item = await this.prisma.contentItem.findFirst({ where: { id, workspaceId } })
     if (!item) throw new NotFoundException('Không tìm thấy content.')
     if (item.status === 'published') {
-      throw new BadRequestException('Content đã xuất bản, không thể đổi lịch.')
+      throw new BadRequestException('Content đã xuất bản, không thể sửa.')
     }
-    if (!('scheduledAt' in dto)) {
+    const data: { scheduledAt?: Date | null; assetUrl?: string | null } = {}
+    let nextRunAt: Date | null | undefined
+    if ('scheduledAt' in dto) {
+      nextRunAt = dto.scheduledAt ? new Date(dto.scheduledAt) : null
+      data.scheduledAt = nextRunAt
+    }
+    if ('assetUrl' in dto) {
+      data.assetUrl = dto.assetUrl ? dto.assetUrl : null
+    }
+    if (Object.keys(data).length === 0) {
       return item
     }
-    const nextRunAt = dto.scheduledAt ? new Date(dto.scheduledAt) : null
     const updated = await this.prisma.contentItem.update({
       where: { id: item.id },
-      data: { scheduledAt: nextRunAt },
+      data,
     })
     // Đồng bộ job đang chờ: nếu đã có job pending thì đổi nextRunAt theo,
     // để "xóa lịch" có tác dụng ngay cả khi job đã được tạo trước đó.
-    await this.prisma.job.updateMany({
-      where: { contentItemId: item.id, status: 'pending' },
-      data: { nextRunAt },
-    })
+    if (nextRunAt !== undefined) {
+      await this.prisma.job.updateMany({
+        where: { contentItemId: item.id, status: 'pending' },
+        data: { nextRunAt },
+      })
+    }
     await this.audit.log({
       workspaceId,
       actorId: workspaceId,
-      action: 'content_schedule_updated',
+      action: 'content_updated',
       entityType: 'content',
       targetId: item.id,
       result: 'success',

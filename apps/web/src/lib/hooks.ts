@@ -159,18 +159,31 @@ export function useContent() {
   )
 
   /**
-   * Đổi lịch đăng của content. scheduledAt = null → xóa lịch (đăng ngay);
-   * backend cũng đồng bộ nextRunAt của job đang pending.
+   * Cập nhật cài đặt publish của content: lịch đăng và/hoặc link ảnh-video.
+   * scheduledAt = null → xóa lịch (đăng ngay); assetUrl = null → xóa media.
+   * Backend đồng bộ nextRunAt của job đang pending.
    */
-  const updateSchedule = useCallback(
-    async (id: string, scheduledAt: string | null) => {
-      await api.patch<ApiContentItem>(`/content/${id}/schedule`, { scheduledAt })
+  const updateContent = useCallback(
+    async (id: string, input: { scheduledAt?: string | null; assetUrl?: string | null }) => {
+      await api.patch<ApiContentItem>(`/content/${id}`, input)
       await refresh()
     },
     [refresh],
   )
 
-  return { items, loading, error, refresh, create, approve, publish, updateSchedule }
+  /** Thử lại job publish đã thất bại (giữ idempotency key, chạy ngay). */
+  const retryPublish = useCallback(
+    async (id: string, connectionId: string) => {
+      const res = await api.post<PublishQueued>(`/content/${id}/retry-publish`, {
+        connectionId,
+      })
+      await refresh()
+      return res
+    },
+    [refresh],
+  )
+
+  return { items, loading, error, refresh, create, approve, publish, updateContent, retryPublish }
 }
 
 /* ─── AI Pro ─────────────────────────────────────────────────────────────── */

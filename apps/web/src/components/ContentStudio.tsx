@@ -29,7 +29,13 @@ export interface ContentItem {
   scheduledAt: string
   /** ISO gốc (null = không lên lịch) — dùng để sửa lịch, hiển thị dùng `scheduledAt` */
   scheduledAtIso: string | null
-  status: 'draft' | 'pending_approval' | 'approved' | 'published'
+  /** Link ảnh/video (Instagram bắt buộc) */
+  assetUrl: string | null
+  status: 'draft' | 'pending_approval' | 'approved' | 'published' | 'failed'
+  /** Lỗi publish mới nhất (nếu job thất bại) */
+  lastError: string | null
+  /** connectionId của job mới nhất — dùng cho nút Thử lại */
+  lastJobConnectionId: string | null
   affiliateProduct?: string
   commission: string
 }
@@ -43,6 +49,7 @@ const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
 /** Map status backend (status + approvalStatus) về status hiển thị của UI */
 function toUiStatus(a: ApiContentItem): ContentItem['status'] {
   if (a.status === 'published') return 'published'
+  if (a.status === 'failed') return 'failed'
   if (a.approvalStatus === 'approved') return 'approved'
   if (a.status === 'draft' && a.approvalStatus === 'pending') return 'pending_approval'
   return 'draft'
@@ -69,6 +76,7 @@ function toUiItem(a: ApiContentItem): ContentItem {
       .split('\n')
       .map((s) => s.trim())
       .find(Boolean) ?? '(Không tiêu đề)'
+  const latestJob = a.jobs?.[0]
   return {
     id: a.id,
     title: firstLine.slice(0, 80),
@@ -76,7 +84,10 @@ function toUiItem(a: ApiContentItem): ContentItem {
     channels: [],
     scheduledAt: formatDateTime(a.scheduledAt),
     scheduledAtIso: a.scheduledAt,
+    assetUrl: a.assetUrl,
     status: toUiStatus(a),
+    lastError: a.status === 'failed' ? latestJob?.lastError ?? 'Đăng thất bại (không rõ lỗi).' : null,
+    lastJobConnectionId: latestJob?.connectionId ?? null,
     affiliateProduct: '—',
     commission: '—',
   }
@@ -84,7 +95,7 @@ function toUiItem(a: ApiContentItem): ContentItem {
 
 export function ContentStudio() {
   const { sessionData, currentStep, startAutoPilot } = useSession()
-  const { items, loading, error, create, approve, publish, updateSchedule } = useContent()
+  const { items, loading, error, create, approve, publish, updateContent, retryPublish } = useContent()
   const { connections } = useConnections()
   const activeConnections = useMemo(
     () => connections.filter((c) => c.status === 'active'),
@@ -95,6 +106,7 @@ export function ContentStudio() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newCaption, setNewCaption] = useState('')
+  const [newAssetUrl, setNewAssetUrl] = useState('')
   const [newProduct, setNewProduct] = useState('')
   // Mặc định "Đăng ngay" — không lên lịch; bật tắt để chọn giờ cụ thể.
   const [publishNow, setPublishNow] = useState(true)
@@ -104,12 +116,13 @@ export function ContentStudio() {
   const [opOk, setOpOk] = useState<string | null>(null)
   // connection được chọn cho mỗi bài viết khi publish (mặc định: connection active đầu tiên)
   const [publishConn, setPublishConn] = useState<Record<string, string>>({})
-  // Sửa lịch ngay trên thẻ bài viết: id đang sửa + chế độ (ngay/lên lịch) + giá trị datetime-local
+  // Sửa lịch/media ngay trên thẻ bài viết: id đang sửa + chế độ (ngay/lên lịch) + giá trị
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null)
   const [schedMode, setSchedMode] = useState<'now' | 'scheduled'>('now')
   const [schedValue, setSchedValue] = useState('')
+  const [assetUrlValue, setAssetUrlValue] = useState('')
 
-  /** Mở editor sửa lịch cho một bài viết, prefill theo lịch hiện tại */
+  /** Mở editor sửa lịch/media cho một bài viết, prefill theo dữ liệu hiện tại */
   const openScheduleEditor = (post: ContentItem) => {
     setEditingScheduleId(post.id)
     if (post.scheduledAtIso) {
@@ -123,18 +136,22 @@ export function ContentStudio() {
       setSchedMode('now')
       setSchedValue('')
     }
+    setAssetUrlValue(post.assetUrl ?? '')
   }
 
-  /** Lưu lịch mới: 'now' → scheduledAt = null (đăng ngay), backend đồng bộ job pending */
+  /** Lưu lịch + media mới: 'now' → scheduledAt = null (đăng ngay), backend đồng bộ job pending */
   const handleSaveSchedule = (id: string) => {
+    const scheduledAt = schedMode === 'now' || !schedValue ? null : new Date(schedValue).toISOString()
+    const assetUrl = assetUrlValue.trim() ? assetUrlValue.trim() : null
     if (DEMO_MODE) {
       setDemoPosts((prev) =>
         prev.map((p) =>
           p.id === id
             ? {
                 ...p,
-                scheduledAt: schedMode === 'now' ? 'Đăng ngay' : formatDateTime(new Date(schedValue).toISOString()),
-                scheduledAtIso: schedMode === 'now' || !schedValue ? null : new Date(schedValue).toISOString(),
+                scheduledAt: scheduledAt ? formatDateTime(scheduledAt) : 'Đăng ngay',
+                scheduledAtIso: scheduledAt,
+                assetUrl,
               }
             : p,
         ),
@@ -142,13 +159,21 @@ export function ContentStudio() {
       setEditingScheduleId(null)
       return
     }
-    const scheduledAt =
-      schedMode === 'now' || !schedValue ? null : new Date(schedValue).toISOString()
     runOp(
       id,
-      () => updateSchedule(id, scheduledAt),
+      () => updateContent(id, { scheduledAt, assetUrl }),
       scheduledAt ? 'Đã cập nhật lịch đăng.' : 'Đã chuyển sang Đăng ngay — đẩy lên queue là đăng luôn.',
     ).then(() => setEditingScheduleId(null))
+  }
+
+  /** Thử lại job publish đã thất bại (dùng connection của job cũ, fallback connection đang chọn) */
+  const handleRetryPublish = (post: ContentItem) => {
+    const connectionId = post.lastJobConnectionId ?? publishConn[post.id] ?? activeConnections[0]?.id
+    if (!connectionId) {
+      setOpError('Chưa có connection nào để thử lại.')
+      return
+    }
+    runOp(post.id, () => retryPublish(post.id, connectionId), 'Đã đưa job vào queue — worker sẽ thử lại ngay.')
   }
 
   // ─── DEMO MODE: giữ hành vi giả lập cũ (auto-inject Session #1) ───
@@ -164,7 +189,10 @@ export function ContentStudio() {
           channels: ['tiktok', 'instagram', 'youtube'],
           scheduledAt: sessionData.scheduledTime,
           scheduledAtIso: null,
+          assetUrl: null,
           status: currentStep >= 4 ? 'approved' : 'pending_approval',
+          lastError: null,
+          lastJobConnectionId: null,
           affiliateProduct: sessionData.targetProduct,
           commission: `${sessionData.commissionRate} (+${sessionData.commissionPerSale.toLocaleString('vi-VN')}₫/đơn)`,
         },
@@ -241,7 +269,10 @@ export function ContentStudio() {
               })
             : 'Chưa lên lịch',
         scheduledAtIso: publishNow || !newScheduled ? null : new Date(newScheduled).toISOString(),
+        assetUrl: newAssetUrl.trim() || null,
         status: 'pending_approval',
+        lastError: null,
+        lastJobConnectionId: null,
         affiliateProduct: newProduct || 'Sản phẩm tiếp thị',
         commission: '15% - 30%',
       }
@@ -259,7 +290,8 @@ export function ContentStudio() {
           const d = new Date(newScheduled)
           if (!isNaN(d.getTime())) scheduledAt = d.toISOString()
         }
-        await create({ caption, scheduledAt })
+        const assetUrl = newAssetUrl.trim() || undefined
+        await create({ caption, scheduledAt, assetUrl })
         setOpOk(
           publishNow
             ? 'Đã tạo bài viết (bản nháp, chờ phê duyệt). Khi đẩy lên queue sẽ đăng ngay.'
@@ -274,6 +306,7 @@ export function ContentStudio() {
 
     setNewTitle('')
     setNewCaption('')
+    setNewAssetUrl('')
     setNewProduct('')
     setIsModalOpen(false)
   }
@@ -343,6 +376,7 @@ export function ContentStudio() {
           { id: 'pending_approval', label: 'Chờ phê duyệt' },
           { id: 'approved', label: 'Đã duyệt (Sẵn sàng)' },
           { id: 'published', label: 'Đã xuất bản' },
+          { id: 'failed', label: 'Thất bại' },
         ].map((f) => (
           <button
             key={f.id}
@@ -403,6 +437,8 @@ export function ContentStudio() {
           const statusBadge =
             post.status === 'published'
               ? { bg: 'bg-brand-emerald/20 text-brand-emerald border-brand-emerald/30', label: 'ĐÃ XUẤT BẢN' }
+              : post.status === 'failed'
+              ? { bg: 'bg-red-500/20 text-red-400 border-red-500/30', label: 'ĐĂNG THẤT BẠI' }
               : post.status === 'approved'
               ? { bg: 'bg-brand-cyan/20 text-brand-cyan border-brand-cyan/30', label: 'ĐÃ PHÊ DUYỆT' }
               : post.status === 'pending_approval'
@@ -479,6 +515,18 @@ export function ContentStudio() {
                       className="w-full bg-dark-950 p-2 rounded-lg border border-white/10 text-white focus:border-brand-emerald focus:outline-none [color-scheme:dark]"
                     />
                   )}
+                  <div>
+                    <span className="block text-slate-300 font-semibold mb-1">
+                      Link ảnh/video <span className="text-brand-amber">(Instagram bắt buộc phải có)</span>
+                    </span>
+                    <input
+                      type="url"
+                      value={assetUrlValue}
+                      onChange={(e) => setAssetUrlValue(e.target.value)}
+                      placeholder="https://...jpg / mp4"
+                      className="w-full bg-dark-950 p-2 rounded-lg border border-white/10 text-white placeholder:text-slate-600 focus:border-brand-emerald focus:outline-none font-sans"
+                    />
+                  </div>
                   <div className="flex items-center justify-end gap-2">
                     <button
                       onClick={() => setEditingScheduleId(null)}
@@ -500,6 +548,23 @@ export function ContentStudio() {
               <p className="text-xs text-slate-300 bg-dark-950/60 p-3 rounded-lg border border-white/5 leading-relaxed font-sans whitespace-pre-wrap">
                 {post.caption}
               </p>
+
+              {/* Lỗi publish — hiện rõ để không còn "thất bại im lặng" */}
+              {post.status === 'failed' && post.lastError && (
+                <div className="rounded-lg border border-red-500/30 bg-red-950/40 p-3 text-xs">
+                  <div className="flex items-center gap-1.5 text-red-400 font-bold mb-1">
+                    <AlertTriangle className="w-4 h-4" /> Đăng thất bại
+                  </div>
+                  <p className="text-red-200/90 font-sans leading-relaxed">{post.lastError}</p>
+                  <button
+                    onClick={() => handleRetryPublish(post)}
+                    disabled={busy}
+                    className="mt-2 px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 font-bold text-xs disabled:opacity-50"
+                  >
+                    {busy ? 'Đang thử lại...' : 'Thử lại ngay'}
+                  </button>
+                </div>
+              )}
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-white/5">
                 <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -614,6 +679,19 @@ export function ContentStudio() {
                   onChange={(e) => setNewCaption(e.target.value)}
                   placeholder="Nhập caption hoặc dán kịch bản do AI Copilot tạo ra..."
                   className="w-full bg-dark-950 p-2.5 rounded-lg border border-white/10 text-white focus:border-brand-emerald focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Link ảnh/video <span className="text-brand-amber text-xs">(Instagram bắt buộc phải có)</span>
+                </label>
+                <input
+                  type="url"
+                  value={newAssetUrl}
+                  onChange={(e) => setNewAssetUrl(e.target.value)}
+                  placeholder="https://...jpg / mp4"
+                  className="w-full bg-dark-950 p-2.5 rounded-lg border border-white/10 text-white placeholder:text-slate-600 focus:border-brand-emerald focus:outline-none"
                 />
               </div>
 

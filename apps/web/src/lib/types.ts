@@ -20,6 +20,14 @@ export interface ApiConnection {
 }
 
 /** GET /content — khớp model ContentItem trong Prisma */
+export interface ApiContentJob {
+  id: string
+  status: string
+  lastError: string | null
+  connectionId: string
+  nextRunAt: string | null
+}
+
 export interface ApiContentItem {
   id: string
   workspaceId: string
@@ -31,6 +39,8 @@ export interface ApiContentItem {
   /** pending | approved | rejected */
   approvalStatus: string
   createdAt: string
+  /** job publish mới nhất (nếu có) — để hiện lỗi */
+  jobs?: ApiContentJob[]
 }
 
 /** GET /analytics/overview */
