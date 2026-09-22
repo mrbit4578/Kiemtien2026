@@ -222,7 +222,13 @@ export class InstagramConnector implements SocialConnector {
       body: JSON.stringify({ creation_id: containerId }),
     })
     if (!publishRes.ok) {
-      throw new OrhError('CONTENT_REJECTED', 'Instagram publish failed.', false, 'instagram')
+      const err = await publishRes.json().catch(() => ({}))
+      throw new OrhError(
+        'CONTENT_REJECTED',
+        `Instagram từ chối publish (${publishRes.status}): ${err.error?.message ?? 'không rõ nguyên nhân'}.`,
+        false,
+        'instagram',
+      )
     }
     const { id: mediaId } = await publishRes.json()
     return {
