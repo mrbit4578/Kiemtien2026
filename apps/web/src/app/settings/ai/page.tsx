@@ -169,17 +169,22 @@ function KeyModal({
           <div className="space-y-3">
             <div>
               <label className="block text-[11px] font-bold text-slate-400 mb-1.5">Model</label>
-              <select
+              <input
+                list="explabs-models"
                 value={sampleModel}
                 onChange={(e) => { setSampleModel(e.target.value); setCopied(false) }}
-                className="w-full px-3 py-2 rounded-lg bg-dark-950/80 border border-white/10 text-xs text-white focus:border-brand-cyan focus:outline-none"
-              >
+                placeholder="Nhập tên model, ví dụ gpt-5.6-luna"
+                spellCheck={false}
+                className="w-full px-3 py-2 rounded-lg bg-dark-950/80 border border-white/10 text-xs text-white placeholder:text-slate-600 focus:border-brand-cyan focus:outline-none"
+              />
+              <datalist id="explabs-models">
                 {provider.models.map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <option key={m} value={m} />
                 ))}
-              </select>
+              </datalist>
               <p className="mt-1 text-[11px] text-slate-500">
-                Đổi model ở đây để code mẫu cập nhật theo — key API giữ nguyên, không cần nhập lại.
+                Gõ tay bất kỳ model nào trên ExperientialLabs (gợi ý sẵn các model đã test) — code mẫu
+                cập nhật theo, key API giữ nguyên, không cần nhập lại.
               </p>
             </div>
             <div className="flex gap-1.5 flex-wrap">
