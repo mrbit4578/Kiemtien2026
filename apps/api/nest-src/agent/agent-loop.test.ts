@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   runAgent,
   buildAgentSystemPrompt,
+  GeminiBackend,
   type AgentMessage,
   type AssistantTurn,
   type ChatBackend,
@@ -170,5 +171,61 @@ describe('buildAgentSystemPrompt', () => {
     const p = buildAgentSystemPrompt(['web_search', 'get_current_time'])
     assert.match(p, /web_search/)
     assert.match(p, /tiếng Việt/)
+  })
+})
+
+describe('GeminiBackend', () => {
+  const nestedTool: ToolDefinition = {
+    name: 'nested',
+    description: 'tool có schema lồng nhau',
+    parameters: {
+      type: 'object',
+      properties: {
+        filter: {
+          type: 'object',
+          properties: { tag: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+      required: ['filter'],
+      additionalProperties: false,
+    } as unknown as ToolDefinition['parameters'],
+    execute: async () => 'ok',
+  }
+
+  function deepKeys(obj: unknown, acc: string[] = []): string[] {
+    if (Array.isArray(obj)) obj.forEach((v) => deepKeys(v, acc))
+    else if (obj !== null && typeof obj === 'object') {
+      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+        acc.push(k)
+        deepKeys(v, acc)
+      }
+    }
+    return acc
+  }
+
+  it('loại bỏ additionalProperties khỏi function declarations (Gemini từ chối field này với 400)', async () => {
+    let sentBody: any = null
+    const origFetch = globalThis.fetch
+    ;(globalThis as any).fetch = async (_url: string, init: any) => {
+      sentBody = JSON.parse(init.body)
+      return new Response(
+        JSON.stringify({ candidates: [{ content: { parts: [{ text: 'xong' }] } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    try {
+      const backend = new GeminiBackend('https://example.com', 'key', 'gemini-2.0-flash', 100)
+      const turn = await backend.send([{ role: 'user', content: 'hi' }], [searchTool, nestedTool])
+      assert.equal(turn.text, 'xong')
+      const decls = sentBody.tools[0].functionDeclarations
+      assert.equal(decls.length, 2)
+      assert.ok(!deepKeys(decls).includes('additionalProperties'))
+      // schema hợp lệ vẫn giữ nguyên
+      assert.equal(decls[0].name, 'search')
+      assert.deepEqual(decls[0].parameters.required, ['query'])
+    } finally {
+      globalThis.fetch = origFetch
+    }
   })
 })

@@ -60,6 +60,32 @@ function toolSchemaForPrompt(tool: ToolDefinition): Record<string, unknown> {
   }
 }
 
+/**
+ * Gemini chỉ chấp nhận một tập con của JSON Schema trong function declarations.
+ * Các field như `additionalProperties` hay `$schema` bị API từ chối với 400
+ * (Invalid JSON payload received. Unknown name "additionalProperties").
+ */
+function sanitizeSchemaForGemini(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(sanitizeSchemaForGemini)
+  if (schema !== null && typeof schema === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
+      if (k === 'additionalProperties' || k === '$schema') continue
+      out[k] = sanitizeSchemaForGemini(v)
+    }
+    return out
+  }
+  return schema
+}
+
+function toolSchemaForGemini(tool: ToolDefinition): Record<string, unknown> {
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: sanitizeSchemaForGemini(tool.parameters),
+  }
+}
+
 // ─── Dialect: OpenAI-compatible (OpenAI, xAI/Grok, DeepSeek) ────────────────
 
 export class OpenAiCompatibleBackend implements ChatBackend {
@@ -193,7 +219,7 @@ export class GeminiBackend implements ChatBackend {
           contents: this.toContents(messages),
           generationConfig: { maxOutputTokens: this.maxTokens },
           ...(tools.length > 0
-            ? { tools: [{ functionDeclarations: tools.map(toolSchemaForPrompt) }] }
+            ? { tools: [{ functionDeclarations: tools.map(toolSchemaForGemini) }] }
             : {}),
         }),
       },
