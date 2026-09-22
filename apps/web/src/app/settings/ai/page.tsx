@@ -31,9 +31,20 @@ const PROVIDER_ACCENT: Record<string, string> = {
   experientiallabs: 'from-fuchsia-500 to-pink-400',
 }
 
-/** Code mẫu gọi trực tiếp API (chuẩn OpenAI) bằng key của user — cho tab "Code mẫu". */
-function codeSamples(baseUrl: string, model: string): { label: string; lang: string; code: string }[] {
+/** Code mau goi truc tiep API (chuan OpenAI) bang key cua user — cho tab "Quickstart". */
+function codeSamples(
+  baseUrl: string,
+  model: string,
+): { label: string; lang: string; code: string }[] {
+  const agentPrompt = `Ban la tro ly AI chay tren Kiemtien2026, goi qua ExperientialLabs (${model}).
+Tra loi bang tieng Viet, ngan gon, dung trong tam. Khi viet noi dung dang mang xa hoi,
+giu dung format duoc yeu cau va khong them loi chao hoi thua.`
   return [
+    {
+      label: 'Agent prompt',
+      lang: 'text',
+      code: agentPrompt,
+    },
     {
       label: 'cURL',
       lang: 'bash',
@@ -67,7 +78,7 @@ print(resp.json()["choices"][0]["message"]["content"])`,
       code: `const resp = await fetch("${baseUrl}/chat/completions", {
   method: "POST",
   headers: {
-    "Authorization": \`Bearer \${process.env.EXPLABS_API_KEY}\`,
+    "Authorization": ` + '`Bearer ${process.env.EXPLABS_API_KEY}`' + `,
     "Content-Type": "application/json",
   },
   body: JSON.stringify({
@@ -97,8 +108,9 @@ function KeyModal({
   const [saving, setSaving] = useState(false)
   const [tab, setTab] = useState<'key' | 'code'>('key')
   const [sampleLang, setSampleLang] = useState(0)
+  const [sampleModel, setSampleModel] = useState(provider.defaultModel || 'grok-4.7')
   const [copied, setCopied] = useState(false)
-  const samples = codeSamples('https://api.experientiallabs.ai/v1', provider.defaultModel || 'grok-4.7')
+  const samples = codeSamples('https://api.experientiallabs.ai/v1', sampleModel)
 
   const handleSave = async () => {
     setError(null)
@@ -148,14 +160,29 @@ function KeyModal({
                 tab === t ? 'bg-brand-emerald/20 text-brand-emerald' : 'text-slate-400 hover:text-white'
               }`}
             >
-              {t === 'key' ? 'Nhập key' : 'Code mẫu'}
+              {t === 'key' ? 'Nhập key' : 'Quickstart'}
             </button>
           ))}
         </div>
 
         {tab === 'code' ? (
           <div className="space-y-3">
-            <div className="flex gap-1.5">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-400 mb-1.5">Model</label>
+              <select
+                value={sampleModel}
+                onChange={(e) => { setSampleModel(e.target.value); setCopied(false) }}
+                className="w-full px-3 py-2 rounded-lg bg-dark-950/80 border border-white/10 text-xs text-white focus:border-brand-cyan focus:outline-none"
+              >
+                {provider.models.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Đổi model ở đây để code mẫu cập nhật theo — key API giữ nguyên, không cần nhập lại.
+              </p>
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
               {samples.map((s, i) => (
                 <button
                   key={s.label}
