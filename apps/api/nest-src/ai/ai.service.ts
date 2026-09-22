@@ -454,27 +454,50 @@ export class AiService {
     apiKey: string,
     texts: string[],
   ): Promise<number[][]> {
-    const res = await fetchTimeout(
-      `${meta.baseUrl}/v1beta/models/gemini-embedding-001:batchEmbedContents?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requests: texts.map((t) => ({
-            model: 'models/gemini-embedding-001',
-            content: { parts: [{ text: t }] },
-            // Xin đúng 1536 dim (model hỗ trợ Matryoshka 128–3072).
-            // Nếu API bỏ qua field này, đoạn chuẩn hoá bên dưới vẫn xử lý được.
-            outputDimensionality: 1536,
-          })),
-        }),
-      },
-      CHAT_TIMEOUT_MS,
-    )
-    const text = await res.text()
-    if (!res.ok) {
+    const url =
+      `${meta.baseUrl}/v1beta/models/gemini-embedding-001:batchEmbedContents?key=${encodeURIComponent(apiKey)}`
+    const body = JSON.stringify({
+      requests: texts.map((t) => ({
+        model: 'models/gemini-embedding-001',
+        content: { parts: [{ text: t }] },
+        // Xin đúng 1536 dim (model hỗ trợ Matryoshka 128–3072).
+        // Nếu API bỏ qua field này, đoạn chuẩn hoá bên dưới vẫn xử lý được.
+        outputDimensionality: 1536,
+      })),
+    })
+    // Tự thử lại khi gặp 429 (quota free-tier): Google gợi ý thời gian chờ
+    // trong message ("Please retry in 32.0s"); không có thì backoff tăng dần.
+    const maxAttempts = 4
+    let text = ''
+    let ok = false
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const res = await fetchTimeout(
+        url,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body },
+        CHAT_TIMEOUT_MS,
+      )
+      text = await res.text()
+      if (res.status === 429 && attempt < maxAttempts) {
+        const hinted = /retry in ([\d.]+)s/i.exec(text)?.[1]
+        const waitMs = hinted
+          ? Math.min(120000, Math.ceil(parseFloat(hinted) * 1000) + 2000)
+          : Math.min(60000, 15000 * attempt)
+        await new Promise((r) => setTimeout(r, waitMs))
+        continue
+      }
+      if (!res.ok) {
+        throw new HttpException(
+          `${meta.name} trả lỗi ${res.status}: ${this.sanitizeError(text, apiKey)}`,
+          HttpStatus.BAD_GATEWAY,
+        )
+      }
+      ok = true
+      break
+    }
+    if (!ok) {
+      // Hết số lần thử vẫn 429: báo rõ để người dùng biết chờ quota reset
       throw new HttpException(
-        `${meta.name} trả lỗi ${res.status}: ${this.sanitizeError(text, apiKey)}`,
+        `${meta.name} trả lỗi 429: ${this.sanitizeError(text, apiKey)}`,
         HttpStatus.BAD_GATEWAY,
       )
     }
