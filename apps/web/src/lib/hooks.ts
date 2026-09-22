@@ -158,7 +158,19 @@ export function useContent() {
     [refresh],
   )
 
-  return { items, loading, error, refresh, create, approve, publish }
+  /**
+   * Đổi lịch đăng của content. scheduledAt = null → xóa lịch (đăng ngay);
+   * backend cũng đồng bộ nextRunAt của job đang pending.
+   */
+  const updateSchedule = useCallback(
+    async (id: string, scheduledAt: string | null) => {
+      await api.patch<ApiContentItem>(`/content/${id}/schedule`, { scheduledAt })
+      await refresh()
+    },
+    [refresh],
+  )
+
+  return { items, loading, error, refresh, create, approve, publish, updateSchedule }
 }
 
 /* ─── AI Pro ─────────────────────────────────────────────────────────────── */

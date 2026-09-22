@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Param,
   Body,
   Session,
@@ -64,6 +65,13 @@ class ApproveContentDto {
 class PublishContentDto {
   @IsString()
   connectionId!: string
+}
+
+class UpdateScheduleDto {
+  /** ISO datetime string; null = xóa lịch (đăng ngay); undefined = không đổi */
+  @IsOptional()
+  @IsDateString()
+  scheduledAt?: string | null
 }
 
 /**
@@ -284,5 +292,53 @@ export class ContentController {
       data: { status: 'approved' },
     })
     return { id: item.id, jobId: updated.id, queued: true }
+  }
+
+  /**
+   * PATCH /content/:id/schedule — đổi lịch đăng của content.
+   * - scheduledAt = ISO string → dời lịch sang giờ mới
+   * - scheduledAt = null → xóa lịch (đăng ngay khi đẩy queue)
+   * - không truyền scheduledAt → không đổi
+   * Job publish đang 'pending' của content này cũng được cập nhật nextRunAt
+   * theo để worker xử lý đúng giờ mới. Không áp dụng cho content đã published.
+   */
+  @Patch(':id/schedule')
+  @HttpCode(200)
+  async updateSchedule(
+    @Param('id') id: string,
+    @Body() dto: UpdateScheduleDto,
+    @Session() session: any,
+    @Req() req: Request,
+  ) {
+    const workspaceId = requireWorkspaceId(session)
+    const item = await this.prisma.contentItem.findFirst({ where: { id, workspaceId } })
+    if (!item) throw new NotFoundException('Không tìm thấy content.')
+    if (item.status === 'published') {
+      throw new BadRequestException('Content đã xuất bản, không thể đổi lịch.')
+    }
+    if (!('scheduledAt' in dto)) {
+      return item
+    }
+    const nextRunAt = dto.scheduledAt ? new Date(dto.scheduledAt) : null
+    const updated = await this.prisma.contentItem.update({
+      where: { id: item.id },
+      data: { scheduledAt: nextRunAt },
+    })
+    // Đồng bộ job đang chờ: nếu đã có job pending thì đổi nextRunAt theo,
+    // để "xóa lịch" có tác dụng ngay cả khi job đã được tạo trước đó.
+    await this.prisma.job.updateMany({
+      where: { contentItemId: item.id, status: 'pending' },
+      data: { nextRunAt },
+    })
+    await this.audit.log({
+      workspaceId,
+      actorId: workspaceId,
+      action: 'content_schedule_updated',
+      entityType: 'content',
+      targetId: item.id,
+      result: 'success',
+      ip: req.ip,
+    })
+    return updated
   }
 }

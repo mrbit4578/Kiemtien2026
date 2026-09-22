@@ -11,7 +11,8 @@ import {
   ShieldCheck,
   Layers,
   Sparkles,
-  Filter
+  Filter,
+  Pencil,
 } from 'lucide-react'
 
 // TODO (backend): model ContentItem hiện chưa có các trường mà UI đang hiển thị:
@@ -26,6 +27,8 @@ export interface ContentItem {
   caption: string
   channels: ('tiktok' | 'instagram' | 'meta' | 'youtube')[]
   scheduledAt: string
+  /** ISO gốc (null = không lên lịch) — dùng để sửa lịch, hiển thị dùng `scheduledAt` */
+  scheduledAtIso: string | null
   status: 'draft' | 'pending_approval' | 'approved' | 'published'
   affiliateProduct?: string
   commission: string
@@ -72,6 +75,7 @@ function toUiItem(a: ApiContentItem): ContentItem {
     caption: a.caption,
     channels: [],
     scheduledAt: formatDateTime(a.scheduledAt),
+    scheduledAtIso: a.scheduledAt,
     status: toUiStatus(a),
     affiliateProduct: '—',
     commission: '—',
@@ -80,7 +84,7 @@ function toUiItem(a: ApiContentItem): ContentItem {
 
 export function ContentStudio() {
   const { sessionData, currentStep, startAutoPilot } = useSession()
-  const { items, loading, error, create, approve, publish } = useContent()
+  const { items, loading, error, create, approve, publish, updateSchedule } = useContent()
   const { connections } = useConnections()
   const activeConnections = useMemo(
     () => connections.filter((c) => c.status === 'active'),
@@ -100,6 +104,52 @@ export function ContentStudio() {
   const [opOk, setOpOk] = useState<string | null>(null)
   // connection được chọn cho mỗi bài viết khi publish (mặc định: connection active đầu tiên)
   const [publishConn, setPublishConn] = useState<Record<string, string>>({})
+  // Sửa lịch ngay trên thẻ bài viết: id đang sửa + chế độ (ngay/lên lịch) + giá trị datetime-local
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null)
+  const [schedMode, setSchedMode] = useState<'now' | 'scheduled'>('now')
+  const [schedValue, setSchedValue] = useState('')
+
+  /** Mở editor sửa lịch cho một bài viết, prefill theo lịch hiện tại */
+  const openScheduleEditor = (post: ContentItem) => {
+    setEditingScheduleId(post.id)
+    if (post.scheduledAtIso) {
+      setSchedMode('scheduled')
+      const d = new Date(post.scheduledAtIso)
+      const pad = (n: number) => String(n).padStart(2, '0')
+      setSchedValue(
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      )
+    } else {
+      setSchedMode('now')
+      setSchedValue('')
+    }
+  }
+
+  /** Lưu lịch mới: 'now' → scheduledAt = null (đăng ngay), backend đồng bộ job pending */
+  const handleSaveSchedule = (id: string) => {
+    if (DEMO_MODE) {
+      setDemoPosts((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                scheduledAt: schedMode === 'now' ? 'Đăng ngay' : formatDateTime(new Date(schedValue).toISOString()),
+                scheduledAtIso: schedMode === 'now' || !schedValue ? null : new Date(schedValue).toISOString(),
+              }
+            : p,
+        ),
+      )
+      setEditingScheduleId(null)
+      return
+    }
+    const scheduledAt =
+      schedMode === 'now' || !schedValue ? null : new Date(schedValue).toISOString()
+    runOp(
+      id,
+      () => updateSchedule(id, scheduledAt),
+      scheduledAt ? 'Đã cập nhật lịch đăng.' : 'Đã chuyển sang Đăng ngay — đẩy lên queue là đăng luôn.',
+    ).then(() => setEditingScheduleId(null))
+  }
 
   // ─── DEMO MODE: giữ hành vi giả lập cũ (auto-inject Session #1) ───
   const [demoPosts, setDemoPosts] = useState<ContentItem[]>([])
@@ -113,6 +163,7 @@ export function ContentStudio() {
           caption: sessionData.scriptContent,
           channels: ['tiktok', 'instagram', 'youtube'],
           scheduledAt: sessionData.scheduledTime,
+          scheduledAtIso: null,
           status: currentStep >= 4 ? 'approved' : 'pending_approval',
           affiliateProduct: sessionData.targetProduct,
           commission: `${sessionData.commissionRate} (+${sessionData.commissionPerSale.toLocaleString('vi-VN')}₫/đơn)`,
@@ -189,6 +240,7 @@ export function ContentStudio() {
                 minute: '2-digit',
               })
             : 'Chưa lên lịch',
+        scheduledAtIso: publishNow || !newScheduled ? null : new Date(newScheduled).toISOString(),
         status: 'pending_approval',
         affiliateProduct: newProduct || 'Sản phẩm tiếp thị',
         commission: '15% - 30%',
@@ -375,11 +427,75 @@ export function ContentStudio() {
                   <span className="flex items-center gap-1">
                     <Clock className="w-3.5 h-3.5 text-brand-cyan" /> {post.scheduledAt}
                   </span>
+                  {post.status !== 'published' && (
+                    <button
+                      onClick={() =>
+                        editingScheduleId === post.id ? setEditingScheduleId(null) : openScheduleEditor(post)
+                      }
+                      title="Sửa lịch đăng"
+                      className="p-1 rounded hover:bg-white/10 text-slate-500 hover:text-brand-cyan transition-all"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <span className="px-2 py-0.5 rounded bg-dark-900 border border-white/5 text-brand-emerald font-bold">
                     {post.commission}
                   </span>
                 </div>
               </div>
+
+              {/* Editor sửa lịch inline */}
+              {editingScheduleId === post.id && post.status !== 'published' && (
+                <div className="rounded-lg border border-brand-cyan/25 bg-dark-950/70 p-3 space-y-2.5 text-xs">
+                  <span className="block text-slate-300 font-semibold">Thời điểm đăng:</span>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name={`sched-${post.id}`}
+                      checked={schedMode === 'now'}
+                      onChange={() => setSchedMode('now')}
+                      className="w-4 h-4 accent-emerald-500"
+                    />
+                    <span className="text-slate-200">
+                      <strong className="text-brand-emerald">Đăng ngay</strong>
+                      <span className="text-slate-400"> — xóa lịch, đẩy lên queue là đăng luôn</span>
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name={`sched-${post.id}`}
+                      checked={schedMode === 'scheduled'}
+                      onChange={() => setSchedMode('scheduled')}
+                      className="w-4 h-4 accent-emerald-500"
+                    />
+                    <span className="text-slate-200">Lên lịch cụ thể</span>
+                  </label>
+                  {schedMode === 'scheduled' && (
+                    <input
+                      type="datetime-local"
+                      value={schedValue}
+                      onChange={(e) => setSchedValue(e.target.value)}
+                      className="w-full bg-dark-950 p-2 rounded-lg border border-white/10 text-white focus:border-brand-emerald focus:outline-none [color-scheme:dark]"
+                    />
+                  )}
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => setEditingScheduleId(null)}
+                      className="px-3 py-1.5 rounded-lg bg-dark-850 hover:bg-dark-800 text-slate-300 border border-white/10"
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      onClick={() => handleSaveSchedule(post.id)}
+                      disabled={busy || (schedMode === 'scheduled' && !schedValue)}
+                      className="px-3 py-1.5 rounded-lg bg-brand-emerald text-dark-950 font-bold disabled:opacity-50"
+                    >
+                      {busy ? 'Đang lưu...' : 'Lưu lịch'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <p className="text-xs text-slate-300 bg-dark-950/60 p-3 rounded-lg border border-white/5 leading-relaxed font-sans whitespace-pre-wrap">
                 {post.caption}
