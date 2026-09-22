@@ -313,6 +313,27 @@ export class ContentController {
     // Idempotency: 1 content + 1 connection chỉ có 1 job publish
     const idempotencyKey = `publish:${item.id}:${connection.id}`
     try {
+      // Job cũ đã thất bại → cho phép "đẩy lại queue" bằng cách reset về pending
+      const existing = await this.prisma.job.findUnique({ where: { idempotencyKey } })
+      if (existing && (existing.status === 'failed' || existing.status === 'dead_letter')) {
+        const reset = await this.prisma.job.update({
+          where: { id: existing.id },
+          data: { status: 'pending', nextRunAt: null, lastError: null, attempts: 0 },
+        })
+        await this.audit.log({
+          workspaceId,
+          actorId: workspaceId,
+          action: 'content_publish_requeued',
+          provider: connection.provider,
+          entityType: 'job',
+          targetId: reset.id,
+          result: 'success',
+          metadata: { contentId: item.id, connectionId: connection.id, fromStatus: existing.status },
+          ip: req.ip,
+        })
+        return { id: item.id, queued: true, jobId: reset.id, retried: true }
+      }
+
       const job = await this.prisma.job.create({
         data: {
           connectionId: connection.id,
@@ -339,7 +360,15 @@ export class ContentController {
       return { id: item.id, queued: true, jobId: job.id }
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('Job publish đã tồn tại (idempotency).')
+        // P2002 còn sót: job đang pending/running/done → báo rõ trạng thái thay vì lỗi kỹ thuật
+        const existing = await this.prisma.job.findUnique({ where: { idempotencyKey } })
+        const statusMsg =
+          existing?.status === 'pending' || existing?.status === 'running'
+            ? 'Bài đang trong hàng chờ đăng, không cần đẩy lại.'
+            : existing?.status === 'done'
+              ? 'Bài này đã được đăng rồi.'
+              : 'Job publish đã tồn tại, hãy dùng nút Thử lại.'
+        throw new ConflictException(statusMsg)
       }
       throw err
     }

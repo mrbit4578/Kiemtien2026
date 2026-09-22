@@ -303,11 +303,13 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // assetUrl có thể chứa nhiều URL (mỗi dòng một link, cách nhau bởi xuống dòng
-    // hoặc dấu phẩy) — nhiều ảnh → connector Instagram đăng dạng carousel.
+    // assetUrl có thể chứa nhiều URL (mỗi dòng một link, cách nhau bởi xuống dòng,
+    // dấu phẩy HOẶC dấu chấm phẩy). Nếu người dùng dán liền nhau không có ký tự
+    // phân tách (ví dụ khi copy từ ô input một dòng), tự tách theo tiền tố "http".
     const mediaUrls = item.assetUrl
       ? item.assetUrl
-          .split(/[\n,]+/)
+          .split(/[\n,;]+/)
+          .flatMap((s) => s.split(/(?=https?:\/\/)/g))
           .map((s) => s.trim())
           .filter(Boolean)
       : []
