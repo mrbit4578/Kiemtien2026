@@ -215,7 +215,7 @@ describe('GeminiBackend', () => {
       )
     }
     try {
-      const backend = new GeminiBackend('https://example.com', 'key', 'gemini-2.0-flash', 100)
+      const backend = new GeminiBackend('https://example.com', 'key', 'gemini-3.6-flash', 100)
       const turn = await backend.send([{ role: 'user', content: 'hi' }], [searchTool, nestedTool])
       assert.equal(turn.text, 'xong')
       const decls = sentBody.tools[0].functionDeclarations
