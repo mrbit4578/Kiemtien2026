@@ -58,8 +58,9 @@ describe('Instagram connector dùng Facebook Login (Meta khai tử Basic Display
     })
     assert.ok(url.startsWith('https://www.facebook.com/v19.0/dialog/oauth'))
     assert.ok(!url.includes('api.instagram.com'))
-    assert.ok(url.includes('instagram_basic'))
-    assert.ok(url.includes('instagram_content_publish'))
+    assert.ok(url.includes('instagram_business_basic'))
+    assert.ok(url.includes('instagram_business_content_publish'))
+    assert.ok(url.includes('pages_show_list'))
     assert.ok(url.includes('client_id=test-meta-app-id'))
     delete process.env.API_URL
     delete process.env.META_APP_ID

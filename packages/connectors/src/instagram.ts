@@ -31,16 +31,22 @@ export const INSTAGRAM_MANIFEST: PermissionManifest = {
   requiredForMvp: true,
   scopes: [
     {
-      scope: 'instagram_basic',
+      scope: 'instagram_business_basic',
       purpose: 'Xem thông tin tài khoản professional',
       dataRetentionDays: 0,
       sensitivityLevel: 'basic',
     },
     {
-      scope: 'instagram_content_publish',
+      scope: 'instagram_business_content_publish',
       purpose: 'Đăng nội dung sau khi user approve',
       dataRetentionDays: 0,
       sensitivityLevel: 'sensitive',
+    },
+    {
+      scope: 'pages_show_list',
+      purpose: 'Liệt kê Page để tìm tài khoản IG liên kết',
+      dataRetentionDays: 0,
+      sensitivityLevel: 'basic',
     },
   ],
   notes: 'Cần tài khoản professional liên kết với Facebook Page. Container hết hạn 24h. Giới hạn 400 containers/24h. User phải có task MANAGE hoặc CREATE_CONTENT.',
@@ -60,7 +66,7 @@ export class InstagramConnector implements SocialConnector {
     return buildOAuthUrl(FB_DIALOG_URL, {
       clientId: requiredEnv('instagram', 'META_APP_ID'),
       redirectUri: input.redirectUri,
-      scopes: input.scopes ?? ['instagram_basic', 'instagram_content_publish'],
+      scopes: input.scopes ?? ['instagram_business_basic', 'instagram_business_content_publish', 'pages_show_list'],
       state: input.state,
       codeChallenge: input.codeChallenge,
     })
