@@ -205,8 +205,14 @@ export class RagService {
 
       return { id: doc.id, title: doc.title, status: 'ready', chunkCount: all.length }
     } catch (err) {
+      // Lỗi không phải HttpException: hiện tên loại lỗi để dễ chẩn đoán
+      // (chỉ tên class, không chứa nội dung nhạy cảm)
+      const errName =
+        err instanceof HttpException ? '' : ` [${(err as Error)?.constructor?.name ?? 'UnknownError'}]`
       const message =
-        err instanceof HttpException ? err.message : 'Xử lý tài liệu thất bại. Hãy thử lại.'
+        err instanceof HttpException ? err.message : `Xử lý tài liệu thất bại. Hãy thử lại.${errName}`
+      // Log đầy đủ phía server để xem trong Render logs
+      if (!(err instanceof HttpException)) console.error('[rag_ingest] unexpected error:', err)
       await this.prisma.document.update({
         where: { id: doc.id },
         data: { status: 'failed', error: String(message).slice(0, 500) },
