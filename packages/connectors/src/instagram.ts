@@ -195,12 +195,45 @@ export class InstagramConnector implements SocialConnector {
       return id as string
     }
 
+    /**
+     * Poll trạng thái container cho tới khi FINISHED (tối đa 60s, mỗi 3s một lần).
+     * ERROR/EXPIRED → lỗi vĩnh viễn; timeout → retryable để worker thử lại sau.
+     */
+    const waitContainerReady = async (cid: string): Promise<void> => {
+      const deadline = Date.now() + 60000
+      for (;;) {
+        const res = await fetch(`${IG_GRAPH_URL}/${cid}?fields=status_code`, { headers })
+        const d = (await res.json().catch(() => ({}))) as { status_code?: string }
+        const status = d.status_code
+        if (status === 'FINISHED') return
+        if (status === 'ERROR' || status === 'EXPIRED') {
+          throw new OrhError(
+            'CONTENT_REJECTED',
+            `Instagram không xử lý được ảnh/video (container ${status}). Kiểm tra lại link ảnh.`,
+            false,
+            'instagram',
+          )
+        }
+        if (Date.now() >= deadline) {
+          throw new OrhError(
+            'CONTENT_REJECTED',
+            'Instagram xử lý ảnh quá lâu (timeout 60s), sẽ thử lại sau.',
+            true,
+            'instagram',
+          )
+        }
+        await new Promise((r) => setTimeout(r, 3000))
+      }
+    }
+
     let containerId: string
     if (input.mediaUrls.length > 1) {
       // Carousel: mỗi ảnh một item container, caption gắn ở carousel cha
       const children: string[] = []
       for (const image_url of input.mediaUrls) {
-        children.push(await createContainer({ image_url, is_carousel_item: true }))
+        const childId = await createContainer({ image_url, is_carousel_item: true })
+        await waitContainerReady(childId)
+        children.push(childId)
       }
       containerId = await createContainer({
         media_type: 'CAROUSEL',
@@ -214,6 +247,10 @@ export class InstagramConnector implements SocialConnector {
         caption: input.caption,
       })
     }
+
+    // BẮT BUỘC: chờ Instagram xử lý xong container (status FINISHED) rồi mới
+    // publish — publish quá sớm sẽ bị lỗi 400 "Media ID is not available".
+    await waitContainerReady(containerId)
 
     // Step 2: Publish container
     const publishRes = await fetch(`${IG_GRAPH_URL}/${igUserId}/media_publish`, {
