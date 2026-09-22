@@ -478,25 +478,34 @@ export class AiService {
         HttpStatus.BAD_GATEWAY,
       )
     }
-    const data = JSON.parse(text) as { responses?: Array<{ embedding?: { values?: number[] } }> }
-    const responses = data.responses ?? []
+    const data = JSON.parse(text) as {
+      responses?: Array<{ embedding?: { values?: number[]; value?: number[] } }>
+      embeddings?: Array<{ values?: number[]; value?: number[] }>
+    }
+    // Google có thể trả 1 trong 2 dạng:
+    // - { responses: [{ embedding: { values: [...] } }] } (tài liệu batchEmbedContents)
+    // - { embeddings: [{ values: [...] }] } (thực tế API trả về cho gemini-embedding-001)
+    const raw: number[][] = []
+    if (Array.isArray(data.responses)) {
+      for (const r of data.responses) raw.push(r.embedding?.values ?? r.embedding?.value ?? [])
+    } else if (Array.isArray(data.embeddings)) {
+      for (const e of data.embeddings) raw.push(e.values ?? e.value ?? [])
+    }
     // Chuẩn hoá mọi vector về đúng 1536 chiều:
     // - dài hơn → cắt ngắn (an toàn với Matryoshka embedding như gemini-embedding-001)
     // - ngắn hơn → zero-pad (cosine similarity được bảo toàn)
-    const vectors = responses.map((r) => {
-      const v = r.embedding?.values ?? []
+    const vectors = raw.map((v) => {
       if (v.length === 1536) return v
       if (v.length > 1536) return v.slice(0, 1536)
       return [...v, ...new Array(1536 - v.length).fill(0)]
     })
     if (vectors.length !== texts.length || vectors.some((v) => v.length !== 1536)) {
       // Chẩn đoán không nhạy cảm: chỉ đếm số lượng, số chiều và tên field gốc
-      const firstDim =
-        responses.length > 0 ? (responses[0]?.embedding?.values?.length ?? -1) : -1
+      const firstDim = raw.length > 0 ? raw[0].length : -1
       const topKeys = Object.keys(data ?? {}).join(',')
       throw new HttpException(
         `Phản hồi embedding từ ${meta.name} không hợp lệ ` +
-          `(gửi ${texts.length}, nhận ${responses.length} responses, ` +
+          `(gửi ${texts.length}, nhận ${raw.length} vectors, ` +
           `dim đầu: ${firstDim}, keys: ${topKeys}).`,
         HttpStatus.BAD_GATEWAY,
       )
