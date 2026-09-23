@@ -172,6 +172,15 @@ describe('buildAgentSystemPrompt', () => {
     assert.match(p, /web_search/)
     assert.match(p, /tiếng Việt/)
   })
+
+  it('mang sứ mệnh viral → tương tác → thu nhập thụ động của Kiemtien2026', () => {
+    const p = buildAgentSystemPrompt(['web_search'])
+    assert.match(p, /Kiemtien2026/)
+    assert.match(p, /VIRAL/)
+    assert.match(p, /THU NHẬP THỤ ĐỘNG/)
+    assert.match(p, /HOOK/)
+    assert.match(p, /KHÔNG hứa hẹn thu nhập chắc chắn/)
+  })
 })
 
 describe('GeminiBackend', () => {
