@@ -22,8 +22,12 @@ import { OrhError, detectMediaKind } from '@orh/shared'
  *   Đăng lên tài khoản public sẽ bị chặn ngay ở bước init với mã
  *   `unaudited_client_can_only_post_to_private_accounts`.
  * - Muốn gỡ giới hạn: client phải qua audit TOS của TikTok.
- * - Token phải có scope `video.publish` — token cũ (chỉ có user.info.basic)
- *   phải Kết nối lại mới đăng được.
+ * - Token phải có scope `video.publish` — scope này thuộc product "Content Posting
+ *   API" mà TikTok phải phê duyệt mới cấp (kể cả ở sandbox). Khi TikTok đã duyệt
+ *   product cho app: thêm 'video.publish' vào scope authorize, deploy, rồi user
+ *   Kết nối lại TikTok mới đăng được. Cho video.publish vào URL authorize khi
+ *   app chưa được cấp sẽ khiến TikTok chặn LUÔN cả trang login ("Something went
+ *   wrong ... scope") — vì vậy scope mặc định hiện chỉ là user.info.basic.
  */
 
 export const TIKTOK_MANIFEST: PermissionManifest = {
@@ -44,7 +48,7 @@ export const TIKTOK_MANIFEST: PermissionManifest = {
       sensitivityLevel: 'sensitive',
     },
   ],
-  notes: 'Direct Post đã implement. App chưa audit → TikTok bắt buộc SELF_ONLY (private); đăng lên tài khoản public bị chặn ở bước init. Token phải có scope video.publish (token cũ cần Kết nối lại). Muốn đăng công khai phải chờ TikTok audit & duyệt app.',
+  notes: 'Direct Post đã implement. TRẠNG THÁI HIỆN TẠI: chờ TikTok phê duyệt product "Content Posting API" cho app (kể cả sandbox) — chưa có product này thì không xin được scope video.publish, token chỉ có user.info.basic. Khi được duyệt: thêm video.publish vào scope authorize + deploy + Kết nối lại TikTok rồi mới đăng được. App chưa audit → video bắt buộc SELF_ONLY (private). Muốn đăng công khai phải chờ TikTok audit & duyệt app.',
 }
 
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize'
@@ -75,9 +79,13 @@ export class TikTokConnector implements SocialConnector {
     return buildOAuthUrl(TIKTOK_AUTH_URL, {
       clientId: requiredEnv('tiktok', 'TIKTOK_CLIENT_KEY'),
       redirectUri: input.redirectUri,
-      // Đăng video cần scope video.publish — token OAuth phải xin quyền này
-      // ngay từ lúc authorize (token cũ thiếu scope phải Kết nối lại).
-      scopes: input.scopes ?? ['user.info.basic', 'video.publish'],
+      // CHỈ xin user.info.basic ở đây. Scope video.publish thuộc product
+      // "Content Posting API" — TikTok kiểm duyệt mới cấp, không tự thêm được.
+      // Nếu cho video.publish vào URL authorize khi app chưa được cấp,
+      // TikTok báo "Something went wrong ... scope" và chặn LUÔN cả login.
+      // Khi TikTok đã duyệt product cho app: thêm 'video.publish' vào mảng
+      // này, deploy, rồi user Kết nối lại TikTok để cấp quyền mới.
+      scopes: input.scopes ?? ['user.info.basic'],
       state: input.state,
       codeChallenge: input.codeChallenge,
       extra: { client_key: requiredEnv('tiktok', 'TIKTOK_CLIENT_KEY') },
@@ -332,7 +340,7 @@ function tiktokApiError(httpStatus: number, code: string, message: string): OrhE
     case 'scope_not_authorized':
       return new OrhError(
         'PROVIDER_REAUTH_REQUIRED',
-        'Token TikTok thiếu quyền đăng video (video.publish). Hãy vào mục Kết nối → ngắt kết nối TikTok → Kết nối lại để cấp quyền mới, rồi đăng lại.',
+        'App TikTok chưa được TikTok cấp product "Content Posting API" nên không có quyền đăng video (video.publish). Hãy đăng ký product này tại developers.tiktok.com (menu Products) và chờ phê duyệt — kể cả ở sandbox. Sau khi được duyệt, vào mục Kết nối → ngắt kết nối TikTok → Kết nối lại để cấp quyền mới, rồi đăng lại.',
         false,
         'tiktok',
       )
