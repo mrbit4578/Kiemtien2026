@@ -12,6 +12,7 @@ import { AiModule } from './ai/ai.module'
 import { RagModule } from './rag/rag.module'
 import { AgentModule } from './agent/agent.module'
 import { CanvaModule } from './canva/canva.module'
+import { RenderModule } from './render/render.module'
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { CanvaModule } from './canva/canva.module'
     RagModule,
     AgentModule,
     CanvaModule,
+    RenderModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

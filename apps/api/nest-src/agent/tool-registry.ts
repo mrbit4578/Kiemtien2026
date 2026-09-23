@@ -23,7 +23,13 @@ export interface JsonSchemaProperty {
   maximum?: number
   minLength?: number
   maxLength?: number
+  minItems?: number
+  maxItems?: number
   items?: JsonSchemaProperty
+  /** Cho phép mô tả object lồng nhau (vd phần tử của mảng clips). */
+  properties?: Record<string, JsonSchemaProperty>
+  required?: string[]
+  additionalProperties?: boolean
 }
 
 /** Context truyền vào mỗi tool khi chạy. */

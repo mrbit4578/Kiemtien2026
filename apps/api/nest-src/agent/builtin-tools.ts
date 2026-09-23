@@ -196,6 +196,80 @@ export function makeListConnectedAiTool(
   }
 }
 
+/** Tool render video bằng Concat engine headless — inject từ RenderService. */
+export function makeRenderVideoTool(
+  render: (spec: {
+    name: string
+    clips: Array<{ source: string; start?: number; duration?: number }>
+    captions?: Array<{ text: string; start: number; duration: number }>
+    effectId?: string
+  }) => Promise<{ id: string; status: string }>,
+): ToolDefinition {
+  return {
+    name: 'render_video',
+    description:
+      'Render video MP4 dọc 9:16 (TikTok/Reels/Shorts, không watermark) bằng Concat engine: ' +
+      'nối các clip, chèn caption từng đoạn, phủ hiệu ứng. ' +
+      'Job chạy nền theo hàng đợi (Concat render 1 video tại một thời điểm) — trả về job id để kiểm tra tiến độ. ' +
+      'Dùng khi người dùng muốn dựng video từ kịch bản/nguồn quay có sẵn.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Tên video', minLength: 1, maxLength: 120 },
+        clips: {
+          type: 'array',
+          description: 'Danh sách clip (tối đa 20). Mỗi clip là URL video/ảnh công khai.',
+          minItems: 1,
+          maxItems: 20,
+          items: {
+            type: 'object',
+            properties: {
+              source: { type: 'string', description: 'URL http(s) công khai của video/ảnh' },
+              start: { type: 'number', description: 'Vị trí giây trên timeline (bỏ qua = nối tiếp)' },
+              duration: { type: 'number', description: 'Ghi đè độ dài giây (bỏ qua = độ dài thật)' },
+            },
+            required: ['source'],
+            additionalProperties: false,
+          },
+        },
+        captions: {
+          type: 'array',
+          description: 'Caption chèn từng đoạn (lower-third, nằm trên video).',
+          items: {
+            type: 'object',
+            properties: {
+              text: { type: 'string', minLength: 1 },
+              start: { type: 'number' },
+              duration: { type: 'number' },
+            },
+            required: ['text', 'start', 'duration'],
+            additionalProperties: false,
+          },
+        },
+        effectId: {
+          type: 'string',
+          description: 'ID hiệu ứng phủ toàn video (lấy từ render_video catalogue — hiện để trống nếu chưa biết).',
+        },
+      },
+      required: ['name', 'clips'],
+      additionalProperties: false,
+    },
+    execute: async (args) => {
+      try {
+        const job = await render({
+          name: args['name'] as string,
+          clips: args['clips'] as Array<{ source: string; start?: number; duration?: number }>,
+          captions: args['captions'] as Array<{ text: string; start: number; duration: number }> | undefined,
+          effectId: args['effectId'] as string | undefined,
+        })
+        return `Đã xếp job render video "${args['name']}" (id ${job.id}, trạng thái ${job.status}). Kiểm tra tiến độ ở Content Studio → Video hoặc GET /render/jobs/${job.id}.`
+      } catch (err) {
+        return `Không tạo được job render: ${(err as Error).message}`
+      }
+    },
+  }
+}
+
 /** Toàn bộ built-in tools (knowledge_search và list_connected_ai cần inject sau). */
 export function buildBuiltinTools(deps: {
   knowledgeSearch: (query: string, topK: number) => Promise<Array<{ title: string; content: string; score: number }>>
