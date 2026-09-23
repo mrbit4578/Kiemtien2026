@@ -53,7 +53,8 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     # Chạy trong image đã build, trước khi deploy (giống service node).
-    preDeployCommand: sh apps/api/scripts/migrate-with-retry.sh
+    # WORKDIR trong image là /app/apps/api nên path tính từ đó.
+    preDeployCommand: sh scripts/migrate-with-retry.sh
     healthCheckPath: /rag/strategies
     envVars:
       - key: NODE_ENV
