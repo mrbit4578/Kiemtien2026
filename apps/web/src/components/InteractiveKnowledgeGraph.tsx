@@ -18,8 +18,9 @@ import {
   Loader2,
   X,
   TriangleAlert,
+  ChevronDown,
 } from 'lucide-react'
-import { useAiConnections, sendAgentRun } from '../lib/hooks'
+import { useAiConnections, useAiProviders, sendAgentRun } from '../lib/hooks'
 import { ApiError } from '../lib/api'
 
 export interface GraphNode {
@@ -280,8 +281,29 @@ export function InteractiveKnowledgeGraph() {
   const [links, setLinks] = useState<GraphLink[]>(DEFAULT_LINKS)
 
   // ── AI Niche Scanner: agent tìm ngách mới & vùng tối ưu ──
+  // Cấu trúc chọn provider/model bê nguyên từ AI Chat Pro
+  const { providers } = useAiProviders()
   const { connections } = useAiConnections()
-  const activeProvider = connections.find((c) => c.status === 'active')?.provider
+  const [providerId, setProviderId] = useState<string>('')
+  const [model, setModel] = useState<string>('')
+  const activeConns = connections.filter((c) => c.status === 'active')
+  const activeMeta = providers.filter((p) => activeConns.some((c) => c.provider === p.id))
+  const currentMeta = providers.find((p) => p.id === providerId)
+
+  // Mặc định chọn provider active đầu tiên + model mặc định của nó
+  useEffect(() => {
+    if (!providerId && activeMeta.length > 0) {
+      setProviderId(activeMeta[0].id)
+      setModel(activeMeta[0].defaultModel)
+    }
+  }, [providerId, activeMeta])
+
+  // Đổi provider → reset model về default nếu model hiện tại không thuộc provider mới
+  useEffect(() => {
+    if (currentMeta && model && !currentMeta.models.includes(model)) {
+      setModel(currentMeta.defaultModel)
+    }
+  }, [currentMeta, model])
   const [scanning, setScanning] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
@@ -291,11 +313,11 @@ export function InteractiveKnowledgeGraph() {
   const aiNodes = nodes.filter((n) => n.aiGenerated).sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
 
   const requireProvider = (): string | null => {
-    if (!activeProvider) {
+    if (!providerId) {
       setScanError('Chưa kết nối AI provider nào. Hãy vào Cài đặt → AI Pro để kết nối key trước khi dùng AI quét ngách.')
       return null
     }
-    return activeProvider
+    return providerId
   }
 
   /** Agent research trend MMO 2026 → đề xuất ngách mới → vẽ lên graph. */
@@ -309,7 +331,7 @@ export function InteractiveKnowledgeGraph() {
       const res = await sendAgentRun(
         provider,
         [{ role: 'user' as const, content: buildNicheScanPrompt(nodes.map((n) => n.label), nodes.map((n) => n.id)) }],
-        undefined,
+        model || undefined,
         { maxTurns: 10, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 4096 },
       )
       const parsed = extractJsonArray(res.content)
@@ -364,7 +386,7 @@ export function InteractiveKnowledgeGraph() {
       const res = await sendAgentRun(
         provider,
         [{ role: 'user' as const, content: buildNodeAnalysisPrompt(selectedNode) }],
-        undefined,
+        model || undefined,
         { maxTurns: 8, tools: ['web_search', 'fetch_url', 'get_current_time'] },
       )
       setAiInsight(res.content)
@@ -573,6 +595,35 @@ export function InteractiveKnowledgeGraph() {
 
       {/* AI Niche Scanner toolbar */}
       <div className="flex flex-wrap items-center gap-2 mt-4">
+        {/* Chọn provider/model — cùng cấu trúc với AI Chat Pro */}
+        <div className="relative">
+          <select
+            value={providerId}
+            onChange={(e) => setProviderId(e.target.value)}
+            className="appearance-none pl-3 pr-8 py-2.5 rounded-lg bg-dark-950/70 border border-white/10 text-white text-xs font-bold focus:outline-none focus:border-brand-emerald/60"
+            title="AI provider dùng để quét"
+          >
+            {activeMeta.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+        </div>
+        {currentMeta && (
+          <div className="relative">
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              className="appearance-none pl-3 pr-8 py-2.5 rounded-lg bg-dark-950/70 border border-white/10 text-slate-300 text-xs font-mono focus:outline-none focus:border-brand-emerald/60"
+              title="Model dùng để quét"
+            >
+              {currentMeta.models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+          </div>
+        )}
         <button
           onClick={handleScan}
           disabled={scanning}
@@ -591,7 +642,9 @@ export function InteractiveKnowledgeGraph() {
           </button>
         )}
         <span className="text-[11px] text-slate-500">
-          Agent tự tìm kiếm trend MMO 2026, đề xuất ngách mới, chấm điểm cơ hội và vẽ lên bản đồ.
+          {currentMeta
+            ? `Dùng key ${currentMeta.name} · model ${model || currentMeta.defaultModel} để quét trend MMO 2026, đề xuất ngách mới và vẽ lên bản đồ.`
+            : 'Kết nối key AI ở Cài đặt → AI Pro để bật quét ngách.'}
         </span>
       </div>
       {scanError && (
