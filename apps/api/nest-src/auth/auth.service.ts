@@ -163,7 +163,10 @@ export class AuthService {
       try {
         encryptedAccess = encrypt(tokenSet.accessToken)
         encryptedRefresh = tokenSet.refreshToken ? encrypt(tokenSet.refreshToken) : undefined
-      } catch {
+      } catch (e) {
+        // Log nguyên nhân thật phía server (message không chứa secret — chỉ là
+        // lỗi độ dài key hoặc lỗi cipher) để chẩn đoán, không đoán mò.
+        console.error('[auth] encrypt() thất bại:', e instanceof Error ? e.message : e)
         throw new InternalServerErrorException(
           'Lỗi mã hóa token: TOKEN_ENCRYPTION_KEY chưa được cấu hình đúng.',
         )

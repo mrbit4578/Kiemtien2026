@@ -61,6 +61,22 @@ async function bootstrap() {
     console.warn('[warn] APP_URL chưa set — CORS tắt (fail-closed).')
   }
 
+  // Chẩn đoán cấu hình mã hóa token ngay khi khởi động (chỉ log trạng thái +
+  // độ dài, KHÔNG BAO GIỜ log giá trị key). Thiếu key → OAuth callback sẽ 500
+  // ở bước mã hóa token — phát hiện sớm ở đây thay vì đoán mò.
+  const tokenKey = process.env.TOKEN_ENCRYPTION_KEY
+  if (!tokenKey) {
+    console.warn(
+      '[warn] TOKEN_ENCRYPTION_KEY chưa set — OAuth callback sẽ lỗi 500 khi mã hóa token.',
+    )
+  } else if (tokenKey.length < 32) {
+    console.warn(
+      `[warn] TOKEN_ENCRYPTION_KEY quá ngắn (${tokenKey.length} ký tự, cần ≥ 32) — OAuth callback sẽ lỗi 500 khi mã hóa token.`,
+    )
+  } else {
+    console.log(`[crypto] TOKEN_ENCRYPTION_KEY đã cấu hình (${tokenKey.length} ký tự).`)
+  }
+
   // Railway/Render cấp PORT động; API_PORT dành cho tự host thủ công.
   const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000)
   await app.listen(port, '0.0.0.0')
