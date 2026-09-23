@@ -73,11 +73,19 @@ export class TikTokConnector implements SocialConnector {
     })
     if (!res.ok) throw new OrhError('TRANSIENT_NETWORK_ERROR', 'TikTok token exchange failed.', true, 'tiktok')
     const d = await res.json()
+    // TikTok trả token ở TOP-LEVEL (không bọc trong `data` như user/info) —
+    // xem https://developers.tiktok.com/docs/en/oauth-user-access-token-management
+    // Nếu thiếu access_token thì ném lỗi RÕ RÀNG ngay tại đây, đừng để
+    // encrypt(undefined) nổ TypeError rồi bị hiểu nhầm thành lỗi key mã hóa.
+    if (!d.access_token) {
+      const reason = d.error_description ?? d.error ?? 'không rõ nguyên nhân'
+      throw new Error(`TikTok từ chối đổi code lấy token: ${reason}`)
+    }
     return {
-      accessToken: d.data?.access_token,
-      refreshToken: d.data?.refresh_token,
-      expiresAt: new Date(Date.now() + (d.data?.expires_in ?? 3600) * 1000),
-      scopes: (d.data?.scope ?? '').split(','),
+      accessToken: d.access_token,
+      refreshToken: d.refresh_token,
+      expiresAt: new Date(Date.now() + (d.expires_in ?? 86400) * 1000),
+      scopes: (d.scope ?? '').split(',').filter(Boolean),
       tokenType: 'Bearer',
     }
   }
