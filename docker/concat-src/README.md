@@ -236,3 +236,20 @@ envelope carrying the same JSON, with the token as `authorization: Bearer
 - **Graphs use handles, not pointers.** `concat_core::arena` explains why.
 - **Shallow generics.** Concrete types until three call sites demand otherwise.
 - **Threads, not async.** The render path is CPU-bound; `async` buys nothing here.
+
+## FFmpeg 5.1 compat patch (Docker build, 2026-09-23)
+
+Docker image build trên Debian bookworm với **FFmpeg 5.1**, trong khi
+upstream yêu cầu FFmpeg ≥ 7.0 ở đúng một chỗ:
+
+- `crates/concat-media/src/ffi.rs` — `rotation()`: upstream đọc display
+  matrix từ `AVCodecParameters.coded_side_data` (chỉ có từ FFmpeg 7.0).
+  Bản vendored này đọc qua `av_stream_get_side_data()` ở **stream level**
+  (API ổn định, có ở mọi phiên bản) — trên FFmpeg 5.1 matrix vẫn nằm ở
+  stream level nên hành vi giữ nguyên: video dọc quay bằng điện thoại vẫn
+  được xoay đúng hướng.
+
+**Không** áp patch này vào source gốc
+(`~/workspace/user/files/concat-src/Concat-main`): source gốc build với
+FFmpeg 7+ local, giữ code upstream nguyên vẹn. Khi sync snapshot mới từ
+upstream, nhớ áp lại patch này.
