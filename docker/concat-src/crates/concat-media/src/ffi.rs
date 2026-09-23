@@ -170,27 +170,30 @@ pub(crate) fn av_ticks(seconds: Rational) -> i64 {
 /// so the decoder can turn the picture the way every player does, and the
 /// probe can report the dimensions as displayed.
 pub(crate) fn rotation(stream: &ffmpeg::format::stream::Stream<'_>) -> i64 {
-    // DOCKER BUILD (FFmpeg 5.1, Debian bookworm): the display matrix still
-    // lives in the stream's own side data here — it only moved to the codec
-    // parameters' `coded_side_data` in FFmpeg 7.0, which this build's headers
-    // do not have. So it is read at the stream level via
-    // `av_stream_get_side_data`, a stable API present in both.
-    // SAFETY: the stream pointer is valid for the stream's lifetime; a
-    // display matrix entry holds nine `i32`s.
+    // The display matrix moved from the stream to its codec parameters in
+    // FFmpeg 7.0, which is the oldest this crate builds against; the wrapper
+    // has no accessor for that field yet, so it is read directly.
+    // SAFETY: the stream pointer is valid for the stream's lifetime, and
+    // `coded_side_data` is an array of `nb_coded_side_data` entries owned by
+    // the codec parameters; a display matrix entry holds nine `i32`s.
     let from_matrix = unsafe {
-        let mut size: usize = 0;
-        let data = ffmpeg::sys::av_stream_get_side_data(
-            stream.as_ptr(),
-            ffmpeg::sys::AVPacketSideDataType::DISPLAYMATRIX,
-            &mut size,
-        );
-        if !data.is_null() && size >= 9 * 4 {
-            // Players rotate by the negative of what the matrix encodes;
-            // `get_rotation` in ffmpeg's own tools does exactly this.
-            Some(-ffmpeg::sys::av_display_rotation_get(data as *const i32))
-        } else {
-            None
+        let parameters = (*stream.as_ptr()).codecpar;
+        let count = (*parameters).nb_coded_side_data;
+        let entries = (*parameters).coded_side_data;
+        let mut found = None;
+        for index in 0..count {
+            let entry = entries.offset(index as isize);
+            if (*entry).type_ == ffmpeg::sys::AVPacketSideDataType::DISPLAYMATRIX
+                && (*entry).size >= 9 * 4
+            {
+                // Players rotate by the negative of what the matrix encodes;
+                // `get_rotation` in ffmpeg's own tools does exactly this.
+                let angle = -ffmpeg::sys::av_display_rotation_get((*entry).data as *const i32);
+                found = Some(angle);
+                break;
+            }
         }
+        found
     };
     let degrees = from_matrix.or_else(|| {
         stream

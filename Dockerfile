@@ -5,16 +5,22 @@
 # qua JSON-RPC — media.import nhận filesystem path, MP4 output nằm trên disk
 # của chính container này, nên KHÔNG tách renderer ra service riêng.
 #
-# Binary cần GLIBC_2.38+ (build trên Ubuntu 24.04 / Debian 12) → mọi stage đều
-# dùng bookworm (Debian 12), KHÔNG dùng alpine (musl).
+# Base image: Debian 13 (trixie) cho CẢ 3 stage — BẮT BUỘC, không dùng bookworm:
+#  - prebuilt onnxruntime (ort-sys, do concat-vision kéo vào) link tới symbol
+#    __isoc23_* (cần glibc >= 2.38) và
+#    std::__cxx11::basic_string::_M_replace_cold (cần libstdc++ của GCC >= 14);
+#    bookworm (glibc 2.36, GCC 12) link fail.
+#  - trixie có FFmpeg 7.1 → khớp yêu cầu "FFmpeg >= 7.0" của concat-media,
+#    không cần patch compat source.
+# KHÔNG dùng alpine (musl) ở bất kỳ stage nào.
 
 # ─── Stage 1: build concat-cli từ vendored source ──────────────────────────
-FROM rust:1.93-bookworm AS rust-builder
-# Nếu tag 1.93 chưa có trên Docker Hub lúc build, đổi thành rust:bookworm.
+FROM rust:1.93-trixie AS rust-builder
+# Nếu tag 1.93-trixie chưa có trên Docker Hub lúc build, thử rust:trixie.
 WORKDIR /opt/concat-src
 
-# FFmpeg dev headers cho ffmpeg-sys (build.rs yêu cầu libavcodec >= 59.37;
-# bookworm có FFmpeg 5.1 = 59.37.100, vừa đủ) + libclang cho bindgen.
+# FFmpeg 7.1 dev headers cho ffmpeg-sys + libclang cho bindgen +
+# libasound2-dev cho alsa-sys (audio).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev \
     libavdevice-dev libswscale-dev libswresample-dev libpostproc-dev \
@@ -29,7 +35,7 @@ RUN cargo build --release -p concat-cli \
     && target/release/concat-cli --version
 
 # ─── Stage 2: install + build Node workspace ───────────────────────────────
-FROM node:20-bookworm AS node-builder
+FROM node:20-trixie AS node-builder
 WORKDIR /app
 RUN corepack enable
 
@@ -46,15 +52,15 @@ RUN NODE_ENV=development pnpm install --frozen-lockfile \
 # rồi tsc -p tsconfig.nest.json → apps/api/dist.
 
 # ─── Stage 3: runtime ──────────────────────────────────────────────────────
-FROM node:20-bookworm-slim AS runtime
+FROM node:20-trixie-slim AS runtime
 WORKDIR /app/apps/api
 ENV NODE_ENV=production \
     CONCAT_CLI_PATH=/usr/local/bin/concat-cli
 
 # ffmpeg: binary ffprobe/ffmpeg + toàn bộ libav* runtime mà concat-cli link
-# tới (libavcodec59, libavformat59, libavutil57, libavfilter8, libavdevice59,
-# libswscale6...). pnpm global: preDeployCommand chạy migrate-with-retry.sh,
-# script này gọi `pnpm exec prisma`.
+# tới (trixie/FFmpeg 7.1: libavcodec61, libavformat61, libavutil59,
+# libavfilter10, libavdevice61, libswscale8...). pnpm global:
+# preDeployCommand chạy migrate-with-retry.sh, script này gọi `pnpm exec prisma`.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

@@ -237,19 +237,17 @@ envelope carrying the same JSON, with the token as `authorization: Bearer
 - **Shallow generics.** Concrete types until three call sites demand otherwise.
 - **Threads, not async.** The render path is CPU-bound; `async` buys nothing here.
 
-## FFmpeg 5.1 compat patch (Docker build, 2026-09-23)
+## Base image: Debian 13 trixie (2026-09-23)
 
-Docker image build trên Debian bookworm với **FFmpeg 5.1**, trong khi
-upstream yêu cầu FFmpeg ≥ 7.0 ở đúng một chỗ:
+Docker build **bắt buộc** dùng trixie cho cả 3 stage, không dùng bookworm:
 
-- `crates/concat-media/src/ffi.rs` — `rotation()`: upstream đọc display
-  matrix từ `AVCodecParameters.coded_side_data` (chỉ có từ FFmpeg 7.0).
-  Bản vendored này đọc qua `av_stream_get_side_data()` ở **stream level**
-  (API ổn định, có ở mọi phiên bản) — trên FFmpeg 5.1 matrix vẫn nằm ở
-  stream level nên hành vi giữ nguyên: video dọc quay bằng điện thoại vẫn
-  được xoay đúng hướng.
+- Prebuilt onnxruntime (`ort-sys`, do `concat-vision` kéo vào) link tới
+  symbol `__isoc23_*` (cần glibc >= 2.38) và
+  `std::__cxx11::basic_string::_M_replace_cold` (cần libstdc++ của GCC >= 14)
+  → bookworm (glibc 2.36, GCC 12) **link fail**.
+- Trixie có FFmpeg 7.1 → khớp yêu cầu "FFmpeg >= 7.0" của `concat-media`,
+  source giữ nguyên code upstream, **không patch gì**.
 
-**Không** áp patch này vào source gốc
-(`~/workspace/user/files/concat-src/Concat-main`): source gốc build với
-FFmpeg 7+ local, giữ code upstream nguyên vẹn. Khi sync snapshot mới từ
-upstream, nhớ áp lại patch này.
+(Lịch sử: đã thử bookworm + patch `rotation()` đọc display matrix ở stream
+level cho FFmpeg 5.1 — compile qua được nhưng kẹt ở bước link onnxruntime
+nêu trên nên revert toàn bộ, chuyển sang trixie.)
