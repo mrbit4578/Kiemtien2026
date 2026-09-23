@@ -271,10 +271,11 @@ export class ContentController {
     }
     const urls: string[] = []
     for (const file of list) {
-      // Signed upload: signature = SHA1("timestamp=<ts>" + api_secret)
+      // Signed upload: mọi tham số gửi kèm (trừ file/api_key) đều phải có mặt
+      // trong chuỗi ký, xếp theo alphabet: signature = SHA1("folder=...&timestamp=..." + api_secret)
       const timestamp = Math.floor(Date.now() / 1000)
       const signature = createHash('sha1')
-        .update(`timestamp=${timestamp}${apiSecret}`)
+        .update(`folder=kiemtien2026&timestamp=${timestamp}${apiSecret}`)
         .digest('hex')
       const form = new FormData()
       form.append('file', new Blob([file.buffer], { type: file.mimetype }), file.originalname || 'video.mp4')
