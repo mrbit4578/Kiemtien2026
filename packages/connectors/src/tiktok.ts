@@ -55,6 +55,32 @@ const ALLOWED_REDIRECT_URIS = [`${process.env.API_URL}/auth/tiktok/callback`]
 const TIKTOK_API_BASE = 'https://open.tiktokapis.com'
 /** Kích thước mỗi chunk upload (10MB — đúng ví dụ trong docs TikTok). */
 const TIKTOK_CHUNK_SIZE = 10 * 1024 * 1024
+/** File <= 64MB: upload 1 chunk duy nhất (chunk_size = cả file). */
+const TIKTOK_SINGLE_SHOT_MAX = 64 * 1024 * 1024
+/**
+ * Tính (chunk_size, total_chunk_count) cho TikTok FILE_UPLOAD.
+ *
+ * Quy tắc rút ra từ thực tế triển khai cộng đồng (docs TikTok không ghi rõ):
+ * - total_chunk_count = FLOOR(video_size / chunk_size), KHÔNG phải ceil —
+ *   chunk cuối "nuốt" toàn bộ phần dư và được phép lớn hơn chunk_size
+ *   (tối đa 128MB theo docs).
+ * - Mọi chunk KỂ CẢ chunk cuối phải >= 5MB, trừ khi chỉ có đúng 1 chunk
+ *   (upload 1 lần, file <= 64MB).
+ *
+ * Code cũ dùng Math.ceil: với file 82.7MB → 9 chunk, chunk cuối chỉ ~2.7MB
+ * (< 5MB) → TikTok trả "invalid_params: The total chunk count is invalid".
+ */
+export function planTiktokChunks(videoSize: number): {
+  chunkSize: number
+  chunkCount: number
+} {
+  if (videoSize <= TIKTOK_SINGLE_SHOT_MAX) {
+    return { chunkSize: videoSize, chunkCount: 1 }
+  }
+  const chunkSize = TIKTOK_CHUNK_SIZE
+  const chunkCount = Math.max(1, Math.floor(videoSize / chunkSize))
+  return { chunkSize, chunkCount }
+}
 /** Giới hạn video cho pipeline TikTok (khớp limit 100MB của endpoint upload-video). */
 const TIKTOK_MAX_VIDEO_BYTES = 100 * 1024 * 1024
 /** Giới hạn caption của TikTok (2200 ký tự UTF-16). */
@@ -171,7 +197,8 @@ export class TikTokConnector implements SocialConnector {
     const title = (input.caption ?? '').slice(0, TIKTOK_TITLE_LIMIT)
 
     // ── B1: khởi tạo phiên đăng ──────────────────────────────────────
-    const totalChunks = Math.max(1, Math.ceil(video.length / TIKTOK_CHUNK_SIZE))
+    // total_chunk_count = FLOOR (không phải ceil) — xem planTiktokChunks().
+    const { chunkSize, chunkCount: totalChunks } = planTiktokChunks(video.length)
     let initRes: Response
     try {
       initRes = await fetch(`${TIKTOK_API_BASE}/v2/post/publish/video/init/`, {
@@ -194,7 +221,7 @@ export class TikTokConnector implements SocialConnector {
           source_info: {
             source: 'FILE_UPLOAD',
             video_size: video.length,
-            chunk_size: TIKTOK_CHUNK_SIZE,
+            chunk_size: chunkSize,
             total_chunk_count: totalChunks,
           },
         }),
@@ -223,10 +250,12 @@ export class TikTokConnector implements SocialConnector {
     }
 
     // ── B2: upload từng chunk theo thứ tự ─────────────────────────────
+    // Chunk cuối "nuốt" toàn bộ phần dư (được phép lớn hơn chunkSize) —
+    // phải khớp đúng total_chunk_count đã khai báo ở bước init.
     const contentType = chunkContentType(videoUrl)
     for (let i = 0; i < totalChunks; i++) {
-      const start = i * TIKTOK_CHUNK_SIZE
-      const end = Math.min(start + TIKTOK_CHUNK_SIZE, video.length) - 1
+      const start = i * chunkSize
+      const end = i === totalChunks - 1 ? video.length - 1 : start + chunkSize - 1
       const chunk = video.subarray(start, end + 1)
       let upRes: Response
       try {

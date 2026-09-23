@@ -234,3 +234,35 @@ describe('TikTokConnector.publish — Direct Post (init → chunk PUT → status
     assert.match((err as Error).message, /Riêng tư/)
   })
 })
+
+describe('planTiktokChunks — total_chunk_count = FLOOR, chunk cuối nuốt phần dư', () => {
+  const { planTiktokChunks } = createRequire(__filename)('./tiktok')
+  const MB = 1024 * 1024
+
+  it('file nhỏ (<= 64MB) → 1 chunk duy nhất, chunk_size = cả file', () => {
+    assert.deepEqual(planTiktokChunks(3 * MB), { chunkSize: 3 * MB, chunkCount: 1 })
+    assert.deepEqual(planTiktokChunks(64 * MB), { chunkSize: 64 * MB, chunkCount: 1 })
+  })
+
+  it('file 82.7MB (case thực tế từng fail) → 8 chunk (floor), chunk cuối ~12.7MB >= 5MB', () => {
+    const size = Math.round(82.7 * MB)
+    const { chunkSize, chunkCount } = planTiktokChunks(size)
+    assert.equal(chunkSize, 10 * MB)
+    assert.equal(chunkCount, 8) // ceil cũ cho 9 chunk, chunk cuối ~2.7MB < 5MB → TikTok từ chối
+    const lastChunk = size - (chunkCount - 1) * chunkSize
+    assert.ok(lastChunk >= 5 * MB, `chunk cuối ${lastChunk} phải >= 5MB`)
+    assert.ok(lastChunk >= chunkSize && lastChunk < 2 * chunkSize)
+  })
+
+  it('quét 65–100MB: chunk cuối luôn trong [chunkSize, 2*chunkSize), không bao giờ < 5MB', () => {
+    for (let mb = 65; mb <= 100; mb++) {
+      const size = mb * MB
+      const { chunkSize, chunkCount } = planTiktokChunks(size)
+      assert.equal(chunkCount, Math.floor(size / chunkSize))
+      const lastChunk = size - (chunkCount - 1) * chunkSize
+      assert.ok(lastChunk >= 5 * MB, `${mb}MB: chunk cuối ${lastChunk} < 5MB`)
+      // Tổng các chunk khớp đúng video_size (không thừa/thiếu byte)
+      assert.equal((chunkCount - 1) * chunkSize + lastChunk, size)
+    }
+  })
+})
