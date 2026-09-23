@@ -23,7 +23,8 @@ describe('TikTokConnector.authorizationUrl — scope mặc định', () => {
       }),
     )
     assert.equal(url.searchParams.get('client_key'), 'test_client_key')
-    assert.equal(url.searchParams.get('scope'), 'user.info.basic video.publish')
+    // TikTok BẮT BUỘC scope phân cách bằng dấu phẩy (không phải dấu cách).
+    assert.equal(url.searchParams.get('scope'), 'user.info.basic,video.publish')
     assert.equal(url.searchParams.get('redirect_uri'), REDIRECT_URI)
   })
 })

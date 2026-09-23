@@ -80,7 +80,12 @@ export class TikTokConnector implements SocialConnector {
       // Scope video.publish thuộc product "Content Posting API" — đã bật cho cả
       // app Production và Sandbox (Direct Post = ON), nên xin luôn ở đây.
       // Token cũ (chỉ có user.info.basic) phải Kết nối lại mới có quyền mới.
+      // QUAN TRỌNG: TikTok yêu cầu các scope phân cách bằng DẤU PHẨY
+      // (scope=user.info.basic,video.publish). Nối bằng dấu cách làm TikTok
+      // hiểu thành 1 scope lạ duy nhất và chặn cứng trang authorize với lỗi
+      // "Something went wrong ... correct the following: scope".
       scopes: input.scopes ?? ['user.info.basic', 'video.publish'],
+      scopeSeparator: ',',
       state: input.state,
       codeChallenge: input.codeChallenge,
       extra: { client_key: requiredEnv('tiktok', 'TIKTOK_CLIENT_KEY') },
