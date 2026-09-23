@@ -97,7 +97,7 @@ function toUiItem(a: ApiContentItem): ContentItem {
 
 export function ContentStudio() {
   const { sessionData, currentStep, startAutoPilot } = useSession()
-  const { items, loading, error, create, approve, publish, updateContent, retryPublish, uploadImages, removeContent, removeMany } = useContent()
+  const { items, loading, error, create, approve, publish, updateContent, retryPublish, uploadImages, uploadVideos, removeContent, removeMany } = useContent()
   const { connections } = useConnections()
   const activeConnections = useMemo(
     () => connections.filter((c) => c.status === 'active'),
@@ -218,7 +218,7 @@ export function ContentStudio() {
   }
 
   // Upload ảnh: null = rảnh, 'editor' = đang upload trong editor sửa bài, 'create' = trong modal tạo bài
-  const [uploading, setUploading] = useState<null | 'editor' | 'create'>(null)
+  const [uploading, setUploading] = useState<null | 'editor' | 'create' | 'editor-video' | 'create-video'>(null)
 
   /**
    * Chọn một hoặc nhiều file ảnh từ máy → upload lên host → điền các direct
@@ -241,6 +241,32 @@ export function ContentStudio() {
       setOpOk(`Đã tải lên ${urls.length} ảnh — link đã được điền vào ô${urls.length > 1 ? ' (đăng carousel)' : ''}.`)
     } catch (err) {
       setOpError(err instanceof Error ? err.message : 'Tải ảnh lên thất bại.')
+    } finally {
+      setUploading(null)
+    }
+  }
+
+  /**
+   * Upload video từ máy lên Cloudinary → điền direct URL (mỗi dòng một link)
+   * vào ô link. 1 video → Instagram đăng Reels / TikTok đăng video.
+   * `target`: 'editor-video' điền vào editor sửa bài, 'create-video' điền vào modal tạo bài.
+   */
+  const handleVideoFile = async (fileList: FileList | null | undefined, target: 'editor-video' | 'create-video') => {
+    const files = Array.from(fileList ?? []).filter((f) => f.type.startsWith('video/'))
+    if (files.length === 0) {
+      setOpError('Chỉ nhận file video (MP4/WebM, tối đa 100MB mỗi video).')
+      return
+    }
+    setUploading(target)
+    setOpError(null)
+    try {
+      const urls = await uploadVideos(files)
+      const joined = urls.join('\n')
+      if (target === 'editor-video') setAssetUrlValue(joined)
+      else setNewAssetUrl(joined)
+      setOpOk(`Đã tải lên ${urls.length} video — link đã được điền vào ô.`)
+    } catch (err) {
+      setOpError(err instanceof Error ? err.message : 'Tải video lên thất bại.')
     } finally {
       setUploading(null)
     }
@@ -742,6 +768,26 @@ export function ContentStudio() {
                           }}
                         />
                       </label>
+                      <label
+                        className={`shrink-0 px-3 py-2 rounded-lg font-bold text-xs cursor-pointer transition-all border ${
+                          uploading === 'editor-video'
+                            ? 'bg-dark-850 text-slate-500 border-white/10 pointer-events-none'
+                            : 'bg-brand-violet/15 hover:bg-brand-violet/25 text-brand-violet border-brand-violet/30'
+                        }`}
+                      >
+                        {uploading === 'editor-video' ? 'Đang tải...' : 'Tải video lên'}
+                        <input
+                          type="file"
+                          accept="video/*"
+                          multiple
+                          className="hidden"
+                          disabled={uploading === 'editor-video'}
+                          onChange={(e) => {
+                            handleVideoFile(e.target.files, 'editor-video')
+                            e.target.value = ''
+                          }}
+                        />
+                      </label>
                     </div>
                   </div>
                   <div className="flex items-center justify-end gap-2">
@@ -970,6 +1016,26 @@ export function ContentStudio() {
                       disabled={uploading === 'create'}
                       onChange={(e) => {
                         handleImageFile(e.target.files, 'create')
+                        e.target.value = ''
+                      }}
+                    />
+                  </label>
+                  <label
+                    className={`shrink-0 px-3 py-2 rounded-lg font-bold text-xs cursor-pointer transition-all border ${
+                      uploading === 'create-video'
+                        ? 'bg-dark-850 text-slate-500 border-white/10 pointer-events-none'
+                        : 'bg-brand-violet/15 hover:bg-brand-violet/25 text-brand-violet border-brand-violet/30'
+                    }`}
+                  >
+                    {uploading === 'create-video' ? 'Đang tải...' : 'Tải video lên'}
+                    <input
+                      type="file"
+                      accept="video/*"
+                      multiple
+                      className="hidden"
+                      disabled={uploading === 'create-video'}
+                      onChange={(e) => {
+                        handleVideoFile(e.target.files, 'create-video')
                         e.target.value = ''
                       }}
                     />

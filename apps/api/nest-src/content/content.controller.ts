@@ -27,6 +27,7 @@ import {
   MaxLength,
 } from 'class-validator'
 import type { Request } from 'express'
+import { createHash } from 'crypto'
 import { Prisma, PrismaClient } from '@prisma/client'
 import { OrhError } from '@orh/shared'
 import type { Provider } from '@orh/shared'
@@ -218,6 +219,91 @@ export class ContentController {
         )
       }
       urls.push(data.data.url)
+    }
+    return { urls }
+  }
+
+  /**
+   * POST /content/upload-video — upload một hoặc vài video từ máy, host lên
+   * Cloudinary (resource_type=video), trả về danh sách direct URL để gắn vào
+   * assetUrl (1 video → Instagram đăng Reels, TikTok đăng video).
+   * imgbb chỉ chứa được ảnh nên video cần host riêng — Cloudinary có gói miễn
+   * phí (25GB) tại https://cloudinary.com.
+   * Cần env CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET
+   * — thiếu thì trả 503 với message tiếng Việt (fail-fast, giống pattern OAuth).
+   */
+  @Post('upload-video')
+  @UseInterceptors(
+    FilesInterceptor('files', 2, {
+      limits: { fileSize: 100 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        if (file.mimetype?.startsWith('video/')) {
+          cb(null, true)
+        } else {
+          cb(
+            new BadRequestException('Chỉ nhận file video (MP4/WebM, tối đa 100MB mỗi video).'),
+            false,
+          )
+        }
+      },
+    }),
+  )
+  @HttpCode(200)
+  async uploadVideo(
+    @UploadedFiles() files: Express.Multer.File[] | undefined,
+    @Session() session: any,
+  ) {
+    requireWorkspaceId(session)
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim()
+    const apiKey = process.env.CLOUDINARY_API_KEY?.trim()
+    const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim()
+    if (!cloudName || !apiKey || !apiSecret) {
+      throw new ServiceUnavailableException(
+        'Chưa cấu hình upload video: thiếu biến môi trường CLOUDINARY_CLOUD_NAME / ' +
+          'CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET trên server. Tạo tài khoản miễn phí ' +
+          'tại https://cloudinary.com, lấy thông tin ở Dashboard rồi thêm vào ' +
+          'Environment Variables của API service và deploy lại.',
+      )
+    }
+    const list = (files ?? []).filter((f) => f?.buffer?.length)
+    if (list.length === 0) {
+      throw new BadRequestException('Chưa chọn file video.')
+    }
+    const urls: string[] = []
+    for (const file of list) {
+      // Signed upload: signature = SHA1("timestamp=<ts>" + api_secret)
+      const timestamp = Math.floor(Date.now() / 1000)
+      const signature = createHash('sha1')
+        .update(`timestamp=${timestamp}${apiSecret}`)
+        .digest('hex')
+      const form = new FormData()
+      form.append('file', new Blob([file.buffer], { type: file.mimetype }), file.originalname || 'video.mp4')
+      form.append('api_key', apiKey)
+      form.append('timestamp', String(timestamp))
+      form.append('signature', signature)
+      form.append('folder', 'kiemtien2026')
+      let res: Response
+      try {
+        res = await fetchTimeout(
+          `https://api.cloudinary.com/v1_1/${cloudName}/video/upload`,
+          { method: 'POST', body: form },
+          120000,
+        )
+      } catch (err) {
+        throw new ServiceUnavailableException(
+          `Upload video thất bại: không kết nối được tới Cloudinary (${err instanceof Error ? err.message : String(err)}).`,
+        )
+      }
+      const data = (await res.json().catch(() => null)) as {
+        secure_url?: string
+        error?: { message?: string }
+      } | null
+      if (!res.ok || !data?.secure_url) {
+        throw new BadRequestException(
+          `Cloudinary từ chối upload (${data?.error?.message ?? `HTTP ${res.status}`}). Kiểm tra lại thông tin Cloudinary.`,
+        )
+      }
+      urls.push(data.secure_url)
     }
     return { urls }
   }

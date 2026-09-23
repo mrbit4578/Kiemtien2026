@@ -196,6 +196,18 @@ export function useContent() {
     return res.urls
   }, [])
 
+  /**
+   * Upload một hoặc vài video từ máy lên host (Cloudinary) → trả về danh sách
+   * direct URL để gắn assetUrl (1 video → Instagram đăng Reels).
+   * Backend trả 503 nếu chưa cấu hình CLOUDINARY_*.
+   */
+  const uploadVideos = useCallback(async (files: File[]) => {
+    const form = new FormData()
+    for (const f of files) form.append('files', f)
+    const res = await api.uploadFile<{ urls: string[] }>('/content/upload-video', form)
+    return res.urls
+  }, [])
+
   /** Xóa 1 bài viết (kèm job publish liên quan). Backend từ chối nếu job đang running. */
   const removeContent = useCallback(
     async (id: string) => {
@@ -224,7 +236,7 @@ export function useContent() {
     [refresh],
   )
 
-  return { items, loading, error, refresh, create, approve, publish, updateContent, retryPublish, uploadImages, removeContent, removeMany }
+  return { items, loading, error, refresh, create, approve, publish, updateContent, retryPublish, uploadImages, uploadVideos, removeContent, removeMany }
 }
 
 /* ─── AI Pro ─────────────────────────────────────────────────────────────── */
