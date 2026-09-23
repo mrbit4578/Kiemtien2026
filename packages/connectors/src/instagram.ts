@@ -61,6 +61,36 @@ const IG_GRAPH_URL = 'https://graph.instagram.com'
 const ALLOWED_REDIRECT_URIS = [`${process.env.API_URL}/auth/instagram/callback`]
 const DEFAULT_SCOPES = ['instagram_business_basic', 'instagram_business_content_publish']
 
+/**
+ * Chuẩn hóa lỗi trả về từ Meta Graph API.
+ * ĐIỂM CHÍ MẠNG: Meta thỉnh thoảng trả `{"error":{"message":"Timeout"}}`
+ * khi server Instagram không tải kịp media từ URL (host ảnh chậm, file
+ * lớn, hoặc nghẽn nhất thời phía Meta). Đây là lỗi NHẤT THỜI — phải cho
+ * worker retry với backoff, TUYỆT ĐỐI không được fail job vĩnh viễn chỉ
+ * vì message "Timeout" khô khốc của Meta.
+ */
+export function asInstagramError(err: unknown, step: string, httpStatus?: number): OrhError {
+  const msg: string =
+    (err as { error?: { message?: string } })?.error?.message ?? ''
+  if (/(timed?\s*out|timeout)/i.test(msg)) {
+    return new OrhError(
+      'TRANSIENT_NETWORK_ERROR',
+      `Instagram không tải kịp media từ link ở bước ${step} (Meta báo Timeout). ` +
+        `Thường do host ảnh phản hồi chậm hoặc file quá lớn — hệ thống sẽ tự thử lại. ` +
+        `Nếu vẫn lặp lại, hãy dùng link ảnh trực tiếp (i.ibb.co) và nén ảnh dưới 1MB.`,
+      true,
+      'instagram',
+    )
+  }
+  const statusPart = httpStatus ? ` (HTTP ${httpStatus})` : ''
+  return new OrhError(
+    'CONTENT_REJECTED',
+    `Instagram từ chối ở bước ${step}${statusPart}: ${msg || 'không rõ nguyên nhân'}.`,
+    false,
+    'instagram',
+  )
+}
+
 export class InstagramConnector implements SocialConnector {
   provider(): Provider { return 'instagram' }
   manifest(): PermissionManifest { return INSTAGRAM_MANIFEST }
@@ -178,6 +208,7 @@ export class InstagramConnector implements SocialConnector {
     // Loại media: ưu tiên kết quả probe từ worker (mediaKinds), fallback đoán
     // theo đuôi file nếu connector được gọi trực tiếp mà không qua worker.
     const kinds = input.mediaKinds ?? input.mediaUrls.map((u) => detectMediaKind(u))
+
     const headers = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
@@ -194,7 +225,7 @@ export class InstagramConnector implements SocialConnector {
         if (err.error?.code === 36000) {
           throw new OrhError('RATE_LIMITED', 'Đạt giới hạn 400 containers/24h.', false, 'instagram')
         }
-        throw new OrhError('CONTENT_REJECTED', err.error?.message ?? 'Container creation failed.', false, 'instagram')
+        throw asInstagramError(err, 'tạo container')
       }
       const { id } = await res.json()
       return id as string
@@ -280,12 +311,7 @@ export class InstagramConnector implements SocialConnector {
     })
     if (!publishRes.ok) {
       const err = await publishRes.json().catch(() => ({}))
-      throw new OrhError(
-        'CONTENT_REJECTED',
-        `Instagram từ chối publish (${publishRes.status}): ${err.error?.message ?? 'không rõ nguyên nhân'}.`,
-        false,
-        'instagram',
-      )
+      throw asInstagramError(err, 'publish', publishRes.status)
     }
     const { id: mediaId } = await publishRes.json()
     return {
