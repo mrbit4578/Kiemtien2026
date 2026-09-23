@@ -18,67 +18,10 @@ import {
   Loader2,
   X,
   TriangleAlert,
-  ChevronDown,
 } from 'lucide-react'
 import { useAiConnections, useAiProviders, sendAgentRun } from '../lib/hooks'
 import { ApiError } from '../lib/api'
-import type { AiProviderMeta } from '../lib/types'
-
-/**
- * Dropdown chọn provider + model — cùng cấu trúc với AI Chat Pro.
- * Dùng chung cho toolbar quét ngách và panel chi tiết node (đồng bộ cùng state).
- */
-function AiModelSelector({
-  providerId,
-  onProviderChange,
-  model,
-  onModelChange,
-  activeMeta,
-  currentMeta,
-  fullWidth = false,
-}: {
-  providerId: string
-  onProviderChange: (v: string) => void
-  model: string
-  onModelChange: (v: string) => void
-  activeMeta: AiProviderMeta[]
-  currentMeta: AiProviderMeta | undefined
-  fullWidth?: boolean
-}) {
-  const wrap = fullWidth ? 'w-full' : ''
-  return (
-    <>
-      <div className={`relative ${wrap}`}>
-        <select
-          value={providerId}
-          onChange={(e) => onProviderChange(e.target.value)}
-          className={`appearance-none pl-3 pr-8 py-2.5 rounded-lg bg-dark-950/70 border border-white/10 text-white text-xs font-bold focus:outline-none focus:border-brand-emerald/60 ${fullWidth ? 'w-full' : ''}`}
-          title="AI provider dùng cho tác vụ AI"
-        >
-          {activeMeta.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-      </div>
-      {currentMeta && (
-        <div className={`relative ${wrap}`}>
-          <select
-            value={model}
-            onChange={(e) => onModelChange(e.target.value)}
-            className={`appearance-none pl-3 pr-8 py-2.5 rounded-lg bg-dark-950/70 border border-white/10 text-slate-300 text-xs font-mono focus:outline-none focus:border-brand-emerald/60 ${fullWidth ? 'w-full' : ''}`}
-            title="Model dùng cho tác vụ AI"
-          >
-            {currentMeta.models.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-          <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-        </div>
-      )}
-    </>
-  )
-}
+import { AiModelSelector } from './AiModelSelector'
 
 export interface GraphNode {
   id: string
@@ -610,6 +553,14 @@ export function InteractiveKnowledgeGraph() {
     }
   }
 
+  // URL sang AI Copilot: mang theo prompt + tự chạy + provider/model đang chọn
+  const copilotParams = new URLSearchParams()
+  copilotParams.set('prompt', buildNodePrompt(selectedNode))
+  copilotParams.set('autorun', '1')
+  if (providerId) copilotParams.set('provider', providerId)
+  if (model) copilotParams.set('model', model)
+  const copilotUrl = `/ai-copilot?${copilotParams.toString()}`
+
   return (
     <div className="glass-panel rounded-2xl p-6 border border-white/10 shadow-xl">
       {/* Header controls */}
@@ -859,7 +810,7 @@ export function InteractiveKnowledgeGraph() {
               </div>
             )}
             <a
-              href={`/ai-copilot?prompt=${encodeURIComponent(buildNodePrompt(selectedNode))}`}
+              href={copilotUrl}
               className="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-brand-emerald to-brand-cyan text-dark-950 font-bold text-xs flex items-center justify-center gap-2 hover:opacity-95 shadow-glow-emerald transition-all"
             >
               <span>Dùng AI Copilot Tạo Kịch Bản Cho Node Này</span>

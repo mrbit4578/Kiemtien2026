@@ -1,17 +1,17 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
-import { 
-  Bot, 
-  Sparkles, 
-  Send, 
-  Copy, 
-  Check, 
-  CheckCircle2, 
-  ChevronRight, 
-  Play, 
-  BrainCircuit, 
-  ShieldCheck, 
+import React, { useEffect, useRef, useState } from 'react'
+import {
+  Bot,
+  Sparkles,
+  Send,
+  Copy,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  Play,
+  BrainCircuit,
+  ShieldCheck,
   CalendarPlus,
   RefreshCw,
   Clock,
@@ -19,7 +19,9 @@ import {
 } from 'lucide-react'
 
 import { useSession } from '../context/SessionContext'
-import { useContent } from '../lib/hooks'
+import { useContent, useAiConnections, useAiProviders, sendAgentRun } from '../lib/hooks'
+import { ApiError } from '../lib/api'
+import { AiModelSelector } from './AiModelSelector'
 import { useRouter } from 'next/navigation'
 import { CanvaAutofillModal } from './CanvaAutofillModal'
 
@@ -53,18 +55,105 @@ export function AICopilotStudio() {
     }
   }
   const [prompt, setPrompt] = useState('')
+  const [agentError, setAgentError] = useState<string | null>(null)
 
-  // Nhận prompt dựng sẵn từ trang khác (ví dụ: nút "Dùng AI Copilot Tạo Kịch Bản
-  // Cho Node Này" ở sơ đồ ngách) qua query param ?prompt=... → tự nạp vào ô nhập.
+  // ── Provider/model thật — cùng cấu trúc với AI Chat Pro ──
+  const { providers } = useAiProviders()
+  const { connections } = useAiConnections()
+  const [providerId, setProviderId] = useState<string>('')
+  const [model, setModel] = useState<string>('')
+  const activeConns = connections.filter((c) => c.status === 'active')
+  const activeMeta = providers.filter((p) => activeConns.some((c) => c.provider === p.id))
+  const currentMeta = providers.find((p) => p.id === providerId)
+
+  // Đổi provider → reset model về default nếu model hiện tại không thuộc provider mới
   useEffect(() => {
+    if (currentMeta && model && !currentMeta.models.includes(model)) {
+      setModel(currentMeta.defaultModel)
+    }
+  }, [currentMeta, model])
+
+  /**
+   * Chạy agent THẬT qua POST /ai/agent/run (think→act→observe),
+   * dựng trace timeline từ tool calls thật + final answer.
+   */
+  const runAgent = async (text: string, pid?: string, mdl?: string) => {
+    const textToRun = text.trim()
+    if (!textToRun || isGenerating) return
+    const useProvider = pid || providerId
+    if (!useProvider) {
+      setAgentError('Chưa kết nối AI provider nào. Hãy vào Cài đặt → AI Pro để kết nối key.')
+      return
+    }
+    setIsGenerating(true)
+    setAgentError(null)
     try {
-      const q = new URLSearchParams(window.location.search).get('prompt')
-      if (q && q.trim()) setPrompt(q)
+      const res = await sendAgentRun(
+        useProvider,
+        [{ role: 'user' as const, content: textToRun }],
+        mdl || model || undefined,
+        { maxTurns: 10 },
+      )
+      const trace: ReActStep[] = [
+        {
+          type: 'thought',
+          title: 'Tư duy phân tích (Thought)',
+          content: `Agent hoàn thành ${res.turns} vòng suy luận (Thought → Action → Observation) với model ${res.model}.`,
+        },
+      ]
+      res.toolCalls.forEach((tc, i) => {
+        trace.push({
+          type: 'action',
+          title: `Thực thi công cụ #${i + 1} (Action: ${tc.name})`,
+          content: tc.output.slice(0, 1500),
+        })
+      })
+      trace.push({
+        type: 'answer',
+        title: 'Kịch bản hoàn chỉnh (Final Answer)',
+        content: res.content,
+      })
+      setSteps(trace)
+    } catch (err) {
+      setAgentError(err instanceof ApiError ? err.message : 'Chạy agent thất bại. Hãy thử lại.')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  const handleGenerate = (customPrompt?: string) => {
+    void runAgent(customPrompt || prompt)
+  }
+
+  // Nhận tác vụ từ trang khác (ví dụ: nút ở sơ đồ ngách) qua query params:
+  // ?prompt=...&autorun=1&provider=...&model=... → nạp prompt, chọn AI, TỰ CHẠY luôn.
+  const autoRanRef = useRef(false)
+  useEffect(() => {
+    const metas = providers.filter((p) =>
+      connections.some((c) => c.provider === p.id && c.status === 'active'),
+    )
+    if (metas.length === 0 || autoRanRef.current) return
+    autoRanRef.current = true
+    try {
+      const qs = new URLSearchParams(window.location.search)
+      const meta = metas.find((m) => m.id === qs.get('provider')) ?? metas[0]
+      const mdl = qs.get('model') && meta.models.includes(qs.get('model') as string)
+        ? (qs.get('model') as string)
+        : meta.defaultModel
+      setProviderId(meta.id)
+      setModel(mdl)
+      const q = qs.get('prompt')
+      if (q && q.trim()) {
+        setPrompt(q)
+        if (qs.get('autorun') === '1') {
+          void runAgent(q, meta.id, mdl)
+        }
+      }
     } catch {
       // bỏ qua nếu không đọc được query string
     }
-  }, [])
-  const [selectedModel, setSelectedModel] = useState('Gemini 1.5 Pro')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providers, connections])
   const [isGenerating, setIsGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
   const [steps, setSteps] = useState<ReActStep[]>([
@@ -116,46 +205,6 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
     },
   ])
 
-  const handleGenerate = (customPrompt?: string) => {
-    const textToRun = customPrompt || prompt
-    if (!textToRun.trim()) return
-    setIsGenerating(true)
-
-    // Simulate WeKnora ReAct Agent generation sequence
-    setTimeout(() => {
-      setSteps([
-        {
-          type: 'thought',
-          title: 'Tư duy phân tích (Thought)',
-          content: `Phân tích yêu cầu "${textToRun}": Xác định định dạng mục tiêu, tệp độc giả có khả năng chuyển đổi cao nhất, cấu trúc giá và hoa hồng affiliate.`,
-        },
-        {
-          type: 'action',
-          title: 'Thực thi công cụ (Action: Knowledge Graph & Web Search)',
-          content: 'Quét cơ sở dữ liệu ngách sản phẩm, đối soát chính sách hạn chế quảng cáo của Meta/TikTok để tránh vi phạm.',
-        },
-        {
-          type: 'observation',
-          title: 'Quan sát kết quả (Observation)',
-          content: 'Đã tổng hợp cấu trúc bài viết đạt điểm SEO 98/100, tích hợp sẵn thẻ kêu gọi hành động (CTA) gắn link tiếp thị.',
-        },
-        {
-          type: 'answer',
-          title: 'Nội dung tối ưu chuyển đổi (Final Answer)',
-          content: `🚀 **CHIẾN LƯỢC NỘI DUNG TỐI ƯU HÓA CHUYỂN ĐỔI CHO: "${textToRun}"**
-
-1. **Góc tiếp cận (Angle):** Đánh vào nỗi sợ bỏ lỡ cơ hội (FOMO) + Chứng thực từ case study thực tế có số liệu rõ ràng.
-2. **Tiêu đề giật tít chuẩn SEO:**
-   - "Top 3 Sai Lầm Khi Bắt Đầu Kiếm Tiền Online Lúc Rảnh Rỗi Khiến 90% Bỏ Cuộc"
-   - "Cách Tôi Tạo Thu Nhập Thụ Động 15 Triệu/Tháng Nhờ Mô Hình Này..."
-3. **Kêu gọi hành động (Safe CTA):** "Bấm vào đường dẫn trong phần mô tả để nhận tài liệu hướng dẫn từng bước miễn phí."
-4. **Hashtags:** #KiemTienOnline #MMO #AffiliateMarketing #TuDoTaiChinh #OpenRemoteHub`,
-        },
-      ])
-      setIsGenerating(false)
-    }, 900)
-  }
-
   const handleCopy = () => {
     const lastStep = steps.find((s) => s.type === 'answer')
     if (lastStep) {
@@ -183,22 +232,17 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
           </div>
         </div>
 
-        {/* Model Selector */}
+        {/* Model Selector — provider/key + model thật, cùng cấu trúc AI Chat Pro */}
         <div className="flex items-center gap-2 bg-dark-900/90 border border-white/10 p-1.5 rounded-xl text-xs">
-          <span className="text-slate-400 pl-2">Mô hình:</span>
-          {['Gemini 1.5 Pro', 'DeepSeek V3', 'OpenAI GPT-4o'].map((model) => (
-            <button
-              key={model}
-              onClick={() => setSelectedModel(model)}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
-                selectedModel === model
-                  ? 'bg-brand-emerald text-dark-950 font-bold shadow-glow-emerald'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              {model}
-            </button>
-          ))}
+          <span className="text-slate-400 pl-2 shrink-0">Mô hình:</span>
+          <AiModelSelector
+            providerId={providerId}
+            onProviderChange={setProviderId}
+            model={model}
+            onModelChange={setModel}
+            activeMeta={activeMeta}
+            currentMeta={currentMeta}
+          />
         </div>
       </div>
 
@@ -236,6 +280,9 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
           placeholder="Nhập yêu cầu sáng tạo nội dung, kịch bản video, hoặc chiến lược affiliate của bạn (Ví dụ: Tạo kịch bản TikTok 60s review nồi chiên không dầu gắn giỏ hàng Shopee)..."
           className="w-full bg-dark-950/70 text-white rounded-xl p-3.5 text-sm border border-white/10 focus:border-brand-emerald focus:outline-none focus:ring-1 focus:ring-brand-emerald placeholder:text-slate-500"
         />
+        {agentError && (
+          <p className="mt-2 text-xs text-red-300">⚠ {agentError}</p>
+        )}
         <div className="flex items-center justify-between mt-3">
           <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
             <span className="w-2 h-2 rounded-full bg-brand-emerald animate-pulse"></span>
