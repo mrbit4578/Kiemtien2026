@@ -22,12 +22,10 @@ import { OrhError, detectMediaKind } from '@orh/shared'
  *   Đăng lên tài khoản public sẽ bị chặn ngay ở bước init với mã
  *   `unaudited_client_can_only_post_to_private_accounts`.
  * - Muốn gỡ giới hạn: client phải qua audit TOS của TikTok.
- * - Token phải có scope `video.publish` — scope này thuộc product "Content Posting
- *   API" mà TikTok phải phê duyệt mới cấp (kể cả ở sandbox). Khi TikTok đã duyệt
- *   product cho app: thêm 'video.publish' vào scope authorize, deploy, rồi user
- *   Kết nối lại TikTok mới đăng được. Cho video.publish vào URL authorize khi
- *   app chưa được cấp sẽ khiến TikTok chặn LUÔN cả trang login ("Something went
- *   wrong ... scope") — vì vậy scope mặc định hiện chỉ là user.info.basic.
+ * - Token phải có scope `video.publish` — product "Content Posting API" đã được
+ *   thêm + bật Direct Post cho cả app Production và Sandbox (2026-09-23),
+ *   nên scope authorize mặc định đã gồm video.publish. Token cũ (chỉ có
+ *   user.info.basic, cấp trước khi bật product) phải Kết nối lại mới đăng được.
  */
 
 export const TIKTOK_MANIFEST: PermissionManifest = {
@@ -48,7 +46,7 @@ export const TIKTOK_MANIFEST: PermissionManifest = {
       sensitivityLevel: 'sensitive',
     },
   ],
-  notes: 'Direct Post đã implement. TRẠNG THÁI HIỆN TẠI: chờ TikTok phê duyệt product "Content Posting API" cho app (kể cả sandbox) — chưa có product này thì không xin được scope video.publish, token chỉ có user.info.basic. Khi được duyệt: thêm video.publish vào scope authorize + deploy + Kết nối lại TikTok rồi mới đăng được. App chưa audit → video bắt buộc SELF_ONLY (private). Muốn đăng công khai phải chờ TikTok audit & duyệt app.',
+  notes: 'Direct Post đã implement (init -> chunk PUT 10MB -> poll status). Product "Content Posting API" + Direct Post đã bật cho cả Production và Sandbox (2026-09-23); scope authorize gồm user.info.basic + video.publish. Token cấp trước thời điểm này phải Kết nối lại. App chưa audit → video bắt buộc SELF_ONLY (private); tài khoản public bị chặn ở bước init. Muốn đăng công khai phải chờ TikTok audit & duyệt app.',
 }
 
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize'
@@ -79,13 +77,10 @@ export class TikTokConnector implements SocialConnector {
     return buildOAuthUrl(TIKTOK_AUTH_URL, {
       clientId: requiredEnv('tiktok', 'TIKTOK_CLIENT_KEY'),
       redirectUri: input.redirectUri,
-      // CHỈ xin user.info.basic ở đây. Scope video.publish thuộc product
-      // "Content Posting API" — TikTok kiểm duyệt mới cấp, không tự thêm được.
-      // Nếu cho video.publish vào URL authorize khi app chưa được cấp,
-      // TikTok báo "Something went wrong ... scope" và chặn LUÔN cả login.
-      // Khi TikTok đã duyệt product cho app: thêm 'video.publish' vào mảng
-      // này, deploy, rồi user Kết nối lại TikTok để cấp quyền mới.
-      scopes: input.scopes ?? ['user.info.basic'],
+      // Scope video.publish thuộc product "Content Posting API" — đã bật cho cả
+      // app Production và Sandbox (Direct Post = ON), nên xin luôn ở đây.
+      // Token cũ (chỉ có user.info.basic) phải Kết nối lại mới có quyền mới.
+      scopes: input.scopes ?? ['user.info.basic', 'video.publish'],
       state: input.state,
       codeChallenge: input.codeChallenge,
       extra: { client_key: requiredEnv('tiktok', 'TIKTOK_CLIENT_KEY') },
@@ -340,7 +335,7 @@ function tiktokApiError(httpStatus: number, code: string, message: string): OrhE
     case 'scope_not_authorized':
       return new OrhError(
         'PROVIDER_REAUTH_REQUIRED',
-        'App TikTok chưa được TikTok cấp product "Content Posting API" nên không có quyền đăng video (video.publish). Hãy đăng ký product này tại developers.tiktok.com (menu Products) và chờ phê duyệt — kể cả ở sandbox. Sau khi được duyệt, vào mục Kết nối → ngắt kết nối TikTok → Kết nối lại để cấp quyền mới, rồi đăng lại.',
+        'TikTok từ chối: token chưa có quyền đăng video (video.publish). Hãy chắc chắn app đã bật product "Content Posting API" + Direct Post trong Developer Portal, rồi vào mục Kết nối → ngắt kết nối TikTok → Kết nối lại để cấp quyền mới, rồi đăng lại.',
         false,
         'tiktok',
       )

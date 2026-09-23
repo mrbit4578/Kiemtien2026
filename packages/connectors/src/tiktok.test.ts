@@ -12,6 +12,22 @@ const { TikTokConnector } = createRequire(__filename)('./tiktok')
 
 const REDIRECT_URI = 'https://example.com/auth/tiktok/callback'
 
+describe('TikTokConnector.authorizationUrl — scope mặc định', () => {
+  it('xin user.info.basic + video.publish (Content Posting API đã bật cho app)', () => {
+    const c = new TikTokConnector()
+    const url = new URL(
+      c.authorizationUrl({
+        redirectUri: REDIRECT_URI,
+        codeChallenge: 'challenge123',
+        state: 'state123',
+      }),
+    )
+    assert.equal(url.searchParams.get('client_key'), 'test_client_key')
+    assert.equal(url.searchParams.get('scope'), 'user.info.basic video.publish')
+    assert.equal(url.searchParams.get('redirect_uri'), REDIRECT_URI)
+  })
+})
+
 function mockFetch(jsonBody: unknown, ok = true) {
   globalThis.fetch = (async () =>
     ({
