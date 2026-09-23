@@ -346,6 +346,7 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async publishOnce(job: {
+    id: string
     connection: {
       id: string
       workspaceId: string
@@ -453,6 +454,11 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
     for (const u of mediaUrls) {
       mediaKinds.push(await probeMediaUrl(u))
     }
+    // Log chẩn đoán: thấy ngay job đăng mấy media, loại gì, tới kênh nào
+    // (hữu ích khi đọc log Render — ví dụ phân biệt ảnh vs video MP4 từ Canva).
+    this.logger.log(
+      `Publish job ${job.id}: ${mediaUrls.length} media [${mediaKinds.join(', ')}] → ${connection.provider}.`,
+    )
 
     const input: PublishInput = {
       connection: sharedConnection,
