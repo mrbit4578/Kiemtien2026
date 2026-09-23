@@ -14,8 +14,9 @@ import {
   type AgentMessage,
   type ChatBackend,
 } from './agent-loop'
-import { buildBuiltinTools } from './builtin-tools'
+import { buildBuiltinTools, makeRenderVideoTool } from './builtin-tools'
 import type { AgentRunDto } from './dto'
+import { RenderService } from '../render/render.service'
 
 /**
  * AgentService — AI agent gọi tools (port kiến trúc runner của Strix).
@@ -37,6 +38,7 @@ export class AgentService {
     private readonly ragService: RagService,
     private readonly prisma: PrismaService,
     private readonly audit: AuditLogService,
+    private readonly renderService: RenderService,
   ) {}
 
   private buildRegistry(workspaceId: string): ToolRegistry {
@@ -47,6 +49,12 @@ export class AgentService {
     })) {
       registry.register(tool)
     }
+    // render_video: luôn đăng ký; execute tự báo khi renderer chưa bật.
+    registry.register(
+      makeRenderVideoTool((spec) =>
+        this.renderService.createJob(workspaceId, spec).then((job) => ({ id: job.id, status: job.status })),
+      ),
+    )
     return registry
   }
 

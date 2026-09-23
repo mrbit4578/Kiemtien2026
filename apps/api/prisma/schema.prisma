@@ -42,6 +42,7 @@ model Workspace {
   relations   Relation[]
   communities Community[]
   jobs        Job[]
+  renderJobs  RenderJob[]
   auditLogs   AuditLog[]
 
   @@map("workspaces")
@@ -132,6 +133,27 @@ model Job {
   workspace     Workspace    @relation(fields: [workspaceId], references: [id])
 
   @@map("jobs")
+}
+
+// Render job — video render bằng Concat engine headless (không watermark).
+// Hàng đợi serialize ở RenderService (Concat chạy 1 export tại một thời điểm).
+model RenderJob {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  status      String   @default("queued") // queued | running | done | failed | cancelled
+  specJson    String   // JSON của RenderSpec lúc tạo job
+  progress    Float    @default(0) // 0..1 từ event export.progress
+  concatJob   String? // job id của Concat ("j1", "j2", ...) để export.cancel
+  outputPath  String? // file MP4 trên disk của worker
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+
+  @@index([workspaceId, createdAt])
+  @@map("render_jobs")
 }
 
 // API key của các nền tảng AI (Gemini, OpenAI, xAI, Anthropic, DeepSeek)
