@@ -280,8 +280,9 @@ export async function sendAgentRun(
   provider: string,
   messages: ChatMessage[],
   model?: string,
+  opts?: { maxTurns?: number; tools?: string[]; maxTokens?: number },
 ): Promise<AgentRunResponse> {
-  return api.post<AgentRunResponse>('/ai/agent/run', { provider, messages, model })
+  return api.post<AgentRunResponse>('/ai/agent/run', { provider, messages, model, ...opts })
 }
 
 /* ─── RAG / Kho tri thức ───────────────────────────────────────────── */

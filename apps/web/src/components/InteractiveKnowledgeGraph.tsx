@@ -1,19 +1,26 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
-import { 
-  Network, 
-  Sparkles, 
-  Filter, 
-  ZoomIn, 
-  ZoomOut, 
-  RotateCcw, 
+import {
+  Network,
+  Sparkles,
+  Filter,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
   ArrowUpRight,
   TrendingUp,
   DollarSign,
   Share2,
-  Layers
+  Layers,
+  ScanSearch,
+  BrainCircuit,
+  Loader2,
+  X,
+  TriangleAlert,
 } from 'lucide-react'
+import { useAiConnections, sendAgentRun } from '../lib/hooks'
+import { ApiError } from '../lib/api'
 
 export interface GraphNode {
   id: string
@@ -25,6 +32,12 @@ export interface GraphNode {
   y?: number
   vx?: number
   vy?: number
+  /** Node do AI quét và đề xuất (không có trong dữ liệu gốc). */
+  aiGenerated?: boolean
+  /** Điểm cơ hội 0–100 do AI chấm (chỉ cho node AI). */
+  score?: number
+  /** Lý do 1 câu vì sao đây là vùng tối ưu (chỉ cho node AI). */
+  rationale?: string
   details?: {
     roi: string
     commission: string
@@ -139,6 +152,105 @@ const DEFAULT_LINKS: GraphLink[] = [
 ]
 
 /**
+ * Prompt yêu cầu agent (có web_search) nghiên cứu trend MMO/affiliate Việt Nam
+ * hiện tại và trả về các ngách MỚI dưới dạng JSON chuẩn để vẽ lên graph.
+ */
+function buildNicheScanPrompt(existingLabels: string[], linkableIds: string[]): string {
+  return [
+    'Bạn là chuyên gia nghiên cứu thị trường MMO/affiliate Việt Nam.',
+    'Nhiệm vụ: dùng web_search để tìm các xu hướng kiếm tiền online / tiếp thị liên kết ĐANG LÊN tại Việt Nam trong năm 2026,',
+    'rồi đề xuất 3–5 NGÁCH MỚI tiềm năng nhất mà chưa có trong danh sách sau:',
+    existingLabels.map((l) => `- ${l}`).join('\n'),
+    '',
+    'QUY TẮC OUTPUT (bắt buộc): chỉ trả về DUY NHẤT một khối JSON trong ```json ... ```, không thêm chữ nào ngoài khối JSON.',
+    'Mỗi phần tử là một ngách với đúng các trường:',
+    '{ "id": "slug_ngach_viet_khong_dau", "label": "Ngách: <tên tiếng Việt>",',
+    '  "roi": "<ví dụ: 350% ROI>", "commission": "<ví dụ: 20% - 40% Recurring>",',
+    '  "trafficStrategy": "<chiến lược kéo traffic 1 câu>", "recommendedModel": "<mô hình AI gợi ý>",',
+    '  "tosCaution": "<lưu ý tuân thủ ToS 1 câu>", "score": <0-100 điểm cơ hội>,',
+    '  "rationale": "<1 câu vì sao đây là vùng tối ưu>",',
+    `  "suggestedLinks": ["<chọn 1-3 id trong: ${linkableIds.join(', ')}>"] }`,
+    'Chấm score dựa trên: độ nóng trend, hoa hồng, rào cản gia nhập thấp, phù hợp traffic video ngắn.',
+  ].join('\n')
+}
+
+/** Prompt yêu cầu agent phân tích chuyên sâu một node ngách (trend, cạnh tranh, sub-ngách). */
+function buildNodeAnalysisPrompt(node: GraphNode): string {
+  const d = node.details
+  return [
+    `Phân tích chuyên sâu ngách "${node.label}" cho thị trường kiếm tiền online Việt Nam năm 2026.`,
+    d ? `Dữ liệu hiện có: ROI ${d.roi}, hoa hồng ${d.commission}, chiến lược traffic: ${d.trafficStrategy}.` : '',
+    'Dùng web_search để kiểm chứng trend hiện tại, rồi trả lời bằng tiếng Việt theo đúng cấu trúc:',
+    '1. NHIỆT ĐỘ TREND: đang lên/đi ngang/hạ nhiệt + bằng chứng 1-2 dòng.',
+    '2. MỨC CẠNH TRANH: thấp/trung bình/cao + ai đang làm tốt.',
+    '3. 3 SUB-NGÁCH TỐI ƯU: ngách con ít cạnh tranh hơn nhưng vẫn thơm (mỗi cái 1 dòng + vì sao).',
+    '4. CHIẾN LƯỢC TRAFFIC ĐỀ XUẤT: kênh cụ thể + format content + tần suất.',
+    '5. RỦI RO & ToS: điều cần tránh.',
+    'Ngắn gọn, mỗi mục tối đa 4 dòng. Không hứa hẹn thu nhập chắc chắn.',
+  ].join('\n')
+}
+
+/** Bóc mảng JSON từ câu trả lời của agent (chịu được ```json fence hoặc JSON trần). */
+function extractJsonArray(text: string): unknown[] | null {
+  const candidates: string[] = []
+  const fenced = text.match(/```json\s*([\s\S]*?)```/i) || text.match(/```\s*([\s\S]*?)```/)
+  if (fenced) candidates.push(fenced[1])
+  const bracket = text.match(/\[[\s\S]*\]/)
+  if (bracket) candidates.push(bracket[0])
+  for (const c of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(c.trim())
+      if (Array.isArray(parsed)) return parsed
+    } catch {
+      /* thử candidate tiếp theo */
+    }
+  }
+  return null
+}
+
+interface AiNicheSuggestion {
+  id?: unknown
+  label?: unknown
+  roi?: unknown
+  commission?: unknown
+  trafficStrategy?: unknown
+  recommendedModel?: unknown
+  tosCaution?: unknown
+  score?: unknown
+  rationale?: unknown
+  suggestedLinks?: unknown
+}
+
+/** Validate + chuẩn hóa một suggestion thành GraphNode. Trả null nếu thiếu trường bắt buộc. */
+function toAiNode(s: AiNicheSuggestion, index: number): GraphNode | null {
+  if (typeof s.label !== 'string' || !s.label.trim()) return null
+  const str = (v: unknown, fb: string) => (typeof v === 'string' && v.trim() ? v.trim() : fb)
+  const score = typeof s.score === 'number' ? Math.max(0, Math.min(100, Math.round(s.score))) : 70
+  const angle = (index / 5) * 2 * Math.PI - Math.PI / 2
+  return {
+    id: `ai_niche_${typeof s.id === 'string' && s.id.trim() ? s.id.trim().replace(/[^a-z0-9_]/gi, '').toLowerCase() : `scan${Date.now() % 100000}_${index}`}`,
+    label: s.label.trim(),
+    category: 'niche',
+    val: 18 + Math.round(score / 12),
+    color: '#10B981',
+    aiGenerated: true,
+    score,
+    rationale: str(s.rationale, 'Ngách mới do AI phát hiện từ trend hiện tại.'),
+    x: 400 + Math.cos(angle) * 250,
+    y: 260 + Math.sin(angle) * 190,
+    vx: (Math.random() - 0.5) * 0.5,
+    vy: (Math.random() - 0.5) * 0.5,
+    details: {
+      roi: str(s.roi, 'Đang đánh giá'),
+      commission: str(s.commission, 'Đang đánh giá'),
+      trafficStrategy: str(s.trafficStrategy, 'Ưu tiên video ngắn TikTok/Reels/Shorts.'),
+      recommendedModel: str(s.recommendedModel, 'Gemini Flash'),
+      tosCaution: str(s.tosCaution, 'Tuân thủ ToS nền tảng và ghi rõ disclosure affiliate.'),
+    },
+  }
+}
+
+/**
  * Dựng sẵn prompt tạo kịch bản từ dữ liệu của node đang chọn, để trang AI Copilot
  * tự nạp vào ô nhập liệu (qua query param ?prompt=...).
  */
@@ -166,6 +278,110 @@ export function InteractiveKnowledgeGraph() {
   const [zoomLevel, setZoomLevel] = useState<number>(1)
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [links, setLinks] = useState<GraphLink[]>(DEFAULT_LINKS)
+
+  // ── AI Niche Scanner: agent tìm ngách mới & vùng tối ưu ──
+  const { connections } = useAiConnections()
+  const activeProvider = connections.find((c) => c.status === 'active')?.provider
+  const [scanning, setScanning] = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [aiInsight, setAiInsight] = useState<string | null>(null)
+  const [aiInsightFor, setAiInsightFor] = useState<string | null>(null)
+
+  const aiNodes = nodes.filter((n) => n.aiGenerated).sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+
+  const requireProvider = (): string | null => {
+    if (!activeProvider) {
+      setScanError('Chưa kết nối AI provider nào. Hãy vào Cài đặt → AI Pro để kết nối key trước khi dùng AI quét ngách.')
+      return null
+    }
+    return activeProvider
+  }
+
+  /** Agent research trend MMO 2026 → đề xuất ngách mới → vẽ lên graph. */
+  const handleScan = async () => {
+    if (scanning) return
+    const provider = requireProvider()
+    if (!provider) return
+    setScanning(true)
+    setScanError(null)
+    try {
+      const res = await sendAgentRun(
+        provider,
+        [{ role: 'user' as const, content: buildNicheScanPrompt(nodes.map((n) => n.label), nodes.map((n) => n.id)) }],
+        undefined,
+        { maxTurns: 10, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 4096 },
+      )
+      const parsed = extractJsonArray(res.content)
+      if (!parsed || parsed.length === 0) {
+        throw new Error('AI không trả về danh sách ngách hợp lệ. Hãy bấm quét lại.')
+      }
+      const knownIds = new Set(nodes.map((n) => n.id))
+      const newNodes: GraphNode[] = []
+      const newLinks: GraphLink[] = []
+      parsed.slice(0, 5).forEach((raw) => {
+        const s = raw as AiNicheSuggestion
+        const node = toAiNode(s, newNodes.length)
+        if (!node || knownIds.has(node.id)) return
+        knownIds.add(node.id)
+        newNodes.push(node)
+        const targets = Array.isArray(s.suggestedLinks) ? (s.suggestedLinks as unknown[]) : []
+        targets.slice(0, 3).forEach((t) => {
+          if (typeof t === 'string' && knownIds.has(t) && t !== node.id) {
+            newLinks.push({ source: node.id, target: t, label: 'AI đề xuất' })
+          }
+        })
+      })
+      if (newNodes.length === 0) throw new Error('AI không đề xuất được ngách mới nào. Hãy bấm quét lại.')
+      setNodes((prev) => [...prev, ...newNodes])
+      setLinks((prev) => [...prev, ...newLinks])
+      setSelectedNode(newNodes[0])
+    } catch (err) {
+      setScanError(
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Quét ngách thất bại. Hãy thử lại.',
+      )
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  /** Xóa toàn bộ node/link do AI đề xuất, giữ nguyên dữ liệu gốc. */
+  const clearAiNodes = () => {
+    const aiIds = new Set(nodes.filter((n) => n.aiGenerated).map((n) => n.id))
+    if (aiIds.size === 0) return
+    setNodes((prev) => prev.filter((n) => !n.aiGenerated))
+    setLinks((prev) => prev.filter((l) => !aiIds.has(l.source) && !aiIds.has(l.target)))
+    setSelectedNode((prev) => (prev && aiIds.has(prev.id) ? null : prev))
+  }
+
+  /** Agent phân tích chuyên sâu node đang chọn (trend, cạnh tranh, sub-ngách). */
+  const handleAnalyze = async () => {
+    if (!selectedNode || analyzing) return
+    const provider = requireProvider()
+    if (!provider) return
+    setAnalyzing(true)
+    try {
+      const res = await sendAgentRun(
+        provider,
+        [{ role: 'user' as const, content: buildNodeAnalysisPrompt(selectedNode) }],
+        undefined,
+        { maxTurns: 8, tools: ['web_search', 'fetch_url', 'get_current_time'] },
+      )
+      setAiInsight(res.content)
+      setAiInsightFor(selectedNode.id)
+    } catch (err) {
+      setAiInsight(err instanceof ApiError ? `Lỗi: ${err.message}` : 'Phân tích thất bại. Hãy thử lại.')
+      setAiInsightFor(selectedNode.id)
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  // Đổi node chọn → xóa insight cũ
+  useEffect(() => {
+    setAiInsight(null)
+    setAiInsightFor(null)
+  }, [selectedNode?.id])
 
   // Initialize node positions
   useEffect(() => {
@@ -237,6 +453,21 @@ export function InteractiveKnowledgeGraph() {
           ctx.arc(node.x, node.y, node.val + 8, 0, Math.PI * 2)
           ctx.fillStyle = 'rgba(16, 185, 129, 0.25)'
           ctx.fill()
+        }
+
+        // Vòng đứt nét cho node do AI đề xuất (vùng tối ưu)
+        if (node.aiGenerated) {
+          ctx.beginPath()
+          ctx.arc(node.x, node.y, node.val + 5, 0, Math.PI * 2)
+          ctx.setLineDash([5, 4])
+          ctx.lineWidth = 2
+          ctx.strokeStyle = '#10B981'
+          ctx.stroke()
+          ctx.setLineDash([])
+          ctx.font = 'bold 9px Plus Jakarta Sans'
+          ctx.fillStyle = '#10B981'
+          ctx.textAlign = 'center'
+          ctx.fillText('✦ AI', node.x, node.y - node.val - 9)
         }
 
         ctx.beginPath()
@@ -340,6 +571,70 @@ export function InteractiveKnowledgeGraph() {
         </div>
       </div>
 
+      {/* AI Niche Scanner toolbar */}
+      <div className="flex flex-wrap items-center gap-2 mt-4">
+        <button
+          onClick={handleScan}
+          disabled={scanning}
+          className="py-2.5 px-4 rounded-lg bg-gradient-to-r from-brand-emerald to-brand-cyan text-dark-950 font-bold text-xs flex items-center gap-2 hover:opacity-95 shadow-glow-emerald transition-all disabled:opacity-60 disabled:cursor-wait"
+        >
+          {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanSearch className="w-4 h-4" />}
+          <span>{scanning ? 'AI đang quét trend & tìm ngách...' : 'AI Quét Ngách Tối Ưu'}</span>
+        </button>
+        {aiNodes.length > 0 && (
+          <button
+            onClick={clearAiNodes}
+            className="py-2.5 px-3 rounded-lg border border-white/10 text-slate-300 text-xs font-medium flex items-center gap-1.5 hover:text-white hover:border-white/25 transition-all"
+          >
+            <X className="w-3.5 h-3.5" />
+            <span>Xóa {aiNodes.length} gợi ý AI</span>
+          </button>
+        )}
+        <span className="text-[11px] text-slate-500">
+          Agent tự tìm kiếm trend MMO 2026, đề xuất ngách mới, chấm điểm cơ hội và vẽ lên bản đồ.
+        </span>
+      </div>
+      {scanError && (
+        <div className="mt-3 p-3 rounded-lg bg-red-950/30 border border-red-500/30 text-red-200 text-xs flex items-start gap-2">
+          <span className="font-bold shrink-0">⚠</span>
+          <span>{scanError}</span>
+        </div>
+      )}
+
+      {/* Bảng xếp hạng ngách AI đề xuất */}
+      {aiNodes.length > 0 && (
+        <div className="mt-4 p-4 rounded-xl bg-dark-900/60 border border-brand-emerald/20">
+          <p className="text-xs font-bold text-brand-emerald mb-3 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5" /> TOP NGÁCH AI ĐỀ XUẤT — các vùng tối ưu nhất
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+            {aiNodes.map((n, i) => (
+              <button
+                key={n.id}
+                onClick={() => setSelectedNode(n)}
+                className="text-left p-3 rounded-lg bg-dark-850/80 border border-white/5 hover:border-brand-emerald/40 transition-all"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-white truncate">
+                    #{i + 1} {n.label}
+                  </span>
+                  <span className="text-xs font-extrabold text-brand-emerald shrink-0">{n.score}/100</span>
+                </div>
+                <div className="h-1.5 mt-2 rounded-full bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-brand-emerald to-brand-cyan"
+                    style={{ width: `${n.score ?? 0}%` }}
+                  />
+                </div>
+                {n.rationale && (
+                  <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">{n.rationale}</p>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Main interactive area: Canvas + Detail Sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
         {/* Canvas area */}
@@ -403,6 +698,14 @@ export function InteractiveKnowledgeGraph() {
 
               {selectedNode.details ? (
                 <div className="space-y-3 text-xs mt-4">
+                  {selectedNode.aiGenerated && (
+                    <div className="p-3 rounded-lg bg-brand-emerald/10 border border-brand-emerald/30 flex items-center justify-between">
+                      <span className="font-semibold flex items-center gap-1.5 text-brand-emerald">
+                        <Sparkles className="w-3.5 h-3.5" /> Điểm cơ hội AI:
+                      </span>
+                      <strong className="text-brand-emerald font-extrabold text-sm">{selectedNode.score}/100</strong>
+                    </div>
+                  )}
                   <div className="p-3 rounded-lg bg-dark-850/80 border border-white/5 flex items-center justify-between">
                     <span className="text-slate-400">Hiệu quả kỳ vọng:</span>
                     <strong className="text-brand-emerald font-bold">{selectedNode.details.roi}</strong>
@@ -439,7 +742,20 @@ export function InteractiveKnowledgeGraph() {
             <p className="text-xs text-slate-400">Vui lòng chọn một Node trên biểu đồ.</p>
           )}
 
-          <div className="pt-4 border-t border-white/10 mt-4">
+          <div className="pt-4 border-t border-white/10 mt-4 space-y-2">
+            <button
+              onClick={handleAnalyze}
+              disabled={analyzing || !selectedNode}
+              className="w-full py-2.5 px-4 rounded-lg border border-brand-violet/40 text-brand-violet font-bold text-xs flex items-center justify-center gap-2 hover:bg-brand-violet/10 transition-all disabled:opacity-50 disabled:cursor-wait"
+            >
+              {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <BrainCircuit className="w-4 h-4" />}
+              <span>{analyzing ? 'AI đang phân tích...' : 'AI Phân Tích Chuyên Sâu Node Này'}</span>
+            </button>
+            {aiInsight && aiInsightFor === selectedNode?.id && (
+              <div className="p-3 rounded-lg bg-dark-850/80 border border-brand-violet/25 text-xs text-slate-200 leading-relaxed whitespace-pre-line max-h-72 overflow-y-auto">
+                {aiInsight}
+              </div>
+            )}
             <a
               href={`/ai-copilot?prompt=${encodeURIComponent(buildNodePrompt(selectedNode))}`}
               className="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-brand-emerald to-brand-cyan text-dark-950 font-bold text-xs flex items-center justify-center gap-2 hover:opacity-95 shadow-glow-emerald transition-all"
