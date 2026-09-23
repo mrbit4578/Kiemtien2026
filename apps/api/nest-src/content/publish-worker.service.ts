@@ -67,20 +67,46 @@ export function decideRetry(err: unknown, attempts: number): RetryDecision {
 export const INSTAGRAM_CAPTION_LIMIT = 2200
 
 /**
- * Kiểm tra caption có vượt giới hạn của nền tảng không — chạy TRƯỚC KHI gọi API
- * để báo lỗi tiếng Việt rõ ràng thay vì để nền tảng trả lỗi khó hiểu.
- * Draft ở Content Studio được phép dài hơn (nới tới 10000 ký tự) vì TikTok/
- * Facebook cho phép caption dài hơn Instagram.
+ * Rút gọn caption cho vừa giới hạn của nền tảng (nếu cần) — thay vì fail job.
+ * - Chỉ áp dụng cho Instagram (TikTok/Facebook cho phép caption dài hơn).
+ * - Cắt ở ranh giới câu/đoạn gần nhất để không cắt dở câu.
+ * - Ưu tiên giữ lại cụm hashtag ở cuối caption (quan trọng cho reach).
+ * - Draft gốc trong Content Studio được giữ nguyên, chỉ bản đăng đi bị rút gọn.
  */
-export function assertCaptionWithinPlatformLimit(provider: string, caption: string): void {
-  if (provider === 'instagram' && caption.length > INSTAGRAM_CAPTION_LIMIT) {
-    throw new OrhError(
-      'CONTENT_REJECTED',
-      `Caption dài ${caption.length} ký tự, vượt giới hạn ${INSTAGRAM_CAPTION_LIMIT} ký tự của Instagram. Hãy rút gọn caption trong Content Studio rồi đăng lại.`,
-      false,
-      'instagram',
-    )
+export function fitCaptionToPlatformLimit(provider: string, caption: string): string {
+  if (provider !== 'instagram' || caption.length <= INSTAGRAM_CAPTION_LIMIT) return caption
+
+  // Tách cụm hashtag ở cuối để ưu tiên giữ lại
+  const tagMatch = caption.match(/((?:#[^\s#]+\s*)+)\s*$/)
+  const tags = tagMatch ? tagMatch[1].trim() : ''
+  const body = tagMatch ? caption.slice(0, tagMatch.index).trimEnd() : caption
+  const budget = INSTAGRAM_CAPTION_LIMIT - (tags ? tags.length + 1 : 0) // +1 cho dấu xuống dòng
+
+  const cut = body.slice(0, Math.max(budget, 0))
+  // Tìm ranh giới câu/đoạn gần nhất: ưu tiên hết đoạn, rồi hết dòng, rồi hết câu
+  const lineBreak = Math.max(cut.lastIndexOf('\n\n'), cut.lastIndexOf('\n'))
+  const sentenceEnd = Math.max(
+    cut.lastIndexOf('. '),
+    cut.lastIndexOf('! '),
+    cut.lastIndexOf('? '),
+  )
+  let trimmed: string
+  if (lineBreak > budget * 0.5 && lineBreak >= sentenceEnd) {
+    // Cắt ở hết đoạn/dòng → gọn, không cần dấu "…"
+    trimmed = cut.slice(0, lineBreak).trimEnd()
+  } else if (sentenceEnd > budget * 0.5) {
+    // Cắt ở hết câu (giữ lại dấu câu) → không cần dấu "…"
+    trimmed = cut.slice(0, sentenceEnd + 1).trimEnd()
+  } else {
+    // Không tìm được ranh giới đẹp → cắt cứng và đánh dấu "…" nếu thật sự bị cắt
+    trimmed = cut.trimEnd()
+    if (trimmed.length < body.length) trimmed += '…'
   }
+  const result = tags ? `${trimmed}\n${tags}` : trimmed
+  // Phòng hờ: nếu vẫn vượt (cụm hashtag quá dài), cắt cứng ở giới hạn
+  return result.length > INSTAGRAM_CAPTION_LIMIT
+    ? `${result.slice(0, INSTAGRAM_CAPTION_LIMIT - 1).trimEnd()}…`
+    : result
 }
 
 /** Timeout cho mỗi lần probe URL media — fail nhanh để không kẹt worker. */
@@ -411,10 +437,15 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
         'instagram',
       )
     }
-    // Instagram giới hạn caption 2200 ký tự (giới hạn của nền tảng).
-    // Draft ở Content Studio cho phép dài hơn, nên kiểm tra ở thời điểm publish
-    // để báo lỗi tiếng Việt rõ ràng thay vì để Instagram trả lỗi khó hiểu.
-    assertCaptionWithinPlatformLimit(connection.provider, item.caption)
+    // Instagram giới hạn caption 2200 ký tự: tự rút gọn thông minh
+    // (cắt ở hết câu, giữ hashtag cuối) thay vì fail job.
+    const caption = fitCaptionToPlatformLimit(connection.provider, item.caption)
+    if (caption.length !== item.caption.length) {
+      this.logger.warn(
+        `Caption dài ${item.caption.length} ký tự vượt giới hạn Instagram, ` +
+          `đã tự rút gọn còn ${caption.length} ký tự (draft gốc giữ nguyên).`,
+      )
+    }
 
     // Probe từng URL trước khi gọi Instagram: fail-fast với message rõ ràng
     // thay vì để Instagram trả lỗi khó hiểu sau nhiều lần retry.
@@ -425,7 +456,7 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
 
     const input: PublishInput = {
       connection: sharedConnection,
-      caption: item.caption,
+      caption,
       mediaUrls,
       mediaKinds,
     }

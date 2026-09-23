@@ -391,8 +391,8 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
                     {step.content.length > 2200 && (
                       <p className="w-full text-[11px] text-amber-300">
                         ⚠ Kịch bản dài {step.content.length} ký tự — vượt giới hạn 2200 ký tự của
-                        Instagram. Vẫn lưu nháp được; hãy rút gọn trước khi đăng IG
-                        (TikTok/Facebook cho phép dài hơn).
+                        Instagram. Khi đăng IG, hệ thống sẽ tự rút gọn ở hết câu và giữ lại hashtag
+                        (TikTok/Facebook đăng nguyên văn).
                       </p>
                     )}
                     {pushError && (

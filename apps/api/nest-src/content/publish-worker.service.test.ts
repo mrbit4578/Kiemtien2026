@@ -1,7 +1,7 @@
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
-import { computeBackoffMs, decideRetry, probeMediaUrl, assertCaptionWithinPlatformLimit, INSTAGRAM_CAPTION_LIMIT } from './publish-worker.service'
+import { computeBackoffMs, decideRetry, probeMediaUrl, fitCaptionToPlatformLimit, INSTAGRAM_CAPTION_LIMIT } from './publish-worker.service'
 import { OrhError, detectMediaKind } from '@orh/shared'
 
 describe('computeBackoffMs', () => {
@@ -147,26 +147,42 @@ describe('probeMediaUrl', () => {
   })
 })
 
-describe('assertCaptionWithinPlatformLimit', () => {
-  it('instagram: caption đúng 2200 ký tự → qua', () => {
-    assert.doesNotThrow(() => assertCaptionWithinPlatformLimit('instagram', 'x'.repeat(INSTAGRAM_CAPTION_LIMIT)))
+describe('fitCaptionToPlatformLimit', () => {
+  it('instagram: caption đúng 2200 ký tự → giữ nguyên', () => {
+    const c = 'x'.repeat(INSTAGRAM_CAPTION_LIMIT)
+    assert.equal(fitCaptionToPlatformLimit('instagram', c), c)
   })
 
-  it('instagram: caption 2201 ký tự → CONTENT_REJECTED vĩnh viễn, message tiếng Việt', () => {
-    assert.throws(
-      () => assertCaptionWithinPlatformLimit('instagram', 'x'.repeat(INSTAGRAM_CAPTION_LIMIT + 1)),
-      (err: unknown) => {
-        assert.ok(err instanceof OrhError)
-        assert.equal(err.code, 'CONTENT_REJECTED')
-        assert.equal(err.retryable, false)
-        assert.match(err.message, /2200/)
-        return true
-      },
-    )
+  it('instagram: caption ngắn → giữ nguyên', () => {
+    assert.equal(fitCaptionToPlatformLimit('instagram', 'Hello world'), 'Hello world')
   })
 
-  it('kênh khác (tiktok/facebook): caption dài vẫn qua', () => {
-    assert.doesNotThrow(() => assertCaptionWithinPlatformLimit('tiktok', 'x'.repeat(5000)))
-    assert.doesNotThrow(() => assertCaptionWithinPlatformLimit('facebook', 'x'.repeat(9000)))
+  it('instagram: caption dài không có ranh giới câu → cắt cứng + "…"', () => {
+    const out = fitCaptionToPlatformLimit('instagram', 'x'.repeat(3000))
+    assert.ok(out.length <= INSTAGRAM_CAPTION_LIMIT)
+    assert.ok(out.endsWith('…'))
+  })
+
+  it('instagram: cắt ở hết câu gần nhất, không cắt dở câu', () => {
+    const body = `${'Câu ngắn. '.repeat(300)}Câu này sẽ bị cắt dở vì quá dài không vừa giới hạn cho phép`
+    const out = fitCaptionToPlatformLimit('instagram', body)
+    assert.ok(out.length <= INSTAGRAM_CAPTION_LIMIT)
+    // Cắt ở hết câu → không có dấu … và không dở câu
+    assert.ok(!out.endsWith('…'))
+    assert.ok(out.trimEnd().endsWith('.'))
+  })
+
+  it('instagram: giữ lại cụm hashtag ở cuối', () => {
+    const body = `${'Nội dung dài. '.repeat(300)}`
+    const tags = '#KiemTienOnline #MMO #Affiliate'
+    const out = fitCaptionToPlatformLimit('instagram', `${body}\n${tags}`)
+    assert.ok(out.length <= INSTAGRAM_CAPTION_LIMIT)
+    assert.ok(out.endsWith(tags), 'hashtag cuối phải được giữ lại')
+  })
+
+  it('kênh khác (tiktok/facebook): caption dài vẫn giữ nguyên', () => {
+    const c = 'x'.repeat(5000)
+    assert.equal(fitCaptionToPlatformLimit('tiktok', c), c)
+    assert.equal(fitCaptionToPlatformLimit('facebook', c), c)
   })
 })
