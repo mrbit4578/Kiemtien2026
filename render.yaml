@@ -1,7 +1,13 @@
 # Render Blueprint — deploy backend API OpenRemoteHub bằng 1 click.
 # Cách dùng: Render Dashboard → New → Blueprint → chọn repo mrbit4578/Kiemtien2026
 # → điền DATABASE_URL (Neon) và REDIS_URL (Upstash) → Apply.
-# SESSION_SECRET và TOKEN_ENCRYPTION_KEY được Render tự sinh ngẫu nhiên.
+#
+# QUAN TRỌNG — secret mã hóa:
+# SESSION_SECRET và TOKEN_ENCRYPTION_KEY để `sync: false` (nhập tay 1 lần trên
+# dashboard, KHÔNG dùng generateValue). Lý do: mỗi lần re-apply blueprint với
+# generateValue, Render sinh key mới → mọi API key/OAuth token đã mã hóa trong
+# DB bằng key cũ sẽ KHÔNG giải mã được nữa ("Lỗi giải mã key"). Đã từng gây
+# sự cố ngày 2026-09-23 — không bao giờ dùng generateValue cho 2 key này.
 services:
   - type: web
     name: kiemtien2026-api
@@ -26,12 +32,52 @@ services:
       - key: REDIS_URL
         sync: false # dán REDIS_URL của Upstash
       - key: SESSION_SECRET
-        generateValue: true
+        sync: false # nhập tay 1 lần — KHÔNG dùng generateValue (xem chú thích đầu file)
       - key: TOKEN_ENCRYPTION_KEY
-        generateValue: true
+        sync: false # nhập tay 1 lần, GIỮ ĐÚNG giá trị đang dùng — key này mã hóa mọi API key/token trong DB
       - key: APP_URL
         value: https://kiemtien2026-web.vercel.app
       # URL công khai của chính backend — dùng để tạo OAuth callback URL
       # (auth.service.ts: callbackUrl). BẮT BUỘC phải đúng domain Render của service.
       - key: API_URL
         value: https://kiemtien2026-api.onrender.com # domain frontend Vercel (CORS)
+
+  # ── Service Docker: API + Concat video renderer (sidecar, 1 image) ─────────
+  # Render KHÔNG cho đổi runtime của service đã tạo → thêm service mới chạy
+  # Docker, giữ nguyên service node cũ cho tới khi cutover xong. Image build
+  # concat-cli từ vendored source (docker/concat-src) + ffmpeg, API tự spawn
+  # `concat-cli serve` local qua CONCAT_AUTOSTART=true.
+  - type: web
+    name: kiemtien2026-api-docker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # Chạy trong image đã build, trước khi deploy (giống service node).
+    preDeployCommand: sh apps/api/scripts/migrate-with-retry.sh
+    healthCheckPath: /rag/strategies
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false # copy đúng giá trị từ service kiemtien2026-api
+      - key: REDIS_URL
+        sync: false # copy đúng giá trị từ service kiemtien2026-api
+      - key: SESSION_SECRET
+        sync: false # copy ĐÚNG giá trị từ service cũ — đổi là rớt session user
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false # copy ĐÚNG giá trị từ service cũ — đổi là "Lỗi giải mã key" toàn bộ AI/OAuth
+      - key: DIRECT_DATABASE_URL
+        sync: false # copy từ service cũ nếu đã set (Neon direct hostname, không -pooler)
+      - key: APP_URL
+        value: https://kiemtien2026-web.vercel.app
+      # BẮT BUỘC đúng domain Render của service MỚI này (Render cấp sau lần
+      # deploy đầu — kiểm tra lại và sửa nếu khác).
+      - key: API_URL
+        value: https://kiemtien2026-api-docker.onrender.com
+      # ── Concat renderer ──
+      - key: CONCAT_ENABLED
+        value: "true" # bật renderer trên image Docker (đã có binary + ffmpeg)
+      - key: CONCAT_CLI_PATH
+        value: /usr/local/bin/concat-cli # binary do Docker build, đã verify lúc build
+      - key: CONCAT_AUTOSTART
+        value: "true" # API tự spawn `concat-cli serve` khi khởi động

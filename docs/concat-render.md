@@ -97,14 +97,70 @@ printf '%s\n' \
 Job lưu trong DB nên restart API không mất lịch sử, nhưng job đang `running`
 lúc restart sẽ kẹt — cần dọn thủ công hoặc chạy lại.
 
-## Production (Render)
+## Production — Deploy Docker trên Render
 
-- Image cần: Node + `ffmpeg`/`ffprobe` + binary `concat-cli` (build trong Docker).
-- Đơn giản nhất: cùng service, `CONCAT_ENABLED=true`, `CONCAT_AUTOSTART=true`,
-  `CONCAT_WORK_DIR` trỏ vào disk persistent (Render Disk) để giữ MP4.
-- Nặng hơn: tách worker render riêng (chạy `concat-cli serve` + API consumer),
-  API chính đặt `CONCAT_AUTOSTART=false` + `CONCAT_API_TOKEN` trỏ tới worker.
-- Token truyền **cleartext** trên TCP — chỉ bind `127.0.0.1` hoặc qua SSH tunnel/TLS.
+### Kiến trúc
+
+1 image duy nhất (sidecar): **Node API + `concat-cli` + ffmpeg**.
+API tự spawn `concat-cli serve` local (`CONCAT_AUTOSTART=true`) và điều khiển
+qua JSON-RPC. `media.import` nhận filesystem path, MP4 output nằm trên disk
+của chính container — vì vậy KHÔNG tách renderer ra service riêng.
+
+- `Dockerfile` (root repo), multi-stage:
+  - `rust-builder` (`rust:1.93-bookworm`): build `concat-cli` từ vendored
+    source `docker/concat-src/` (Concat 0.2.3 + kaizen fixes, đã loại `target/`).
+    Bookworm có FFmpeg 5.1 (libavcodec 59.37.100) — vừa đủ yêu cầu build.rs
+    (≥ 59.37). Binary cần GLIBC_2.38+ nên KHÔNG dùng alpine.
+  - `node-builder` (`node:20-bookworm`): `pnpm install` + `pnpm --filter @orh/api build`.
+  - `runtime` (`node:20-bookworm-slim`): `apt-get install ffmpeg` (binary +
+    toàn bộ libav* runtime mà concat-cli link tới) + pnpm global (cho
+    preDeploy migrate) + binary tại `/usr/local/bin/concat-cli`.
+    Build tự verify: `concat-cli --version` và `ldd` không thiếu lib nào —
+    thiếu là fail build ngay.
+- `render.yaml` có **2 service**:
+  - `kiemtien2026-api` (runtime node, cũ) — giữ nguyên cho tới khi cutover.
+    Render KHÔNG cho đổi runtime của service đã tạo nên bắt buộc thêm service mới.
+  - `kiemtien2026-api-docker` (runtime docker) — service production mới,
+    `CONCAT_ENABLED=true`, `CONCAT_CLI_PATH=/usr/local/bin/concat-cli`,
+    `CONCAT_AUTOSTART=true`.
+
+### ⚠️ Bài học 2026-09-23: KHÔNG dùng `generateValue` cho key mã hóa
+
+`TOKEN_ENCRYPTION_KEY` (và `SESSION_SECRET`) để `sync: false`, nhập tay 1 lần.
+Mỗi lần re-apply blueprint với `generateValue: true`, Render sinh key mới →
+mọi API key/OAuth token đã mã hóa trong DB bằng key cũ **không giải mã được
+nữa** ("Lỗi giải mã key: TOKEN_ENCRYPTION_KEY..."). Đây là nguyên nhân khả nghi
+nhất của sự cố giải mã key ngày 2026-09-23.
+
+### Checklist migration (làm trên dashboard, từng bước một)
+
+1. **Blueprint Sync**: Render Dashboard → service `kiemtien2026-api` → Blueprint
+   → Sync (hoặc New → Blueprint) để Render tạo service mới
+   `kiemtien2026-api-docker`. Service cũ vẫn chạy bình thường.
+2. **Copy env vars** từ service cũ sang service mới (Environment tab → copy từng
+   giá trị, KHÔNG gõ lại):
+   - `DATABASE_URL`, `REDIS_URL`, `DIRECT_DATABASE_URL` (nếu đã set)
+   - `SESSION_SECRET` — copy ĐÚNG, đổi là rớt session toàn bộ user
+   - `TOKEN_ENCRYPTION_KEY` — copy ĐÚNG giá trị hiện tại, đổi là "Lỗi giải mã key"
+     toàn bộ AI Pro + OAuth tokens (sự cố 2026-09-23)
+   - Mọi key OAuth/AI khác (GOOGLE_*, FACEBOOK_*, TIKTOK_*, CLOUDINARY_*...)
+3. Đợi deploy xong → mở `https://kiemtien2026-api-docker.onrender.com/render/health`
+   → phải thấy `enabled: true`, `connected: true`.
+4. **Test 1 job render E2E**: `POST /render/jobs` với 1 clip ngắn → poll
+   `GET /render/jobs/:id` tới `done` → `GET /render/jobs/:id/file` tải MP4 về
+   xem thử. (Lưu ý: Render free/starter không có persistent disk — MP4 mất khi
+   restart; gắn Render Disk vào `CONCAT_WORK_DIR` nếu cần giữ file.)
+5. **Cutover**:
+   - Vercel (web): đổi `NEXT_PUBLIC_API_URL` (hoặc env tương đương) sang domain mới.
+   - OAuth callbacks: TikTok / Google / Instagram / Facebook developer dashboards
+     → thêm callback `https://kiemtien2026-api-docker.onrender.com/auth/<provider>/callback`.
+     (Callback cũ vẫn giữ tới khi chắc chắn không còn traffic.)
+   - Kiểm tra AI Pro hết "Lỗi giải mã key" (nếu còn → `TOKEN_ENCRYPTION_KEY`
+     copy sai, sửa lại đúng giá trị service cũ).
+6. **Xóa service cũ** `kiemtien2026-api` chỉ khi: web đã trỏ domain mới ≥ 24h,
+   OAuth login/post test OK trên domain mới, không còn log traffic ở service cũ.
+
+## Troubleshooting
 
 ## Troubleshooting
 
@@ -116,3 +172,7 @@ lúc restart sẽ kẹt — cần dọn thủ công hoặc chạy lại.
 | `wrong token` / `unauthorized` | `CONCAT_API_TOKEN` không khớp token của serve đang chạy |
 | Job `failed [Busy]` | Có export khác đang chạy — job sau chờ hàng đợi, thử lại |
 | `Asset vượt 500MB` | Nén/giảm độ phân giải source trước khi render |
+| Docker build fail ở `rust-builder` | Thiếu network ra crates.io lúc build, hoặc tag `rust:1.93-bookworm` chưa có → thử `rust:bookworm` |
+| Docker build fail ở bước `ldd` | Thiếu libav* runtime — kiểm tra `apt-get install ffmpeg` chạy đúng trên bookworm-slim |
+| `preDeployCommand` báo `pnpm: not found` | Runtime stage thiếu `npm install -g pnpm` — kiểm tra Dockerfile |
+| MP4 mất sau restart | Render không có persistent disk mặc định → gắn Disk vào `CONCAT_WORK_DIR` |
