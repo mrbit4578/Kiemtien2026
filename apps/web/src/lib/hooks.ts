@@ -159,12 +159,13 @@ export function useContent() {
   )
 
   /**
-   * Cập nhật cài đặt publish của content: lịch đăng và/hoặc link ảnh-video.
+   * Cập nhật content: lịch đăng, link ảnh-video và/hoặc nội dung caption.
    * scheduledAt = null → xóa lịch (đăng ngay); assetUrl = null → xóa media.
+   * caption = nội dung mới (backend trim + từ chối chuỗi rỗng).
    * Backend đồng bộ nextRunAt của job đang pending.
    */
   const updateContent = useCallback(
-    async (id: string, input: { scheduledAt?: string | null; assetUrl?: string | null }) => {
+    async (id: string, input: { scheduledAt?: string | null; assetUrl?: string | null; caption?: string }) => {
       await api.patch<ApiContentItem>(`/content/${id}`, input)
       await refresh()
     },

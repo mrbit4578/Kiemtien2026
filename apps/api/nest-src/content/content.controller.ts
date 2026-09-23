@@ -87,6 +87,12 @@ class UpdateScheduleDto {
   @IsOptional()
   @IsUrl()
   assetUrl?: string | null
+
+  /** Nội dung caption (tối đa 10000 ký tự như draft); undefined = không đổi. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  caption?: string
 }
 
 /**
@@ -414,10 +420,11 @@ export class ContentController {
   }
 
   /**
-   * PATCH /content/:id — cập nhật cài đặt publish của content (lịch đăng, media).
+   * PATCH /content/:id — cập nhật content (lịch đăng, media, nội dung caption).
    * - scheduledAt = ISO string → dời lịch sang giờ mới
    * - scheduledAt = null → xóa lịch (đăng ngay khi đẩy queue)
    * - assetUrl = link ảnh/video (Instagram bắt buộc); null = xóa
+   * - caption = nội dung mới (trim, không được rỗng, tối đa 10000 ký tự)
    * - không truyền field nào → không đổi
    * Job publish đang 'pending' của content này cũng được cập nhật nextRunAt
    * theo để worker xử lý đúng giờ mới. Không áp dụng cho content đã published.
@@ -436,7 +443,7 @@ export class ContentController {
     if (item.status === 'published') {
       throw new BadRequestException('Content đã xuất bản, không thể sửa.')
     }
-    const data: { scheduledAt?: Date | null; assetUrl?: string | null } = {}
+    const data: { scheduledAt?: Date | null; assetUrl?: string | null; caption?: string } = {}
     let nextRunAt: Date | null | undefined
     if ('scheduledAt' in dto) {
       nextRunAt = dto.scheduledAt ? new Date(dto.scheduledAt) : null
@@ -444,6 +451,13 @@ export class ContentController {
     }
     if ('assetUrl' in dto) {
       data.assetUrl = dto.assetUrl ? dto.assetUrl : null
+    }
+    if ('caption' in dto) {
+      const caption = dto.caption?.trim() ?? ''
+      if (!caption) {
+        throw new BadRequestException('Nội dung bài viết không được để trống.')
+      }
+      data.caption = caption
     }
     if (Object.keys(data).length === 0) {
       return item

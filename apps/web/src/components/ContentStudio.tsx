@@ -13,6 +13,7 @@ import {
   Sparkles,
   Filter,
   Pencil,
+  PenLine,
   Trash2,
 } from 'lucide-react'
 
@@ -130,6 +131,9 @@ export function ContentStudio() {
   const [assetUrlValue, setAssetUrlValue] = useState('')
   // Chọn nhiều bài để xóa hàng loạt
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  // Sửa nội dung caption ngay trên thẻ bài viết: id đang sửa + bản nháp
+  const [editingCaptionId, setEditingCaptionId] = useState<string | null>(null)
+  const [captionDraft, setCaptionDraft] = useState('')
 
   /** Mở editor sửa lịch/media cho một bài viết, prefill theo dữ liệu hiện tại */
   const openScheduleEditor = (post: ContentItem) => {
@@ -173,6 +177,34 @@ export function ContentStudio() {
       () => updateContent(id, { scheduledAt, assetUrl }),
       scheduledAt ? 'Đã cập nhật lịch đăng.' : 'Đã chuyển sang Đăng ngay — đẩy lên queue là đăng luôn.',
     ).then(() => setEditingScheduleId(null))
+  }
+
+  /** Mở editor sửa nội dung caption, prefill theo dữ liệu hiện tại */
+  const openCaptionEditor = (post: ContentItem) => {
+    setEditingCaptionId(post.id)
+    setCaptionDraft(post.caption)
+    // Đóng editor lịch nếu đang mở để tránh 2 editor cùng lúc
+    setEditingScheduleId(null)
+  }
+
+  /** Lưu caption mới (backend trim + từ chối chuỗi rỗng, tối đa 10000 ký tự) */
+  const handleSaveCaption = (id: string) => {
+    const caption = captionDraft.trim()
+    if (!caption) {
+      setOpError('Nội dung bài viết không được để trống.')
+      return
+    }
+    if (DEMO_MODE) {
+      const firstLine = caption.split('\n').map((s) => s.trim()).find(Boolean) ?? '(Không tiêu đề)'
+      setDemoPosts((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, caption, title: firstLine.slice(0, 80) } : p)),
+      )
+      setEditingCaptionId(null)
+      return
+    }
+    runOp(id, () => updateContent(id, { caption }), 'Đã cập nhật nội dung bài viết.').then(() =>
+      setEditingCaptionId(null),
+    )
   }
 
   /** Thử lại job publish đã thất bại (dùng connection của job cũ, fallback connection đang chọn) */
@@ -626,6 +658,17 @@ export function ContentStudio() {
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
                   )}
+                  {post.status !== 'published' && (
+                    <button
+                      onClick={() =>
+                        editingCaptionId === post.id ? setEditingCaptionId(null) : openCaptionEditor(post)
+                      }
+                      title="Sửa nội dung bài viết"
+                      className="p-1 rounded hover:bg-white/10 text-slate-500 hover:text-brand-emerald transition-all"
+                    >
+                      <PenLine className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <span className="px-2 py-0.5 rounded bg-dark-900 border border-white/5 text-brand-emerald font-bold">
                     {post.commission}
                   </span>
@@ -719,9 +762,43 @@ export function ContentStudio() {
                 </div>
               )}
 
-              <p className="text-xs text-slate-300 bg-dark-950/60 p-3 rounded-lg border border-white/5 leading-relaxed font-sans whitespace-pre-wrap">
-                {post.caption}
-              </p>
+              {/* Nội dung caption: xem hoặc sửa inline (trừ bài đã xuất bản) */}
+              {editingCaptionId === post.id && post.status !== 'published' ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={captionDraft}
+                    onChange={(e) => setCaptionDraft(e.target.value)}
+                    rows={12}
+                    maxLength={10000}
+                    placeholder="Nhập nội dung bài viết..."
+                    className="w-full text-xs text-slate-200 bg-dark-950/80 p-3 rounded-lg border border-brand-emerald/30 leading-relaxed font-sans whitespace-pre-wrap focus:outline-none focus:border-brand-emerald"
+                  />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      {captionDraft.length}/10000 ký tự
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setEditingCaptionId(null)}
+                        className="px-3 py-1.5 rounded-lg bg-dark-850 hover:bg-dark-800 text-slate-300 border border-white/10 text-xs"
+                      >
+                        Hủy
+                      </button>
+                      <button
+                        onClick={() => handleSaveCaption(post.id)}
+                        disabled={busy || !captionDraft.trim()}
+                        className="px-3 py-1.5 rounded-lg bg-brand-emerald text-dark-950 font-bold text-xs disabled:opacity-50"
+                      >
+                        {busy ? 'Đang lưu...' : 'Lưu nội dung'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-300 bg-dark-950/60 p-3 rounded-lg border border-white/5 leading-relaxed font-sans whitespace-pre-wrap">
+                  {post.caption}
+                </p>
+              )}
 
               {/* Lỗi publish — hiện rõ để không còn "thất bại im lặng" */}
               {post.status === 'failed' && post.lastError && (
