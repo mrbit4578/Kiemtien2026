@@ -388,6 +388,13 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
                       <ShieldCheck className="w-3.5 h-3.5 text-brand-cyan" />
                       Tuân thủ ToS Platform
                     </span>
+                    {step.content.length > 2200 && (
+                      <p className="w-full text-[11px] text-amber-300">
+                        ⚠ Kịch bản dài {step.content.length} ký tự — vượt giới hạn 2200 ký tự của
+                        Instagram. Vẫn lưu nháp được; hãy rút gọn trước khi đăng IG
+                        (TikTok/Facebook cho phép dài hơn).
+                      </p>
+                    )}
                     {pushError && (
                       <p className="w-full text-[11px] text-red-300">{pushError}</p>
                     )}

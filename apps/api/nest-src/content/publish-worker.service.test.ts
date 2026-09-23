@@ -1,7 +1,7 @@
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
-import { computeBackoffMs, decideRetry, probeMediaUrl } from './publish-worker.service'
+import { computeBackoffMs, decideRetry, probeMediaUrl, assertCaptionWithinPlatformLimit, INSTAGRAM_CAPTION_LIMIT } from './publish-worker.service'
 import { OrhError, detectMediaKind } from '@orh/shared'
 
 describe('computeBackoffMs', () => {
@@ -144,5 +144,29 @@ describe('probeMediaUrl', () => {
       assert.equal(err.retryable, true)
       return true
     })
+  })
+})
+
+describe('assertCaptionWithinPlatformLimit', () => {
+  it('instagram: caption đúng 2200 ký tự → qua', () => {
+    assert.doesNotThrow(() => assertCaptionWithinPlatformLimit('instagram', 'x'.repeat(INSTAGRAM_CAPTION_LIMIT)))
+  })
+
+  it('instagram: caption 2201 ký tự → CONTENT_REJECTED vĩnh viễn, message tiếng Việt', () => {
+    assert.throws(
+      () => assertCaptionWithinPlatformLimit('instagram', 'x'.repeat(INSTAGRAM_CAPTION_LIMIT + 1)),
+      (err: unknown) => {
+        assert.ok(err instanceof OrhError)
+        assert.equal(err.code, 'CONTENT_REJECTED')
+        assert.equal(err.retryable, false)
+        assert.match(err.message, /2200/)
+        return true
+      },
+    )
+  })
+
+  it('kênh khác (tiktok/facebook): caption dài vẫn qua', () => {
+    assert.doesNotThrow(() => assertCaptionWithinPlatformLimit('tiktok', 'x'.repeat(5000)))
+    assert.doesNotThrow(() => assertCaptionWithinPlatformLimit('facebook', 'x'.repeat(9000)))
   })
 })

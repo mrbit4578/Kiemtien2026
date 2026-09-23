@@ -44,8 +44,12 @@ import { fetchTimeout } from '../common/safe-fetch'
  */
 
 class CreateContentDto {
+  // Draft ở Content Studio không gắn với một kênh cụ thể (TikTok cho ~4000 ký tự,
+  // Facebook cho phép rất dài), nên giới hạn ở tầng draft nới rộng.
+  // Giới hạn 2200 ký tự của Instagram được kiểm tra riêng ở thời điểm publish
+  // (publish-worker.service.ts) để báo lỗi tiếng Việt rõ ràng.
   @IsString()
-  @MaxLength(2200)
+  @MaxLength(10000)
   caption!: string
 
   @IsOptional()

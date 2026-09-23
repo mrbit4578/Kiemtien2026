@@ -63,6 +63,26 @@ export function decideRetry(err: unknown, attempts: number): RetryDecision {
   return { kind: 'terminal', status: attempts >= MAX_ATTEMPTS ? 'dead_letter' : 'failed' }
 }
 
+/** Giới hạn caption của Instagram (giới hạn của nền tảng). */
+export const INSTAGRAM_CAPTION_LIMIT = 2200
+
+/**
+ * Kiểm tra caption có vượt giới hạn của nền tảng không — chạy TRƯỚC KHI gọi API
+ * để báo lỗi tiếng Việt rõ ràng thay vì để nền tảng trả lỗi khó hiểu.
+ * Draft ở Content Studio được phép dài hơn (nới tới 10000 ký tự) vì TikTok/
+ * Facebook cho phép caption dài hơn Instagram.
+ */
+export function assertCaptionWithinPlatformLimit(provider: string, caption: string): void {
+  if (provider === 'instagram' && caption.length > INSTAGRAM_CAPTION_LIMIT) {
+    throw new OrhError(
+      'CONTENT_REJECTED',
+      `Caption dài ${caption.length} ký tự, vượt giới hạn ${INSTAGRAM_CAPTION_LIMIT} ký tự của Instagram. Hãy rút gọn caption trong Content Studio rồi đăng lại.`,
+      false,
+      'instagram',
+    )
+  }
+}
+
 /** Timeout cho mỗi lần probe URL media — fail nhanh để không kẹt worker. */
 const MEDIA_PROBE_TIMEOUT_MS = 15_000
 
@@ -391,6 +411,10 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
         'instagram',
       )
     }
+    // Instagram giới hạn caption 2200 ký tự (giới hạn của nền tảng).
+    // Draft ở Content Studio cho phép dài hơn, nên kiểm tra ở thời điểm publish
+    // để báo lỗi tiếng Việt rõ ràng thay vì để Instagram trả lỗi khó hiểu.
+    assertCaptionWithinPlatformLimit(connection.provider, item.caption)
 
     // Probe từng URL trước khi gọi Instagram: fail-fast với message rõ ràng
     // thay vì để Instagram trả lỗi khó hiểu sau nhiều lần retry.
