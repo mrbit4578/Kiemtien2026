@@ -22,6 +22,63 @@ import {
 } from 'lucide-react'
 import { useAiConnections, useAiProviders, sendAgentRun } from '../lib/hooks'
 import { ApiError } from '../lib/api'
+import type { AiProviderMeta } from '../lib/types'
+
+/**
+ * Dropdown chọn provider + model — cùng cấu trúc với AI Chat Pro.
+ * Dùng chung cho toolbar quét ngách và panel chi tiết node (đồng bộ cùng state).
+ */
+function AiModelSelector({
+  providerId,
+  onProviderChange,
+  model,
+  onModelChange,
+  activeMeta,
+  currentMeta,
+  fullWidth = false,
+}: {
+  providerId: string
+  onProviderChange: (v: string) => void
+  model: string
+  onModelChange: (v: string) => void
+  activeMeta: AiProviderMeta[]
+  currentMeta: AiProviderMeta | undefined
+  fullWidth?: boolean
+}) {
+  const wrap = fullWidth ? 'w-full' : ''
+  return (
+    <>
+      <div className={`relative ${wrap}`}>
+        <select
+          value={providerId}
+          onChange={(e) => onProviderChange(e.target.value)}
+          className={`appearance-none pl-3 pr-8 py-2.5 rounded-lg bg-dark-950/70 border border-white/10 text-white text-xs font-bold focus:outline-none focus:border-brand-emerald/60 ${fullWidth ? 'w-full' : ''}`}
+          title="AI provider dùng cho tác vụ AI"
+        >
+          {activeMeta.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+      </div>
+      {currentMeta && (
+        <div className={`relative ${wrap}`}>
+          <select
+            value={model}
+            onChange={(e) => onModelChange(e.target.value)}
+            className={`appearance-none pl-3 pr-8 py-2.5 rounded-lg bg-dark-950/70 border border-white/10 text-slate-300 text-xs font-mono focus:outline-none focus:border-brand-emerald/60 ${fullWidth ? 'w-full' : ''}`}
+            title="Model dùng cho tác vụ AI"
+          >
+            {currentMeta.models.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+        </div>
+      )}
+    </>
+  )
+}
 
 export interface GraphNode {
   id: string
@@ -596,34 +653,14 @@ export function InteractiveKnowledgeGraph() {
       {/* AI Niche Scanner toolbar */}
       <div className="flex flex-wrap items-center gap-2 mt-4">
         {/* Chọn provider/model — cùng cấu trúc với AI Chat Pro */}
-        <div className="relative">
-          <select
-            value={providerId}
-            onChange={(e) => setProviderId(e.target.value)}
-            className="appearance-none pl-3 pr-8 py-2.5 rounded-lg bg-dark-950/70 border border-white/10 text-white text-xs font-bold focus:outline-none focus:border-brand-emerald/60"
-            title="AI provider dùng để quét"
-          >
-            {activeMeta.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-          <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-        </div>
-        {currentMeta && (
-          <div className="relative">
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="appearance-none pl-3 pr-8 py-2.5 rounded-lg bg-dark-950/70 border border-white/10 text-slate-300 text-xs font-mono focus:outline-none focus:border-brand-emerald/60"
-              title="Model dùng để quét"
-            >
-              {currentMeta.models.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-          </div>
-        )}
+        <AiModelSelector
+          providerId={providerId}
+          onProviderChange={setProviderId}
+          model={model}
+          onModelChange={setModel}
+          activeMeta={activeMeta}
+          currentMeta={currentMeta}
+        />
         <button
           onClick={handleScan}
           disabled={scanning}
@@ -796,6 +833,18 @@ export function InteractiveKnowledgeGraph() {
           )}
 
           <div className="pt-4 border-t border-white/10 mt-4 space-y-2">
+            {/* Chọn AI phân tích node — cùng cấu trúc AI Chat Pro, đồng bộ với toolbar */}
+            <div className="flex gap-2">
+              <AiModelSelector
+                providerId={providerId}
+                onProviderChange={setProviderId}
+                model={model}
+                onModelChange={setModel}
+                activeMeta={activeMeta}
+                currentMeta={currentMeta}
+                fullWidth
+              />
+            </div>
             <button
               onClick={handleAnalyze}
               disabled={analyzing || !selectedNode}
