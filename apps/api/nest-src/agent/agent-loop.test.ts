@@ -181,6 +181,14 @@ describe('buildAgentSystemPrompt', () => {
     assert.match(p, /HOOK/)
     assert.match(p, /KHÔNG hứa hẹn thu nhập chắc chắn/)
   })
+
+  it('bắt buộc final answer tách 2 khối: KỊCH BẢN QUAY + CAPTION ĐĂNG BÀI', () => {
+    const p = buildAgentSystemPrompt(['web_search'])
+    assert.match(p, /KỊCH BẢN QUAY/)
+    assert.match(p, /CAPTION ĐĂNG BÀI/)
+    // Caption đăng bài cấm dấu vết kịch bản thô
+    assert.match(p, /TUYỆT ĐỐI KHÔNG dùng \*\*/)
+  })
 })
 
 describe('GeminiBackend', () => {

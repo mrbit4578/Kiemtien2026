@@ -31,6 +31,25 @@ interface ReActStep {
   content: string
 }
 
+/**
+ * Tách khối "## CAPTION ĐĂNG BÀI" khỏi final answer của agent.
+ * Agent (theo system prompt) luôn xuất 2 khối: KỊCH BẢN QUAY + CAPTION ĐĂNG BÀI.
+ * Chỉ khối caption sạch được đưa vào Content Studio để đăng — kịch bản thô
+ * (**, ##, phân cảnh, voice-over...) không bao giờ lọt lên bài đăng.
+ * Fallback: output cũ không có khối → dùng nguyên văn (tương thích ngược).
+ */
+export function extractPublishCaption(answer: string): string {
+  const m = answer.match(/##\s*CAPTION ĐĂNG BÀI\s*\r?\n([\s\S]*?)(?=\r?\n##\s|\s*$)/i)
+  const body = (m ? m[1] : answer).trim()
+  return body || answer.trim()
+}
+
+/** Tách khối "## KỊCH BẢN QUAY" — dùng để copy riêng khi quay video. */
+export function extractShootScript(answer: string): string {
+  const m = answer.match(/##\s*KỊCH BẢN QUAY\s*\r?\n([\s\S]*?)(?=\r?\n##\s|\s*$)/i)
+  return (m ? m[1] : '').trim()
+}
+
 export function AICopilotStudio() {
   const { sessionData, setCampaign, runManualStep } = useSession()
   const { create } = useContent()
@@ -39,14 +58,16 @@ export function AICopilotStudio() {
   const [pushError, setPushError] = useState<string | null>(null)
   const [canvaAnswer, setCanvaAnswer] = useState<string | null>(null)
 
-  /** Đưa kết quả ReAct vào Content Studio: tạo bản nháp KHÔNG lên lịch
-   *  (scheduledAt = undefined) để có thể phê duyệt + push ngay tại trang /content. */
+  /** Đưa kết quả ReAct vào Content Studio: chỉ lấy khối CAPTION ĐĂNG BÀI
+   *  (caption sạch, không dấu vết kịch bản) làm nội dung bản nháp.
+   *  Tạo bản nháp KHÔNG lên lịch (scheduledAt = undefined) để có thể
+   *  phê duyệt + push ngay tại trang /content. */
   const handlePushToContentStudio = async (answerContent: string) => {
     if (pushing) return
     setPushing(true)
     setPushError(null)
     try {
-      await create({ caption: answerContent.trim() })
+      await create({ caption: extractPublishCaption(answerContent) })
       router.push('/content')
     } catch (err) {
       setPushError(err instanceof Error ? err.message : 'Đưa vào Content Studio thất bại.')
@@ -156,6 +177,7 @@ export function AICopilotStudio() {
   }, [providers, connections])
   const [isGenerating, setIsGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [copiedScript, setCopiedScript] = useState(false)
   const [steps, setSteps] = useState<ReActStep[]>([
     {
       type: 'thought',
@@ -321,6 +343,22 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
           >
             {copied ? <Check className="w-3.5 h-3.5 text-brand-emerald" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copied ? 'Đã sao chép' : 'Sao chép kết quả'}</span>
+          </button>
+          <button
+            onClick={() => {
+              const lastStep = steps.find((s) => s.type === 'answer')
+              const script = lastStep ? extractShootScript(lastStep.content) : ''
+              if (script) {
+                navigator.clipboard.writeText(script)
+                setCopiedScript(true)
+                setTimeout(() => setCopiedScript(false), 2000)
+              }
+            }}
+            title="Chỉ copy khối KỊCH BẢN QUAY để quay video"
+            className="text-xs px-3 py-1.5 rounded-lg bg-dark-850 hover:bg-dark-800 text-slate-300 hover:text-white border border-white/10 flex items-center gap-1.5 transition-all"
+          >
+            {copiedScript ? <Check className="w-3.5 h-3.5 text-brand-emerald" /> : <Copy className="w-3.5 h-3.5" />}
+            <span>{copiedScript ? 'Đã sao chép' : 'Sao chép kịch bản quay'}</span>
           </button>
         </div>
 
