@@ -18,6 +18,7 @@ WORKDIR /opt/concat-src
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev \
     libavdevice-dev libswscale-dev libswresample-dev libpostproc-dev \
+    libasound2-dev \
     clang libclang-dev pkg-config ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
