@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { asInstagramError } from './instagram'
+import { asInstagramError, cdnProxyUrl } from './instagram'
 import { OrhError } from '@orh/shared'
 
 describe('asInstagramError — Meta Timeout là lỗi nhất thời', () => {
@@ -43,5 +43,21 @@ describe('asInstagramError — Meta Timeout là lỗi nhất thời', () => {
     assert.equal(err.code, 'CONTENT_REJECTED')
     assert.equal(err.retryable, false)
     assert.match(err.message, /không rõ nguyên nhân/)
+  })
+})
+
+describe('cdnProxyUrl — proxy ảnh imgbb chậm qua weserv', () => {
+  it('URL i.ibb.co → qua images.weserv.nl', () => {
+    const out = cdnProxyUrl('https://i.ibb.co/nN9yczDX/anh.png')
+    assert.equal(out, 'https://images.weserv.nl/?url=' + encodeURIComponent('i.ibb.co/nN9yczDX/anh.png'))
+  })
+
+  it('host khác → giữ nguyên', () => {
+    const u = 'https://example.com/anh.png'
+    assert.equal(cdnProxyUrl(u), u)
+  })
+
+  it('URL lỗi → giữ nguyên, không crash', () => {
+    assert.equal(cdnProxyUrl('not-a-url'), 'not-a-url')
   })
 })

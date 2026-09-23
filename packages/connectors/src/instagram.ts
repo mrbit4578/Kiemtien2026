@@ -62,6 +62,26 @@ const ALLOWED_REDIRECT_URIS = [`${process.env.API_URL}/auth/instagram/callback`]
 const DEFAULT_SCOPES = ['instagram_business_basic', 'instagram_business_content_publish']
 
 /**
+ * Proxy ảnh chậm qua image CDN trước khi đưa cho Meta tải.
+ * BỐI CẢNH (2026-09-23): imgbb (host upload mặc định) serve cực chậm
+ * (~12s cho 1.3MB, có lúc không trả body) → fetcher của Meta tải dở dang,
+ * nhận file hỏng → báo "Only photo or video can be accepted as media type".
+ * images.weserv.nl tải đầy đủ cùng file trong ~2.5s rồi cache + serve nhanh.
+ * Chỉ proxy host i.ibb.co (không proxy video — weserv chỉ xử lý ảnh).
+ */
+export function cdnProxyUrl(url: string): string {
+  try {
+    const u = new URL(url)
+    if (u.hostname.toLowerCase() === 'i.ibb.co') {
+      return `https://images.weserv.nl/?url=${encodeURIComponent(`${u.hostname}${u.pathname}${u.search}`)}`
+    }
+  } catch {
+    // URL không parse được → giữ nguyên, để probe báo lỗi rõ ràng
+  }
+  return url
+}
+
+/**
  * Chuẩn hóa lỗi trả về từ Meta Graph API.
  * ĐIỂM CHÍ MẠNG: Meta thỉnh thoảng trả `{"error":{"message":"Timeout"}}`
  * khi server Instagram không tải kịp media từ URL (host ảnh chậm, file
@@ -208,6 +228,11 @@ export class InstagramConnector implements SocialConnector {
     // Loại media: ưu tiên kết quả probe từ worker (mediaKinds), fallback đoán
     // theo đuôi file nếu connector được gọi trực tiếp mà không qua worker.
     const kinds = input.mediaKinds ?? input.mediaUrls.map((u) => detectMediaKind(u))
+    // Proxy ảnh imgbb chậm qua CDN nhanh — chỉ ảnh, video giữ nguyên.
+    const mediaUrls = input.mediaUrls.map((u, i) => (kinds[i] === 'image' ? cdnProxyUrl(u) : u))
+    if (mediaUrls.some((u, i) => u !== input.mediaUrls[i])) {
+      console.log('[instagram] Proxy ảnh imgbb chậm qua images.weserv.nl để Meta tải kịp.')
+    }
 
     const headers = {
       'Content-Type': 'application/json',
@@ -263,14 +288,14 @@ export class InstagramConnector implements SocialConnector {
     }
 
     let containerId: string
-    if (input.mediaUrls.length === 1 && kinds[0] === 'video') {
+    if (mediaUrls.length === 1 && kinds[0] === 'video') {
       // 1 video → đăng dạng Reels (video_url + media_type=REELS)
       containerId = await createContainer({
-        video_url: input.mediaUrls[0],
+        video_url: mediaUrls[0],
         media_type: 'REELS',
         caption: input.caption,
       })
-    } else if (input.mediaUrls.length > 1) {
+    } else if (mediaUrls.length > 1) {
       if (kinds.some((k) => k === 'video')) {
         throw new OrhError(
           'CONTENT_REJECTED',
@@ -281,7 +306,7 @@ export class InstagramConnector implements SocialConnector {
       }
       // Carousel: mỗi ảnh một item container, caption gắn ở carousel cha
       const children: string[] = []
-      for (const image_url of input.mediaUrls) {
+      for (const image_url of mediaUrls) {
         const childId = await createContainer({ image_url, is_carousel_item: true })
         await waitContainerReady(childId)
         children.push(childId)
@@ -294,7 +319,7 @@ export class InstagramConnector implements SocialConnector {
     } else {
       // Step 1: Tạo container
       containerId = await createContainer({
-        image_url: input.mediaUrls[0],
+        image_url: mediaUrls[0],
         caption: input.caption,
       })
     }
