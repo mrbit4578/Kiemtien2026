@@ -80,3 +80,140 @@ describe('TikTokConnector.exchangeCode — parse đúng response của TikTok', 
     )
   })
 })
+
+describe('TikTokConnector.publish — Direct Post (init → chunk PUT → status)', () => {
+  const realFetch = globalThis.fetch
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
+
+  const require2 = createRequire(__filename)
+  const { encrypt } = require2('@orh/crypto')
+  const { OrhError } = require2('@orh/shared')
+
+  function testConnection() {
+    process.env.TOKEN_ENCRYPTION_KEY =
+      'test_key_dai_hon_32_ky_tu_cho_unit_test_1234567890'
+    return { encryptedAccessToken: encrypt('tiktok_test_token') }
+  }
+
+  function mockSequence(specs: Array<{ ok?: boolean; json?: unknown; arrayBuffer?: ArrayBuffer; headers?: Record<string, string> }>, onCall?: (index: number, url: unknown, init: unknown) => void) {
+    let i = 0
+    globalThis.fetch = (async (url: unknown, init: unknown) => {
+      const idx = i
+      const spec = specs[Math.min(i++, specs.length - 1)]
+      onCall?.(idx, url, init)
+      return {
+        ok: spec.ok ?? true,
+        status: (spec.ok ?? true) ? 200 : 400,
+        headers: { get: (k: string) => spec.headers?.[k.toLowerCase()] ?? null },
+        json: async () => spec.json ?? {},
+        arrayBuffer: async () => spec.arrayBuffer ?? new ArrayBuffer(0),
+      } as unknown as Response
+    }) as typeof fetch
+  }
+
+  const VIDEO_URL = 'https://res.cloudinary.com/demo/video/upload/v1/abc.mp4'
+
+  it('không có video → CONTENT_REJECTED, message rõ ràng', async () => {
+    const c = new TikTokConnector()
+    const err = await c
+      .publish({
+        connection: testConnection(),
+        caption: 'caption',
+        mediaUrls: ['https://example.com/a.jpg'],
+        mediaKinds: ['image'],
+      } as never)
+      .catch((e: unknown) => e)
+    assert.ok(err instanceof OrhError)
+    assert.equal((err as { code: string }).code, 'CONTENT_REJECTED')
+    assert.match((err as Error).message, /chỉ đăng được video/)
+  })
+
+  it('full flow: download → init → PUT chunk (Content-Range đúng) → status PUBLISH_COMPLETE → status private', async () => {
+    const seen: Array<{ url: unknown; init: any }> = []
+    const videoBytes = new TextEncoder().encode('fake-mp4-bytes').buffer
+    mockSequence(
+      [
+        { headers: { 'content-length': '14' }, arrayBuffer: videoBytes },
+        {
+          json: {
+            error: { code: 'ok', message: '', log_id: 'log1' },
+            data: { publish_id: 'pub_123', upload_url: 'https://upload.example/put?x=1' },
+          },
+        },
+        { json: {} },
+        {
+          json: { error: { code: 'ok', message: '', log_id: 'log2' }, data: { status: 'PUBLISH_COMPLETE' } },
+        },
+      ],
+      (i, url, init) => seen.push({ url, init }),
+    )
+    const c = new TikTokConnector()
+    const res = await c.publish({
+      connection: testConnection(),
+      caption: 'hello #tiktok',
+      mediaUrls: [VIDEO_URL],
+      mediaKinds: ['video'],
+    } as never)
+    assert.equal(res.platformPostId, 'pub_123')
+    assert.equal(res.status, 'private')
+    assert.match(res.warning ?? '', /Riêng tư/)
+    // init gọi đúng endpoint TikTok
+    assert.match(String(seen[1].url), /open\.tiktokapis\.com\/v2\/post\/publish\/video\/init\//)
+    const initBody = JSON.parse(seen[1].init.body)
+    assert.equal(initBody.post_info.privacy_level, 'SELF_ONLY')
+    assert.equal(initBody.source_info.source, 'FILE_UPLOAD')
+    assert.equal(initBody.source_info.video_size, 14)
+    // chunk PUT: đúng upload_url + Content-Range bytes 0-13/14
+    assert.equal(seen[2].url, 'https://upload.example/put?x=1')
+    assert.equal(seen[2].init.method, 'PUT')
+    assert.equal(seen[2].init.headers['Content-Range'], 'bytes 0-13/14')
+  })
+
+  it('init trả scope_not_authorized → PROVIDER_REAUTH_REQUIRED, hướng dẫn Kết nối lại', async () => {
+    mockSequence([
+      { headers: { 'content-length': '14' }, arrayBuffer: new TextEncoder().encode('x'.repeat(14)).buffer },
+      { json: { error: { code: 'scope_not_authorized', message: 'scope not authorized', log_id: 'l' } } },
+    ])
+    const c = new TikTokConnector()
+    const err = await c
+      .publish({
+        connection: testConnection(),
+        caption: 'c',
+        mediaUrls: [VIDEO_URL],
+        mediaKinds: ['video'],
+      } as never)
+      .catch((e: unknown) => e)
+    assert.ok(err instanceof OrhError)
+    assert.equal((err as { code: string }).code, 'PROVIDER_REAUTH_REQUIRED')
+    assert.match((err as Error).message, /Kết nối lại/)
+  })
+
+  it('init trả unaudited_client_can_only_post_to_private_accounts → PROVIDER_REVIEW_REQUIRED', async () => {
+    mockSequence([
+      { headers: { 'content-length': '14' }, arrayBuffer: new TextEncoder().encode('x'.repeat(14)).buffer },
+      {
+        json: {
+          error: {
+            code: 'unaudited_client_can_only_post_to_private_accounts',
+            message: 'private only',
+            log_id: 'l',
+          },
+        },
+      },
+    ])
+    const c = new TikTokConnector()
+    const err = await c
+      .publish({
+        connection: testConnection(),
+        caption: 'c',
+        mediaUrls: [VIDEO_URL],
+        mediaKinds: ['video'],
+      } as never)
+      .catch((e: unknown) => e)
+    assert.ok(err instanceof OrhError)
+    assert.equal((err as { code: string }).code, 'PROVIDER_REVIEW_REQUIRED')
+    assert.match((err as Error).message, /Riêng tư/)
+  })
+})
