@@ -13,6 +13,7 @@ import {
   Sparkles,
   Filter,
   Pencil,
+  Trash2,
 } from 'lucide-react'
 
 // TODO (backend): model ContentItem hiện chưa có các trường mà UI đang hiển thị:
@@ -95,7 +96,7 @@ function toUiItem(a: ApiContentItem): ContentItem {
 
 export function ContentStudio() {
   const { sessionData, currentStep, startAutoPilot } = useSession()
-  const { items, loading, error, create, approve, publish, updateContent, retryPublish, uploadImages } = useContent()
+  const { items, loading, error, create, approve, publish, updateContent, retryPublish, uploadImages, removeContent, removeMany } = useContent()
   const { connections } = useConnections()
   const activeConnections = useMemo(
     () => connections.filter((c) => c.status === 'active'),
@@ -127,6 +128,8 @@ export function ContentStudio() {
   const [schedMode, setSchedMode] = useState<'now' | 'scheduled'>('now')
   const [schedValue, setSchedValue] = useState('')
   const [assetUrlValue, setAssetUrlValue] = useState('')
+  // Chọn nhiều bài để xóa hàng loạt
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
 
   /** Mở editor sửa lịch/media cho một bài viết, prefill theo dữ liệu hiện tại */
   const openScheduleEditor = (post: ContentItem) => {
@@ -351,6 +354,80 @@ export function ContentStudio() {
     return p.status === activeFilter
   })
 
+  /** Tổng hợp số lượng bài theo từng trạng thái — hiển thị trên nút lọc */
+  const statusCounts = useMemo(() => {
+    const c: Record<string, number> = {
+      all: posts.length,
+      draft: 0,
+      pending_approval: 0,
+      approved: 0,
+      published: 0,
+      failed: 0,
+    }
+    for (const p of posts) c[p.status] = (c[p.status] ?? 0) + 1
+    return c
+  }, [posts])
+
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+
+  const toggleSelectAllFiltered = () =>
+    setSelectedIds((prev) =>
+      prev.length === filteredPosts.length && filteredPosts.length > 0
+        ? []
+        : filteredPosts.map((p) => p.id),
+    )
+
+  const changeFilter = (id: string) => {
+    setActiveFilter(id)
+    setSelectedIds([]) // đổi bộ lọc → bỏ chọn cũ để tránh nhầm
+  }
+
+  const confirmDeleteMessage = (count: number, title?: string) =>
+    `Xóa ${title ? `bài viết "${title}"` : `${count} bài viết đã chọn`}?` +
+    '\nBài đã xuất bản chỉ bị xóa khỏi Content Studio (bài đăng trên mạng xã hội vẫn giữ nguyên).' +
+    '\nHành động này không thể hoàn tác.'
+
+  /** Xóa 1 bài (nút thùng rác trên thẻ) */
+  const handleDeleteOne = (post: ContentItem) => {
+    if (!window.confirm(confirmDeleteMessage(1, post.title))) return
+    if (DEMO_MODE) {
+      setDemoPosts((prev) => prev.filter((p) => p.id !== post.id))
+      setSelectedIds((prev) => prev.filter((x) => x !== post.id))
+      setOpOk('Đã xóa bài viết.')
+      return
+    }
+    runOp(post.id, () => removeContent(post.id), 'Đã xóa bài viết.').then(() =>
+      setSelectedIds((prev) => prev.filter((x) => x !== post.id)),
+    )
+  }
+
+  /** Xóa hàng loạt các bài đã chọn */
+  const handleDeleteMany = async () => {
+    if (selectedIds.length === 0) return
+    if (!window.confirm(confirmDeleteMessage(selectedIds.length))) return
+    if (DEMO_MODE) {
+      const n = selectedIds.length
+      setDemoPosts((prev) => prev.filter((p) => !selectedIds.includes(p.id)))
+      setSelectedIds([])
+      setOpOk(`Đã xóa ${n} bài viết.`)
+      return
+    }
+    setBusyId('bulk-delete')
+    setOpError(null)
+    setOpOk(null)
+    try {
+      const n = selectedIds.length
+      await removeMany(selectedIds)
+      setSelectedIds([])
+      setOpOk(`Đã xóa ${n} bài viết.`)
+    } catch (err) {
+      setOpError(err instanceof Error ? err.message : 'Xóa bài viết thất bại.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Top Banner */}
@@ -415,16 +492,26 @@ export function ContentStudio() {
         ].map((f) => (
           <button
             key={f.id}
-            onClick={() => setActiveFilter(f.id)}
+            onClick={() => changeFilter(f.id)}
             className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
               activeFilter === f.id
                 ? 'bg-white/15 text-white font-bold border border-white/20'
                 : 'bg-dark-850 text-slate-400 hover:text-white border border-white/5'
             }`}
           >
-            {f.label}
+            {f.label} <span className="font-mono opacity-80">({statusCounts[f.id] ?? 0})</span>
           </button>
         ))}
+        <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none hover:text-white">
+          <input
+            type="checkbox"
+            checked={filteredPosts.length > 0 && selectedIds.length === filteredPosts.length}
+            onChange={toggleSelectAllFiltered}
+            title="Chọn tất cả bài trong danh sách đang hiển thị"
+            className="w-4 h-4 accent-red-500 cursor-pointer"
+          />
+          Chọn tất cả
+        </label>
         {!DEMO_MODE && loading && (
           <span className="text-xs text-slate-400">Đang tải từ API...</span>
         )}
@@ -433,6 +520,29 @@ export function ContentStudio() {
       {!DEMO_MODE && error && (
         <div className="p-4 rounded-xl bg-brand-amber/10 border border-brand-amber/30 text-xs text-slate-300">
           <strong className="text-white">Không tải được danh sách content:</strong> {error}
+        </div>
+      )}
+
+      {/* Bulk actions — chỉ hiện khi có bài được chọn */}
+      {selectedIds.length > 0 && (
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-red-500/10 border border-red-500/30">
+          <span className="text-xs text-red-200 font-semibold">
+            Đã chọn {selectedIds.length} bài viết
+          </span>
+          <button
+            onClick={handleDeleteMany}
+            disabled={busyId === 'bulk-delete'}
+            className="px-3.5 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>{busyId === 'bulk-delete' ? 'Đang xóa...' : 'Xóa đã chọn'}</span>
+          </button>
+          <button
+            onClick={() => setSelectedIds([])}
+            className="px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white border border-white/10 hover:border-white/25 transition-all"
+          >
+            Bỏ chọn hết
+          </button>
         </div>
       )}
 
@@ -488,6 +598,13 @@ export function ContentStudio() {
             >
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(post.id)}
+                    onChange={() => toggleSelect(post.id)}
+                    title="Chọn bài viết này để xóa hàng loạt"
+                    className="w-4 h-4 accent-red-500 cursor-pointer shrink-0"
+                  />
                   <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded border uppercase tracking-wider ${statusBadge.bg}`}>
                     {statusBadge.label}
                   </span>
@@ -689,6 +806,15 @@ export function ContentStudio() {
                       <CheckCircle2 className="w-4 h-4" /> Đã đăng thành công
                     </span>
                   )}
+
+                  <button
+                    onClick={() => handleDeleteOne(post)}
+                    disabled={busy}
+                    title="Xóa bài viết này"
+                    className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/30 transition-all disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             </div>

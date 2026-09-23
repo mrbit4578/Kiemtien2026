@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Session,
@@ -469,5 +470,43 @@ export class ContentController {
       ip: req.ip,
     })
     return updated
+  }
+
+  /**
+   * DELETE /content/:id — xóa bài viết khỏi Content Studio.
+   * - Xóa luôn các job publish liên quan (pending/failed/dead_letter/done).
+   * - Từ chối nếu đang có job 'running' (worker đang xử lý) để tránh
+   *   xóa giữa chừng gây trạng thái dở dang.
+   * - Bài đã xuất bản: chỉ xóa bản ghi local, bài đăng trên mạng xã hội
+   *   vẫn giữ nguyên (UI sẽ cảnh báo trước khi xóa).
+   */
+  @Delete(':id')
+  @HttpCode(200)
+  async deleteContent(
+    @Param('id') id: string,
+    @Session() session: any,
+    @Req() req: Request,
+  ) {
+    const workspaceId = requireWorkspaceId(session)
+    const item = await this.prisma.contentItem.findFirst({ where: { id, workspaceId } })
+    if (!item) throw new NotFoundException('Không tìm thấy content.')
+    const running = await this.prisma.job.count({
+      where: { contentItemId: item.id, status: 'running' },
+    })
+    if (running > 0) {
+      throw new ConflictException('Bài viết đang được xử lý, không thể xóa lúc này. Hãy thử lại sau.')
+    }
+    await this.prisma.job.deleteMany({ where: { contentItemId: item.id } })
+    await this.prisma.contentItem.delete({ where: { id: item.id } })
+    await this.audit.log({
+      workspaceId,
+      actorId: workspaceId,
+      action: 'content_deleted',
+      entityType: 'content',
+      targetId: item.id,
+      result: 'success',
+      ip: req.ip,
+    })
+    return { deleted: true, id: item.id }
   }
 }

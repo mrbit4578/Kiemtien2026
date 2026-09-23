@@ -195,7 +195,35 @@ export function useContent() {
     return res.urls
   }, [])
 
-  return { items, loading, error, refresh, create, approve, publish, updateContent, retryPublish, uploadImages }
+  /** Xóa 1 bài viết (kèm job publish liên quan). Backend từ chối nếu job đang running. */
+  const removeContent = useCallback(
+    async (id: string) => {
+      await api.del<{ deleted: boolean }>(`/content/${id}`)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  /** Xóa nhiều bài viết (gọi tuần tự để backend xử lý từng cái + audit đầy đủ). */
+  const removeMany = useCallback(
+    async (ids: string[]) => {
+      const failed: string[] = []
+      for (const id of ids) {
+        try {
+          await api.del<{ deleted: boolean }>(`/content/${id}`)
+        } catch {
+          failed.push(id)
+        }
+      }
+      await refresh()
+      if (failed.length > 0) {
+        throw new Error(`Xóa thất bại ${failed.length}/${ids.length} bài.`)
+      }
+    },
+    [refresh],
+  )
+
+  return { items, loading, error, refresh, create, approve, publish, updateContent, retryPublish, uploadImages, removeContent, removeMany }
 }
 
 /* ─── AI Pro ─────────────────────────────────────────────────────────────── */
