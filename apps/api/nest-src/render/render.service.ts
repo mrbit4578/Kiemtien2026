@@ -258,6 +258,10 @@ export class RenderService implements OnModuleInit {
     await this.prisma.renderJob.update({ where: { id: jobId }, data: { status: 'running', progress: 0 } })
 
     try {
+      // Dọn thư mục job trước mỗi lần chạy: lần chạy trước có thể bị
+      // restart/deploy giết giữa chừng, để lại project Concat cũ khiến
+      // lần chạy lại fail với "a Concat project already exists".
+      await fs.rm(jobDir, { recursive: true, force: true })
       await fs.mkdir(assetsDir, { recursive: true })
       await fs.mkdir(projectsDir, { recursive: true })
       await fs.mkdir(exportsDir, { recursive: true })
