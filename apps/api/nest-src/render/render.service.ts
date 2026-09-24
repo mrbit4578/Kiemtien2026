@@ -18,6 +18,7 @@ import {
   BadRequestException,
   NotFoundException,
   ServiceUnavailableException,
+  OnModuleInit,
 } from '@nestjs/common'
 import { createWriteStream, existsSync, promises as fs } from 'fs'
 import { join, resolve, basename, extname } from 'path'
@@ -127,7 +128,7 @@ const ASSET_TIMEOUT_MS = 120_000
 const EXPORT_TIMEOUT_MS = parseInt(process.env['CONCAT_EXPORT_TIMEOUT_MS'] ?? '', 10) || 6 * 3600 * 1000
 
 @Injectable()
-export class RenderService {
+export class RenderService implements OnModuleInit {
   private readonly logger = new Logger(RenderService.name)
   /** Hàng đợi serialize: Concat từ chối export thứ hai khi đang bận (Busy). */
   private queue: Promise<void> = Promise.resolve()
@@ -136,6 +137,28 @@ export class RenderService {
     private readonly concat: ConcatClient,
     private readonly prisma: PrismaService,
   ) {}
+
+  /**
+   * Startup recovery: job nào kẹt ở 'running' do API restart/deploy giữa
+   * chừng (hàng đợi trong bộ nhớ mất, DB vẫn ghi running) thì đưa về
+   * 'queued' để chạy lại từ đầu. Không có bước này, job kẹt vĩnh viễn.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      const stuck = await this.prisma.renderJob.findMany({ where: { status: 'running' } })
+      for (const job of stuck) {
+        await this.prisma.renderJob.update({
+          where: { id: job.id },
+          data: { status: 'queued', progress: 0, error: null },
+        })
+        this.enqueue(job.id)
+        this.logger.warn(`Render job ${job.id} kẹt ở 'running' lúc restart — đã đưa về hàng đợi.`)
+      }
+      if (stuck.length > 0) this.logger.log(`Đã phục hồi ${stuck.length} render job kẹt.`)
+    } catch (err) {
+      this.logger.error(`Startup recovery render jobs thất bại: ${(err as Error).message}`)
+    }
+  }
 
   // ─── public API ──────────────────────────────────────────────────────────
 
