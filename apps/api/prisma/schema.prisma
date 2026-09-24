@@ -37,6 +37,7 @@ model Workspace {
   connections Connection[]
   aiConnections AiConnection[]
   chatSessions ChatSession[]
+  videoProjects VideoProject[]
   contentItems ContentItem[]
   documents   Document[]
   entities    Entity[]
@@ -210,6 +211,99 @@ model ChatMessage {
 
   @@index([sessionId, createdAt])
   @@map("chat_messages")
+}
+
+// ─── Video Faceless (pipeline từ tín hiệu viral → sản phẩm gốc) ───────────
+// Spec: docs/faceless-video-system.md
+// Mỗi project là một gói sản phẩm: brief + script + evidence + rights +
+// disclosure + edit + receipt + correction log.
+model VideoProject {
+  id             String   @id @default(cuid())
+  workspaceId    String
+  title          String
+  series         String?  // format series lặp lại, VD "3 phút kiểm chứng"
+  viralSourceUrl String?  // URL video viral THAM KHẢO — chỉ phân tích, không tải
+  sourceNote     String?  @db.Text // phân tích nguồn: chủ đề/hook/claim/format
+  stage          String   @default("intake") // intake|analysis|angle|research|script|assets|voice|edit|qa|publish
+  angle          String?  @db.Text // góc mới đã chọn (qua G0)
+  briefJson      String?  @db.Text // JSON brief từ tool video_brief
+  script         String?  @db.Text // kịch bản đã chốt
+  caption        String?  @db.Text
+  publishNotes   String?  @db.Text // disclosure: affiliate/AI-label/nhạc/nguồn
+  riskScore      Int?
+  riskBreakdown  String?  @db.Text // JSON {c,p,l,a,m,h}
+  gatesJson      String?  @db.Text // JSON {G1:{pass,note},...}
+  contentItemId  String?  // link sang ContentItem khi gửi sang Content Studio
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assets    VideoAsset[]
+  claims    VideoClaim[]
+  aiEntries VideoAiEntry[]
+
+  @@index([workspaceId, updatedAt])
+  @@map("video_projects")
+}
+
+// Rights ledger: mỗi asset một dòng, pending/conditional không được publish.
+model VideoAsset {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  assetType   String   // video|image|music|voice|font|template|screenshot|logo
+  sourceUrl   String?
+  owner       String?
+  rightsBasis String   // original|license|public_domain|permission|platform_library|quotation_review
+  scope       String?
+  proof       String?  @db.Text // hợp đồng/email/receipt/license page
+  status      String   @default("pending") // cleared|conditional|pending|reject
+  createdAt   DateTime @default(now())
+
+  project VideoProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("video_assets")
+}
+
+// Claim ledger: mỗi claim có thể kiểm chứng một dòng.
+model VideoClaim {
+  id              String   @id @default(cuid())
+  projectId       String
+  claimText       String   @db.Text
+  claimType       String   // fact|interpretation|forecast|allegation|opinion
+  riskLevel       String   // low|medium|high|critical
+  primarySource   String?  @db.Text
+  secondarySource String?  @db.Text
+  confidence      String   // confirmed|probable|disputed|unverified
+  status          String   @default("open") // open|corrected|withdrawn
+  createdAt       DateTime @default(now())
+
+  project VideoProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("video_claims")
+}
+
+// AI register: phân loại A0-A4, A4 không consent mặc định REJECT.
+model VideoAiEntry {
+  id            String   @id @default(cuid())
+  projectId     String
+  assetName     String
+  tool          String
+  inputSource   String?
+  outputUse     String?
+  category      String   // A0|A1|A2|A3|A4
+  realPerson    Boolean  @default(false)
+  labelRequired Boolean  @default(false)
+  labelApplied  Boolean  @default(false)
+  consentStatus String?  // none|obtained|na
+  createdAt     DateTime @default(now())
+
+  project VideoProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("video_ai_entries")
 }
 
 // ─── Kho tri thức RAG ─────────────────────────────────────────────────────

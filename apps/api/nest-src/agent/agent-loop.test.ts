@@ -182,12 +182,22 @@ describe('buildAgentSystemPrompt', () => {
     assert.match(p, /KHÔNG hứa hẹn thu nhập chắc chắn/)
   })
 
-  it('bắt buộc final answer tách 2 khối: KỊCH BẢN QUAY + CAPTION ĐĂNG BÀI', () => {
+  it('bắt buộc final answer tách 3 khối: KỊCH BẢN QUAY + CAPTION ĐĂNG BÀI + LƯU Ý ĐĂNG BÀI', () => {
     const p = buildAgentSystemPrompt(['web_search'])
     assert.match(p, /KỊCH BẢN QUAY/)
     assert.match(p, /CAPTION ĐĂNG BÀI/)
+    assert.match(p, /LƯU Ý ĐĂNG BÀI/)
     // Caption đăng bài cấm dấu vết kịch bản thô
     assert.match(p, /TUYỆT ĐỐI KHÔNG dùng \*\*/)
+  })
+
+  it('có doctrine video faceless: original-first, evidence-first, permission-first', () => {
+    const p = buildAgentSystemPrompt(['web_search'])
+    assert.match(p, /Original-first/)
+    assert.match(p, /Evidence-first/)
+    assert.match(p, /Permission-first/)
+    assert.match(p, /video_brief/)
+    assert.match(p, /video_risk_score/)
   })
 })
 

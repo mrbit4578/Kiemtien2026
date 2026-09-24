@@ -19,6 +19,14 @@ import type {
   RagDocument,
   RagQueryBody,
   RagQueryResult,
+  VideoProjectSummary,
+  VideoProjectDetail,
+  VideoAsset,
+  VideoClaim,
+  VideoAiEntry,
+  GateState,
+  RiskResult,
+  PublishReadiness,
 } from './types'
 
 function toMessage(err: unknown): string {
@@ -434,4 +442,137 @@ export async function deleteRagDocument(id: string): Promise<{ ok: boolean }> {
 /** Hỏi đáp trên kho tri thức với 1 trong 5 kiến trúc RAG. */
 export async function queryRag(body: RagQueryBody): Promise<RagQueryResult> {
   return api.post<RagQueryResult>('/rag/query', body)
+}
+
+/* ─── Video Faceless ───────────────────────────────────────────── */
+
+export function useVideoProjects() {
+  const [projects, setProjects] = useState<VideoProjectSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setProjects(await api.get<VideoProjectSummary[]>('/video/projects'))
+    } catch (err) {
+      setError(toMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  const create = useCallback(
+    async (input: { title: string; series?: string; viralSourceUrl?: string }) => {
+      const p = await api.post<VideoProjectSummary>('/video/projects', input)
+      await refresh()
+      return p
+    },
+    [refresh],
+  )
+
+  const remove = useCallback(
+    async (id: string) => {
+      await api.del(`/video/projects/${id}`)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  return { projects, loading, error, refresh, create, remove }
+}
+
+export async function getVideoProject(id: string): Promise<VideoProjectDetail> {
+  return api.get<VideoProjectDetail>(`/video/projects/${id}`)
+}
+
+export async function updateVideoProject(
+  id: string,
+  patch: Partial<VideoProjectDetail>,
+): Promise<VideoProjectDetail> {
+  return api.patch<VideoProjectDetail>(`/video/projects/${id}`, patch)
+}
+
+export async function updateVideoGates(
+  id: string,
+  gates: Record<string, GateState>,
+): Promise<{ ok: boolean; gatesJson: string | null }> {
+  return api.patch(`/video/projects/${id}/gates`, { gates })
+}
+
+export async function scoreVideoRisk(
+  id: string,
+  input: { c: number; p: number; l: number; a: number; m: number; h: number; a4NoConsent?: boolean; criticalHealthClaimUnverified?: boolean },
+): Promise<RiskResult> {
+  return api.post<RiskResult>(`/video/projects/${id}/risk-score`, input)
+}
+
+export async function getVideoReadiness(id: string): Promise<PublishReadiness> {
+  return api.get<PublishReadiness>(`/video/projects/${id}/readiness`)
+}
+
+export async function sendVideoToContentStudio(id: string): Promise<{ ok: boolean; contentItemId: string }> {
+  return api.post(`/video/projects/${id}/to-content-studio`)
+}
+
+export async function addVideoAsset(
+  projectId: string,
+  input: { name: string; assetType: string; sourceUrl?: string; owner?: string; rightsBasis: string; scope?: string; proof?: string },
+): Promise<VideoAsset> {
+  return api.post<VideoAsset>(`/video/projects/${projectId}/assets`, input)
+}
+
+export async function setVideoAssetStatus(
+  projectId: string,
+  assetId: string,
+  status: string,
+): Promise<VideoAsset> {
+  return api.patch<VideoAsset>(`/video/projects/${projectId}/assets/${assetId}`, { status })
+}
+
+export async function deleteVideoAsset(projectId: string, assetId: string): Promise<{ ok: boolean }> {
+  return api.del(`/video/projects/${projectId}/assets/${assetId}`)
+}
+
+export async function addVideoClaim(
+  projectId: string,
+  input: { claimText: string; claimType: string; riskLevel: string; primarySource?: string; secondarySource?: string; confidence: string },
+): Promise<VideoClaim> {
+  return api.post<VideoClaim>(`/video/projects/${projectId}/claims`, input)
+}
+
+export async function setVideoClaimStatus(
+  projectId: string,
+  claimId: string,
+  status: string,
+): Promise<VideoClaim> {
+  return api.patch<VideoClaim>(`/video/projects/${projectId}/claims/${claimId}`, { status })
+}
+
+export async function deleteVideoClaim(projectId: string, claimId: string): Promise<{ ok: boolean }> {
+  return api.del(`/video/projects/${projectId}/claims/${claimId}`)
+}
+
+export async function addVideoAiEntry(
+  projectId: string,
+  input: { assetName: string; tool: string; inputSource?: string; outputUse?: string; category: string; realPerson?: boolean; consentStatus?: string },
+): Promise<VideoAiEntry> {
+  return api.post<VideoAiEntry>(`/video/projects/${projectId}/ai-entries`, input)
+}
+
+export async function setVideoAiLabel(
+  projectId: string,
+  entryId: string,
+  labelApplied: boolean,
+): Promise<VideoAiEntry> {
+  return api.patch<VideoAiEntry>(`/video/projects/${projectId}/ai-entries/${entryId}`, { labelApplied })
+}
+
+export async function deleteVideoAiEntry(projectId: string, entryId: string): Promise<{ ok: boolean }> {
+  return api.del(`/video/projects/${projectId}/ai-entries/${entryId}`)
 }

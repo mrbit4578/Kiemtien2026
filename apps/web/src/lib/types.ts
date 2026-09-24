@@ -217,3 +217,131 @@ export interface ChatHistoryMessage {
 export interface ChatSessionDetail extends ChatSession {
   messages: ChatHistoryMessage[]
 }
+
+/* ─── Video Faceless ───────────────────────────────────────────── */
+
+export const VIDEO_STAGES = [
+  'intake',
+  'analysis',
+  'angle',
+  'research',
+  'script',
+  'assets',
+  'voice',
+  'edit',
+  'qa',
+  'publish',
+] as const
+
+export const VIDEO_STAGE_LABELS: Record<string, string> = {
+  intake: 'Tiếp nhận',
+  analysis: 'Phân tích nguồn',
+  angle: 'Chọn góc',
+  research: 'Nghiên cứu',
+  script: 'Kịch bản',
+  assets: 'Tài sản',
+  voice: 'Giọng đọc',
+  edit: 'Dựng',
+  qa: 'Kiểm duyệt QA',
+  publish: 'Xuất bản & học',
+}
+
+export const GATE_LABELS: Record<string, string> = {
+  G1: 'Source — đã lưu URL, owner, bản phân tích',
+  G2: 'Rights — mọi asset commercial-use đã cleared',
+  G3: 'Originality — qua G0, có giá trị độc lập khi bỏ nguồn',
+  G4: 'Accuracy — claim critical có nguồn, wording đúng',
+  G5: 'AI/privacy — consent, label, không impersonation',
+  G6: 'Platform — đạt rule từng nền tảng mục tiêu',
+  G7: 'Commercial — sponsor/affiliate đã disclose',
+  G8: 'Accessibility — subtitle đúng, đọc được trên mobile',
+}
+
+export interface VideoProjectSummary {
+  id: string
+  title: string
+  series: string | null
+  stage: string
+  riskScore: number | null
+  assetCount: number
+  claimCount: number
+  aiEntryCount: number
+  contentItemId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface VideoAsset {
+  id: string
+  projectId: string
+  name: string
+  assetType: string
+  sourceUrl: string | null
+  owner: string | null
+  rightsBasis: string
+  scope: string | null
+  proof: string | null
+  status: 'cleared' | 'conditional' | 'pending' | 'reject'
+  createdAt: string
+}
+
+export interface VideoClaim {
+  id: string
+  projectId: string
+  claimText: string
+  claimType: string
+  riskLevel: string
+  primarySource: string | null
+  secondarySource: string | null
+  confidence: string
+  status: 'open' | 'corrected' | 'withdrawn'
+  createdAt: string
+}
+
+export interface VideoAiEntry {
+  id: string
+  projectId: string
+  assetName: string
+  tool: string
+  inputSource: string | null
+  outputUse: string | null
+  category: 'A0' | 'A1' | 'A2' | 'A3' | 'A4'
+  realPerson: boolean
+  labelRequired: boolean
+  labelApplied: boolean
+  consentStatus: string | null
+  createdAt: string
+}
+
+export interface VideoProjectDetail extends VideoProjectSummary {
+  viralSourceUrl: string | null
+  sourceNote: string | null
+  angle: string | null
+  briefJson: string | null
+  script: string | null
+  caption: string | null
+  publishNotes: string | null
+  riskBreakdown: string | null
+  gatesJson: string | null
+  assets: VideoAsset[]
+  claims: VideoClaim[]
+  aiEntries: VideoAiEntry[]
+}
+
+export interface RiskResult {
+  score: number
+  breakdown: { c: number; p: number; l: number; a: number; m: number; h: number }
+  decision: string
+  veto: string | null
+}
+
+export interface GateState {
+  pass: boolean
+  note?: string
+}
+
+export interface PublishReadiness {
+  ready: boolean
+  blockingAssets: Array<{ id: string; name: string; status: string }>
+  riskyClaims: Array<{ id: string; claimText: string }>
+}

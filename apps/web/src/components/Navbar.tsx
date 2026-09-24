@@ -14,7 +14,8 @@ import {
   DollarSign,
   KeyRound,
   LogOut,
-  Map
+  Map,
+  Clapperboard
 } from 'lucide-react'
 
 import { useSession } from '../context/SessionContext'
@@ -28,6 +29,7 @@ export function Navbar() {
     { href: '/ai-chat', label: 'AI Chat Pro', icon: Sparkles, badge: 'Pro' },
     { href: '/knowledge', label: 'Kho tri thức', icon: BookOpen, badge: 'RAG' },
     { href: '/ai-copilot', label: 'AI Copilot (ReAct)', icon: Bot, badge: 'Agent' },
+    { href: '/video-faceless', label: 'Video Faceless', icon: Clapperboard, badge: 'Mới' },
     { href: '/content', label: 'Content Studio', icon: CalendarClock },
     { href: '/campaigns', label: 'Chiến dịch Affiliate', icon: TrendingUp },
     { href: '/settings/ai', label: 'AI Pro', icon: KeyRound },

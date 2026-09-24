@@ -13,6 +13,7 @@ import { RagModule } from './rag/rag.module'
 import { AgentModule } from './agent/agent.module'
 import { CanvaModule } from './canva/canva.module'
 import { RenderModule } from './render/render.module'
+import { VideoModule } from './video/video.module'
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { RenderModule } from './render/render.module'
     AgentModule,
     CanvaModule,
     RenderModule,
+    VideoModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

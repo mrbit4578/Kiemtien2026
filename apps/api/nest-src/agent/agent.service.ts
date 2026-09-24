@@ -16,6 +16,7 @@ import {
   type ChatBackend,
 } from './agent-loop'
 import { buildBuiltinTools, makeRenderVideoTool, makeRenderStatusTool, makeRenderCancelTool } from './builtin-tools'
+import { videoTools } from './video-tools'
 import type { AgentRunDto } from './dto'
 import { RenderService } from '../render/render.service'
 
@@ -73,6 +74,10 @@ export class AgentService {
         return { id: job.id, status: job.status }
       }),
     )
+    // video faceless pipeline: brief (G0 originality) / script (claim gate) / risk score.
+    for (const tool of videoTools) {
+      registry.register(tool)
+    }
     return registry
   }
 
