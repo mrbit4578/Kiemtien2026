@@ -147,6 +147,7 @@ model RenderJob {
   concatJob   String? // job id của Concat ("j1", "j2", ...) để export.cancel
   outputPath  String? // file MP4 trên disk của worker
   error       String?
+  attempts    Int      @default(0) // số lần runJob đã thử (chống lặp vô hạn khi crash-loop như OOM)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

@@ -342,3 +342,31 @@ export function buildBuiltinTools(deps: {
     makeListConnectedAiTool(deps.listConnectedAi),
   ]
 }
+
+/** Tool hủy một job render đang xếp hàng/chạy — dùng để dừng job kẹt hoặc không cần nữa. */
+export function makeRenderCancelTool(
+  cancel: (jobId: string) => Promise<{ id: string; status: string }>,
+): ToolDefinition {
+  return {
+    name: 'render_cancel',
+    description:
+      'Hủy một job render video đang xếp hàng (queued) hoặc đang chạy (running). ' +
+      'Dùng khi người dùng muốn dừng video đang render, hoặc khi job kẹt cần dừng để tạo lại.',
+    parameters: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'ID job render cần hủy.' },
+      },
+      required: ['jobId'],
+      additionalProperties: false,
+    },
+    execute: async (args) => {
+      try {
+        const job = await cancel(args['jobId'] as string)
+        return `Đã hủy job render ${job.id} (trạng thái: ${job.status}).`
+      } catch (err) {
+        return `Không hủy được job render: ${(err as Error).message}`
+      }
+    },
+  }
+}

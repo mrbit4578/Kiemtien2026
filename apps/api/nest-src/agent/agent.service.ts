@@ -14,7 +14,7 @@ import {
   type AgentMessage,
   type ChatBackend,
 } from './agent-loop'
-import { buildBuiltinTools, makeRenderVideoTool, makeRenderStatusTool } from './builtin-tools'
+import { buildBuiltinTools, makeRenderVideoTool, makeRenderStatusTool, makeRenderCancelTool } from './builtin-tools'
 import type { AgentRunDto } from './dto'
 import { RenderService } from '../render/render.service'
 
@@ -63,6 +63,13 @@ export class AgentService {
           : await this.renderService.listJobs(workspaceId, 10)
         const base = (process.env.API_URL || '').replace(/\/+$/, '')
         return { jobs, downloadUrl: (id: string) => `${base}/render/jobs/${id}/file` }
+      }),
+    )
+    // render_cancel: dừng job đang queued/running (vd job kẹt, OOM-loop).
+    registry.register(
+      makeRenderCancelTool(async (jobId: string) => {
+        const job = await this.renderService.cancelJob(workspaceId, jobId)
+        return { id: job.id, status: job.status }
       }),
     )
     return registry

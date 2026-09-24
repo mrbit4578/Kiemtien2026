@@ -250,6 +250,18 @@ export class RenderService implements OnModuleInit {
   private async runJob(jobId: string): Promise<void> {
     const row = await this.prisma.renderJob.findUnique({ where: { id: jobId } })
     if (!row || row.status !== 'queued') return // đã bị hủy khi đang xếp hàng
+    // Chống crash-loop vô hạn (vd OOM giết container, recovery chạy lại mãi):
+    // quá 3 lần thử thì đánh failed hẳn với lỗi rõ ràng.
+    const attempts = (row.attempts ?? 0) + 1
+    if (attempts > 3) {
+      await this.prisma.renderJob.update({
+        where: { id: jobId },
+        data: { status: 'failed', error: 'Job thất bại sau 3 lần thử (nghi hết RAM khi render — cần nâng cấp instance).', progress: 0 },
+      })
+      this.logger.warn(`Render job ${jobId} vượt quá 3 lần thử — đánh failed, không chạy lại.`)
+      return
+    }
+    await this.prisma.renderJob.update({ where: { id: jobId }, data: { attempts } })
     const spec = JSON.parse(row.specJson) as RenderSpec
     const jobDir = join(this.concat.workDir, 'jobs', jobId)
     const assetsDir = join(jobDir, 'assets')
