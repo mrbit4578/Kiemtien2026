@@ -18,6 +18,11 @@ fi
 
 cd "$(dirname "$0")/.."
 
+# Tự phục hồi migration từng bị fail giữa chừng (vd sai tên bảng ở lần deploy
+# trước): đánh dấu rolled-back để lần deploy này apply lại bản đã sửa.
+# `|| true` vì migration có thể không ở trạng thái failed → resolve báo lỗi, bỏ qua.
+pnpm exec prisma migrate resolve --rolled-back "2026092402_render_attempts" --schema prisma/schema.prisma 2>/dev/null || true
+
 ATTEMPTS=5
 SLEEP_SECS=20
 i=1
