@@ -70,7 +70,11 @@ describe('video auto-build', () => {
   it('G0 FAIL → từ chối, không tạo project', async () => {
     const prisma = basePrisma()
     let created = 0
-    prisma.videoProject.create = async () => { created++; return { id: 'p1' } }
+    const origCreate = prisma.videoProject.create
+    prisma.videoProject.create = async (args: any) => {
+      created++
+      return origCreate(args)
+    }
     const bad = JSON.parse(GOOD_JSON)
     bad.originality.o2 = false
     const svc = makeService(prisma, async () => ({ content: JSON.stringify(bad) }))
