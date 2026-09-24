@@ -188,6 +188,43 @@ describe('TikTokConnector.publish — Direct Post (init → chunk PUT → status
     assert.equal(seen[2].init.headers['Content-Range'], 'bytes 0-13/14')
   })
 
+  it('TIKTOK_PRIVACY_LEVEL=PUBLIC_TO_EVERYONE → init dùng public, status published (dùng sau khi app được duyệt)', async () => {
+    const seen: Array<{ url: unknown; init: any }> = []
+    const videoBytes = new TextEncoder().encode('fake-mp4-bytes').buffer
+    process.env.TIKTOK_PRIVACY_LEVEL = 'PUBLIC_TO_EVERYONE'
+    try {
+      mockSequence(
+        [
+          { headers: { 'content-length': '14' }, arrayBuffer: videoBytes },
+          {
+            json: {
+              error: { code: 'ok', message: '', log_id: 'log1' },
+              data: { publish_id: 'pub_pub', upload_url: 'https://upload.example/put?x=1' },
+            },
+          },
+          { json: {} },
+          {
+            json: { error: { code: 'ok', message: '', log_id: 'log2' }, data: { status: 'PUBLISH_COMPLETE' } },
+          },
+        ],
+        (i, url, init) => seen.push({ url, init }),
+      )
+      const c = new TikTokConnector()
+      const res = await c.publish({
+        connection: testConnection(),
+        caption: 'public video',
+        mediaUrls: [VIDEO_URL],
+        mediaKinds: ['video'],
+      } as never)
+      const initBody = JSON.parse(seen[1].init.body)
+      assert.equal(initBody.post_info.privacy_level, 'PUBLIC_TO_EVERYONE')
+      assert.equal(res.status, 'published')
+      assert.match(res.warning ?? '', /công khai/)
+    } finally {
+      delete process.env.TIKTOK_PRIVACY_LEVEL
+    }
+  })
+
   it('init trả scope_not_authorized → PROVIDER_REAUTH_REQUIRED, hướng dẫn Kết nối lại', async () => {
     mockSequence([
       { headers: { 'content-length': '14' }, arrayBuffer: new TextEncoder().encode('x'.repeat(14)).buffer },

@@ -46,7 +46,7 @@ export const TIKTOK_MANIFEST: PermissionManifest = {
       sensitivityLevel: 'sensitive',
     },
   ],
-  notes: 'Direct Post đã implement (init -> chunk PUT 10MB -> poll status). Product "Content Posting API" + Direct Post đã bật cho cả Production và Sandbox (2026-09-23); scope authorize gồm user.info.basic + video.publish. Token cấp trước thời điểm này phải Kết nối lại. App chưa audit → video bắt buộc SELF_ONLY (private); tài khoản public bị chặn ở bước init. Muốn đăng công khai phải chờ TikTok audit & duyệt app.',
+  notes: 'Direct Post đã implement (init -> chunk PUT 10MB -> poll status). Product "Content Posting API" + Direct Post đã bật cho cả Production và Sandbox (2026-09-23); scope authorize gồm user.info.basic + video.publish. Token cấp trước thời điểm này phải Kết nối lại. App chưa audit → video bắt buộc SELF_ONLY (private); tài khoản public bị chặn ở bước init. Khi TikTok duyệt app xong: đặt env TIKTOK_PRIVACY_LEVEL=PUBLIC_TO_EVERYONE trên Render rồi redeploy — video sẽ đăng công khai ngay, không còn bước thủ công.',
 }
 
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize'
@@ -57,6 +57,25 @@ const TIKTOK_API_BASE = 'https://open.tiktokapis.com'
 const TIKTOK_CHUNK_SIZE = 10 * 1024 * 1024
 /** File <= 64MB: upload 1 chunk duy nhất (chunk_size = cả file). */
 const TIKTOK_SINGLE_SHOT_MAX = 64 * 1024 * 1024
+
+/** Mức riêng tư hợp lệ cho Direct Post. */
+export type TiktokPrivacyLevel = 'SELF_ONLY' | 'PUBLIC_TO_EVERYONE'
+
+/**
+ * Mức riêng tư dùng khi đăng video qua Direct Post.
+ *
+ * - Mặc định 'SELF_ONLY': bắt buộc khi app chưa qua audit TikTok — video đăng
+ *   ở chế độ riêng tư, tài khoản TikTok phải để Private lúc đăng, và phải mở
+ *   từng video sang Mọi người bằng tay (4 bước thủ công).
+ * - 'PUBLIC_TO_EVERYONE': CHỈ đặt khi app đã được TikTok duyệt. Khi đó video
+ *   đăng lên công khai ngay — không còn bước thủ công nào.
+ *
+ * Cách bật sau khi audit pass: Render dashboard → Environment →
+ * TIKTOK_PRIVACY_LEVEL=PUBLIC_TO_EVERYONE → redeploy (không cần sửa code).
+ */
+export function resolveTiktokPrivacyLevel(): TiktokPrivacyLevel {
+  return process.env.TIKTOK_PRIVACY_LEVEL === 'PUBLIC_TO_EVERYONE' ? 'PUBLIC_TO_EVERYONE' : 'SELF_ONLY'
+}
 /**
  * Tính (chunk_size, total_chunk_count) cho TikTok FILE_UPLOAD.
  *
@@ -211,7 +230,9 @@ export class TikTokConnector implements SocialConnector {
           post_info: {
             title,
             // App chưa audit → TikTok BẮT BUỘC SELF_ONLY (private).
-            privacy_level: 'SELF_ONLY',
+            // Khi app đã được duyệt: đặt env TIKTOK_PRIVACY_LEVEL=PUBLIC_TO_EVERYONE
+            // để video đăng công khai ngay, bỏ hẳn 4 bước thủ công.
+            privacy_level: resolveTiktokPrivacyLevel(),
             disable_duet: false,
             disable_comment: false,
             disable_stitch: false,
@@ -308,11 +329,15 @@ export class TikTokConnector implements SocialConnector {
     }
     return {
       platformPostId: publishId,
-      status: 'private',
+      status: resolveTiktokPrivacyLevel() === 'PUBLIC_TO_EVERYONE' ? 'published' : 'private',
       warning:
-        finalStatus === 'PUBLISH_COMPLETE'
-          ? 'Đã đăng lên TikTok ở chế độ Riêng tư (luật của TikTok: app chưa qua kiểm duyệt chỉ được đăng private). Muốn đăng công khai, app cần được TikTok audit & duyệt.'
-          : 'Video đã được tải lên TikTok và đang chờ xử lý — hãy kiểm tra trong app TikTok (mục video riêng tư). App chưa audit nên video chỉ ở chế độ Riêng tư.',
+        resolveTiktokPrivacyLevel() === 'PUBLIC_TO_EVERYONE'
+          ? finalStatus === 'PUBLISH_COMPLETE'
+            ? 'Đã đăng công khai lên TikTok (app đã được duyệt).'
+            : 'Video đã được tải lên TikTok và đang chờ xử lý — hãy kiểm tra trong app TikTok.'
+          : finalStatus === 'PUBLISH_COMPLETE'
+            ? 'Đã đăng lên TikTok ở chế độ Riêng tư (luật của TikTok: app chưa qua kiểm duyệt chỉ được đăng private). Muốn đăng công khai, app cần được TikTok audit & duyệt — hoặc báo mình khi audit pass để bật chế độ công khai.'
+            : 'Video đã được tải lên TikTok và đang chờ xử lý — hãy kiểm tra trong app TikTok (mục video riêng tư). App chưa audit nên video chỉ ở chế độ Riêng tư.',
     }
   }
 }
