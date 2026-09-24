@@ -262,9 +262,56 @@ export function makeRenderVideoTool(
           captions: args['captions'] as Array<{ text: string; start: number; duration: number }> | undefined,
           effectId: args['effectId'] as string | undefined,
         })
-        return `Đã xếp job render video "${args['name']}" (id ${job.id}, trạng thái ${job.status}). Kiểm tra tiến độ ở Content Studio → Video hoặc GET /render/jobs/${job.id}.`
+        return `Đã xếp job render video "${args['name']}" (id ${job.id}, trạng thái ${job.status}). Hỏi tôi "trạng thái job ${job.id}" để kiểm tra tiến độ và lấy link tải MP4.`
       } catch (err) {
         return `Không tạo được job render: ${(err as Error).message}`
+      }
+    },
+  }
+}
+
+export interface RenderJobStatus {
+  id: string
+  name: string
+  status: string
+  progress: number
+  error: string | null
+  hasFile: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+/** Tra cứu trạng thái job render video + link tải MP4 khi xong. */
+export function makeRenderStatusTool(
+  lookup: (jobId?: string) => Promise<{ jobs: RenderJobStatus[]; downloadUrl: (id: string) => string }>,
+): ToolDefinition {
+  return {
+    name: 'render_status',
+    description:
+      'Kiểm tra trạng thái job render video (queued/running/done/failed) và lấy link tải file MP4 khi job đã xong. ' +
+      'Gọi không tham số để liệt kê các job gần nhất, hoặc truyền jobId để xem một job cụ thể. ' +
+      'Dùng khi người dùng hỏi tiến độ video đã render.',
+    parameters: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'ID job render (bỏ qua để liệt kê job gần nhất).' },
+      },
+      additionalProperties: false,
+    },
+    execute: async (args) => {
+      try {
+        const { jobs, downloadUrl } = await lookup(args['jobId'] as string | undefined)
+        if (jobs.length === 0) return 'Chưa có job render nào.'
+        return jobs
+          .map((j) => {
+            const base = `Job "${j.name}" (id ${j.id}): trạng thái ${j.status}, tiến độ ${j.progress}%`
+            const err = j.status === 'failed' && j.error ? ` — lỗi: ${j.error}` : ''
+            const dl = j.status === 'done' && j.hasFile ? ` — tải MP4: ${downloadUrl(j.id)}` : ''
+            return base + err + dl
+          })
+          .join('\n')
+      } catch (err) {
+        return `Không tra được trạng thái render: ${(err as Error).message}`
       }
     },
   }

@@ -14,7 +14,7 @@ import {
   type AgentMessage,
   type ChatBackend,
 } from './agent-loop'
-import { buildBuiltinTools, makeRenderVideoTool } from './builtin-tools'
+import { buildBuiltinTools, makeRenderVideoTool, makeRenderStatusTool } from './builtin-tools'
 import type { AgentRunDto } from './dto'
 import { RenderService } from '../render/render.service'
 
@@ -54,6 +54,16 @@ export class AgentService {
       makeRenderVideoTool((spec) =>
         this.renderService.createJob(workspaceId, spec).then((job) => ({ id: job.id, status: job.status })),
       ),
+    )
+    // render_status: tra cứu tiến độ job + link tải MP4.
+    registry.register(
+      makeRenderStatusTool(async (jobId?: string) => {
+        const jobs = jobId
+          ? [await this.renderService.getJob(workspaceId, jobId)]
+          : await this.renderService.listJobs(workspaceId, 10)
+        const base = (process.env.API_URL || '').replace(/\/+$/, '')
+        return { jobs, downloadUrl: (id: string) => `${base}/render/jobs/${id}/file` }
+      }),
     )
     return registry
   }
