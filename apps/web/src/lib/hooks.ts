@@ -313,7 +313,10 @@ export async function sendAiChat(
   messages: ChatMessage[],
   model?: string,
 ): Promise<ChatResponse> {
-  return api.post<ChatResponse>('/ai/chat', { provider, messages, model })
+  // Chỉ gửi role+content: các meta UI (agentMeta/ragMeta) khiến provider
+  // validate schema strict (ExperientialLabs) báo lỗi "property ... should not exist".
+  const clean = messages.map((m) => ({ role: m.role, content: m.content }))
+  return api.post<ChatResponse>('/ai/chat', { provider, messages: clean, model })
 }
 
 /** Chạy agent think→act→observe qua provider đã kết nối. */
@@ -323,7 +326,9 @@ export async function sendAgentRun(
   model?: string,
   opts?: { maxTurns?: number; tools?: string[]; maxTokens?: number },
 ): Promise<AgentRunResponse> {
-  return api.post<AgentRunResponse>('/ai/agent/run', { provider, messages, model, ...opts })
+  // Chỉ gửi role+content — xem chú thích ở sendAiChat.
+  const clean = messages.map((m) => ({ role: m.role, content: m.content }))
+  return api.post<AgentRunResponse>('/ai/agent/run', { provider, messages: clean, model, ...opts })
 }
 
 /* ─── RAG / Kho tri thức ───────────────────────────────────────────── */
