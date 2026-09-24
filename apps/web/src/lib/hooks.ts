@@ -576,3 +576,40 @@ export async function setVideoAiLabel(
 export async function deleteVideoAiEntry(projectId: string, entryId: string): Promise<{ ok: boolean }> {
   return api.del(`/video/projects/${projectId}/ai-entries/${entryId}`)
 }
+
+/* ─── Mapping AI → Video Faceless ─────────────────────────────────── */
+
+/** Sinh tiêu đề project từ dòng HOOK đầu caption (tối đa 80 ký tự). */
+export function videoTitleFromCaption(caption: string, fallback = 'Video từ AI'): string {
+  const firstLine = caption
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0)
+  if (!firstLine) return fallback
+  return firstLine.length > 80 ? firstLine.slice(0, 77) + '…' : firstLine
+}
+
+export interface VideoFromAgentInput {
+  title?: string
+  script?: string
+  caption: string
+  publishNotes?: string
+  viralSourceUrl?: string
+}
+
+/**
+ * Tạo VideoProject từ kết quả agent/chat: tạo project → nạp script + caption →
+ * chuyển stage sang 'script'. Trả về id để điều hướng sang /video-faceless?project=<id>.
+ */
+export async function createVideoProjectFromAgent(input: VideoFromAgentInput): Promise<string> {
+  const title = (input.title?.trim() || videoTitleFromCaption(input.caption))
+  const project = await api.post<VideoProjectSummary>('/video/projects', { title })
+  await api.patch(`/video/projects/${project.id}`, {
+    script: input.script || '',
+    caption: input.caption,
+    publishNotes: input.publishNotes || '',
+    viralSourceUrl: input.viralSourceUrl || '',
+    stage: 'script',
+  })
+  return project.id
+}

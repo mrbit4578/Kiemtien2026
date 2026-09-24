@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import {
   Plus, ArrowLeft, Clapperboard, AlertTriangle, Trash2, Send, ShieldCheck,
   Bot, ClipboardCheck, Gauge, Save, CheckCircle2, XCircle, Link2, Sparkles,
@@ -83,7 +84,16 @@ function riskBadge(score: number | null) {
 /* ─── Trang chính ─── */
 
 export default function VideoFacelessPage() {
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  return (
+    <Suspense fallback={<p className="text-sm text-slate-400">Đang tải…</p>}>
+      <VideoFacelessInner />
+    </Suspense>
+  )
+}
+
+function VideoFacelessInner() {
+  const searchParams = useSearchParams()
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('project'))
   return selectedId ? (
     <ProjectDetail id={selectedId} onBack={() => setSelectedId(null)} />
   ) : (
@@ -142,13 +152,19 @@ function ProjectList({ onSelect }: { onSelect: (id: string) => void }) {
         <Bot className="w-5 h-5 text-brand-cyan shrink-0 mt-0.5" />
         <div className="text-xs text-slate-300 leading-relaxed">
           <span className="font-bold text-white">Làm cùng AI:</span> mở{' '}
+          <Link href="/ai-copilot" className="text-brand-cyan underline font-semibold">
+            AI Copilot (ReAct)
+          </Link>{' '}
+          hoặc{' '}
           <Link href="/ai-chat" className="text-brand-cyan underline font-semibold">
             AI Chat Pro (chế độ Agent)
           </Link>{' '}
           và nhờ agent chạy pipeline: <code className="text-brand-emerald">video_brief</code> (phân tích
           nguồn viral → chốt góc qua G0) → <code className="text-brand-emerald">video_script</code> (viết
           kịch bản, chặn claim chưa xác minh) → <code className="text-brand-emerald">video_risk_score</code> (chấm
-          rủi ro). Kết quả dán vào các tab bên dưới để lưu vào dự án.
+          rủi ro). Khi ưng kịch bản, bấm nút <span className="font-semibold text-white">Tạo Video Faceless</span> trên
+          Copilot (hoặc icon 🎬 trên tin nhắn chat) — kịch bản + caption tự nạp vào dự án mới và mở thẳng pipeline
+          kiểm duyệt.
         </div>
       </div>
 

@@ -22,7 +22,10 @@ import {
   X,
   Pencil,
   Trash2,
+  Clapperboard,
 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { extractShootScript, extractPublishCaption } from '../../components/AICopilotStudio'
 import {
   useAiProviders,
   useAiConnections,
@@ -38,6 +41,7 @@ import {
   deleteChatSession,
   deleteChatMessage,
   clearAllChatSessions,
+  createVideoProjectFromAgent,
 } from '../../lib/hooks'
 import { ApiError } from '../../lib/api'
 import type {
@@ -256,6 +260,28 @@ export default function AiChatPage() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [mappingIdx, setMappingIdx] = useState<number | null>(null)
+  const router = useRouter()
+
+  /** Mapping tin nhắn agent → Video Faceless: tạo project, nạp script + caption, mở pipeline. */
+  const handleMapToVideo = async (idx: number, content: string) => {
+    const script = extractShootScript(content)
+    const caption = extractPublishCaption(content)
+    if (!script && !caption.trim()) {
+      setError('Tin nhắn này không có kịch bản/caption để tạo video.')
+      return
+    }
+    setMappingIdx(idx)
+    setError(null)
+    try {
+      const id = await createVideoProjectFromAgent({ script, caption })
+      router.push(`/video-faceless?project=${id}`)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Tạo dự án video thất bại.')
+    } finally {
+      setMappingIdx(null)
+    }
+  }
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // ── Nhật ký chat (lưu lịch sử + xóa tùy ý) ──
@@ -764,6 +790,21 @@ export default function AiChatPage() {
               >
                 <X className="w-3 h-3" />
               </button>
+              {/* Đưa sang Video Faceless */}
+              {m.role === 'assistant' && (
+                <button
+                  onClick={() => handleMapToVideo(i, m.content)}
+                  disabled={mappingIdx !== null}
+                  title="Đưa sang Video Faceless: tạo dự án, nạp kịch bản + caption, mở pipeline kiểm duyệt"
+                  className="absolute -top-2 -left-2 w-5 h-5 rounded-full bg-dark-950 border border-white/20 text-slate-400 hover:text-brand-emerald hover:border-brand-emerald/50 items-center justify-center hidden group-hover:flex transition-colors disabled:opacity-50"
+                >
+                  {mappingIdx === i ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Clapperboard className="w-3 h-3" />
+                  )}
+                </button>
+              )}
             </div>
             {m.role === 'user' && (
               <div className="w-8 h-8 shrink-0 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center">

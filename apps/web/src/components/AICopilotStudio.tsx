@@ -15,11 +15,13 @@ import {
   CalendarPlus,
   RefreshCw,
   Clock,
-  ImagePlus
+  ImagePlus,
+  Clapperboard,
+  Loader2
 } from 'lucide-react'
 
 import { useSession } from '../context/SessionContext'
-import { useContent, useAiConnections, useAiProviders, sendAgentRun } from '../lib/hooks'
+import { useContent, useAiConnections, useAiProviders, sendAgentRun, createVideoProjectFromAgent } from '../lib/hooks'
 import { ApiError } from '../lib/api'
 import { AiModelSelector } from './AiModelSelector'
 import { useRouter } from 'next/navigation'
@@ -178,6 +180,8 @@ export function AICopilotStudio() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
   const [copiedScript, setCopiedScript] = useState(false)
+  const [mapping, setMapping] = useState(false)
+  const [mapError, setMapError] = useState<string | null>(null)
   const [steps, setSteps] = useState<ReActStep[]>([
     {
       type: 'thought',
@@ -233,6 +237,30 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
       navigator.clipboard.writeText(lastStep.content)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  /** Mapping: tạo Video Faceless project từ Final Answer (kịch bản + caption) rồi điều hướng sang. */
+  const handleMapToVideo = async () => {
+    const lastStep = steps.find((s) => s.type === 'answer')
+    if (!lastStep) {
+      setMapError('Chưa có Final Answer — hãy chạy agent xong rồi mới mapping.')
+      return
+    }
+    const script = extractShootScript(lastStep.content)
+    const caption = extractPublishCaption(lastStep.content)
+    if (!script && !caption.trim()) {
+      setMapError('Không tách được kịch bản/caption từ kết quả agent.')
+      return
+    }
+    setMapping(true)
+    setMapError(null)
+    try {
+      const id = await createVideoProjectFromAgent({ script, caption })
+      router.push(`/video-faceless?project=${id}`)
+    } catch (err) {
+      setMapError(err instanceof ApiError ? err.message : 'Tạo dự án video thất bại.')
+      setMapping(false)
     }
   }
 
@@ -360,7 +388,19 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
             {copiedScript ? <Check className="w-3.5 h-3.5 text-brand-emerald" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copiedScript ? 'Đã sao chép' : 'Sao chép kịch bản quay'}</span>
           </button>
+          <button
+            onClick={handleMapToVideo}
+            disabled={mapping}
+            title="Tạo dự án Video Faceless từ kịch bản + caption này và mở pipeline kiểm duyệt"
+            className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-brand-emerald to-brand-cyan text-dark-950 font-bold flex items-center gap-1.5 transition-all hover:brightness-110 disabled:opacity-60"
+          >
+            {mapping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clapperboard className="w-3.5 h-3.5" />}
+            <span>{mapping ? 'Đang tạo dự án…' : 'Tạo Video Faceless'}</span>
+          </button>
         </div>
+        {mapError && (
+          <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{mapError}</p>
+        )}
 
         <div className="space-y-3">
           {steps.map((step, idx) => {
