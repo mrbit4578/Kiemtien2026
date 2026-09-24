@@ -25,6 +25,7 @@ export const FALLBACK_PRIORITY: AiProviderId[] = [
   'openai',
   'gemini',
   'experientiallabs',
+  'apmix',
   'deepseek',
   'anthropic',
   'xai',

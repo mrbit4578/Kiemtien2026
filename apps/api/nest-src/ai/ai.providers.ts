@@ -3,7 +3,14 @@
  * - `keyUrl`: link chính thức để user tự tạo API key (key của user, không phải của hệ thống).
  * - `baseUrl` + `kind`: dùng NỘI BỘ ở service để validate key và gọi chat — không expose qua API.
  */
-export type AiProviderId = 'gemini' | 'openai' | 'xai' | 'anthropic' | 'deepseek' | 'experientiallabs'
+export type AiProviderId =
+  | 'gemini'
+  | 'openai'
+  | 'xai'
+  | 'anthropic'
+  | 'deepseek'
+  | 'experientiallabs'
+  | 'apmix'
 
 type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic'
 
@@ -83,6 +90,17 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     description:
       'gpt-5.6-luna FREE (test chạy tốt trên key của bạn). Grok 4.7 cần mua credits mới mở khóa.',
     baseUrl: 'https://api.experientiallabs.ai/v1',
+    kind: 'openai-compatible',
+  },
+  {
+    id: 'apmix',
+    name: 'Apmix',
+    keyUrl: 'https://apmix.ai/dashboard',
+    models: ['deepseek-v4.1-flash-free', 'deepseek-v4-flash-free'],
+    defaultModel: 'deepseek-v4.1-flash-free',
+    description:
+      'Miễn phí 4M tokens — 2 model DeepSeek free (v4 Flash / v4.1 Flash), nhập key là chạy ngay.',
+    baseUrl: 'https://api.apmix.ai/v1',
     kind: 'openai-compatible',
   },
 ]

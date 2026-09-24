@@ -29,6 +29,7 @@ const PROVIDER_ACCENT: Record<string, string> = {
   anthropic: 'from-orange-500 to-amber-400',
   deepseek: 'from-violet-500 to-purple-400',
   experientiallabs: 'from-fuchsia-500 to-pink-400',
+  apmix: 'from-sky-500 to-indigo-400',
 }
 
 /** Code mau goi truc tiep API (chuan OpenAI) bang key cua user — cho tab "Quickstart". */
