@@ -17,6 +17,11 @@ import {
   AlertTriangle,
   BookOpen,
   Wrench,
+  History,
+  Plus,
+  X,
+  Pencil,
+  Trash2,
 } from 'lucide-react'
 import {
   useAiProviders,
@@ -25,9 +30,34 @@ import {
   sendAgentRun,
   useRagDocuments,
   queryRag,
+  listChatSessions,
+  createChatSession,
+  getChatSession,
+  appendChatMessages,
+  renameChatSession,
+  deleteChatSession,
+  deleteChatMessage,
+  clearAllChatSessions,
 } from '../../lib/hooks'
 import { ApiError } from '../../lib/api'
-import type { ChatMessage, RagQueryResult, RagStrategy, AgentRunResponse } from '../../lib/types'
+import type {
+  ChatMessage,
+  ChatSession,
+  ChatHistoryMeta,
+  RagQueryResult,
+  RagStrategy,
+  AgentRunResponse,
+} from '../../lib/types'
+
+/** Thời gian tương đối tiếng Việt: "5 phút trước", "2 giờ trước"… */
+function timeAgo(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
+  if (s < 60) return 'vừa xong'
+  if (s < 3600) return `${Math.floor(s / 60)} phút trước`
+  if (s < 86400) return `${Math.floor(s / 3600)} giờ trước`
+  if (s < 86400 * 30) return `${Math.floor(s / 86400)} ngày trước`
+  return new Date(iso).toLocaleDateString('vi-VN')
+}
 
 /** Render markdown cơ bản — escape HTML trước để chống XSS. */
 function renderMarkdown(text: string): React.ReactNode[] {
@@ -228,6 +258,185 @@ export default function AiChatPage() {
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // ── Nhật ký chat (lưu lịch sử + xóa tùy ý) ──
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [loadingSession, setLoadingSession] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const sessionIdRef = useRef<string | null>(null)
+  const persistQueue = useRef<Promise<void>>(Promise.resolve())
+
+  const refreshSessions = async () => {
+    try {
+      setSessions(await listChatSessions())
+    } catch {
+      // Không chặn chat nếu tải lịch sử lỗi
+    }
+  }
+
+  useEffect(() => {
+    refreshSessions()
+  }, [])
+
+  const setSession = (id: string | null) => {
+    sessionIdRef.current = id
+    setSessionId(id)
+  }
+
+  /** Bắt đầu đoạn chat mới — giữ nguyên provider/model đã chọn. */
+  const startNewChat = () => {
+    setMessages([])
+    setSession(null)
+    setError(null)
+    setHistoryOpen(false)
+  }
+
+  /** Lưu cặp user+assistant vào nhật ký (chạy nền, nối đuôi nhau để không tạo trùng phiên). */
+  const persistHistory = (
+    userContent: string,
+    assistant: ChatMessage,
+    msgTotal: number,
+    mode: 'chat' | 'agent' | 'rag',
+    pid: string,
+    mdl: string,
+  ) => {
+    persistQueue.current = persistQueue.current
+      .then(async () => {
+        let sid = sessionIdRef.current
+        if (!sid) {
+          const created = await createChatSession({
+            provider: pid,
+            model: mdl || undefined,
+            mode,
+          })
+          sid = created.id
+          setSession(sid)
+        }
+        const meta: ChatHistoryMeta = {}
+        if (assistant.fallback) meta.fallback = assistant.fallback
+        if (assistant.ragMeta) meta.ragMeta = assistant.ragMeta
+        if (assistant.agentMeta) meta.agentMeta = assistant.agentMeta
+        const saved = await appendChatMessages(sid, [
+          { role: 'user', content: userContent },
+          {
+            role: 'assistant',
+            content: assistant.content,
+            meta: Object.keys(meta).length > 0 ? meta : undefined,
+          },
+        ])
+        const [u, a] = saved.messages
+        // Gán id DB cho đúng 2 tin nhắn vừa gửi (so khớp nội dung để tránh lệch khi user xóa giữa chừng)
+        setMessages((prev) => {
+          if (prev.length < msgTotal || !u || !a) return prev
+          const next = [...prev]
+          const um = next[msgTotal - 2]
+          const am = next[msgTotal - 1]
+          if (um && !um.historyId && um.role === 'user' && um.content === userContent) {
+            next[msgTotal - 2] = { ...um, historyId: u.id }
+          }
+          if (am && !am.historyId && am.role === 'assistant' && am.content === assistant.content) {
+            next[msgTotal - 1] = { ...am, historyId: a.id }
+          }
+          return next
+        })
+        refreshSessions()
+      })
+      .catch(() => {
+        // Lưu lịch sử lỗi thì bỏ qua — không chặn trải nghiệm chat
+      })
+  }
+
+  /** Tải lại 1 phiên từ nhật ký. */
+  const loadSession = async (id: string) => {
+    setLoadingSession(true)
+    setError(null)
+    try {
+      const detail = await getChatSession(id)
+      setMessages(
+        detail.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          ragMeta: m.meta?.ragMeta,
+          agentMeta: m.meta?.agentMeta,
+          fallback: m.meta?.fallback,
+          historyId: m.id,
+        })),
+      )
+      setSession(id)
+      if (activeMeta.some((p) => p.id === detail.provider) && detail.provider !== providerId) {
+        setProviderId(detail.provider)
+      }
+      if (detail.model) setModel(detail.model)
+      setAgentMode(detail.mode === 'agent')
+      setRagMode(detail.mode === 'rag')
+      setHistoryOpen(false)
+    } catch {
+      setError('Không tải được đoạn chat. Hãy thử lại.')
+    } finally {
+      setLoadingSession(false)
+    }
+  }
+
+  /** Xóa 1 phiên (bấm 2 lần để xác nhận). */
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+  const handleDeleteSession = async (id: string) => {
+    if (confirmingDeleteId !== id) {
+      setConfirmingDeleteId(id)
+      setTimeout(() => setConfirmingDeleteId((cur) => (cur === id ? null : cur)), 4000)
+      return
+    }
+    setConfirmingDeleteId(null)
+    try {
+      await deleteChatSession(id)
+      setSessions((prev) => prev.filter((s) => s.id !== id))
+      if (sessionIdRef.current === id) startNewChat()
+    } catch {
+      setError('Không xóa được đoạn chat.')
+    }
+  }
+
+  /** Xóa 1 tin nhắn (trong DB nếu đã lưu, luôn xóa khỏi màn hình). */
+  const handleDeleteMessage = async (index: number) => {
+    const msg = messages[index]
+    if (!msg) return
+    if (msg.historyId && sessionIdRef.current) {
+      try {
+        await deleteChatMessage(sessionIdRef.current, msg.historyId)
+      } catch {
+        setError('Không xóa được tin nhắn.')
+        return
+      }
+    }
+    setMessages((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  /** Xóa toàn bộ lịch sử. */
+  const handleClearAll = async () => {
+    if (!confirm('Xóa TOÀN BỘ lịch sử chat? Hành động này không thể hoàn tác.')) return
+    try {
+      await clearAllChatSessions()
+      setSessions([])
+      startNewChat()
+    } catch {
+      setError('Không xóa được lịch sử.')
+    }
+  }
+
+  /** Lưu tên mới cho phiên. */
+  const submitRename = async (id: string) => {
+    const title = renameValue.trim()
+    setRenamingId(null)
+    if (!title) return
+    try {
+      const updated = await renameChatSession(id, title)
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title: updated.title } : s)))
+    } catch {
+      setError('Không đổi được tên.')
+    }
+  }
+
   // ── Chế độ RAG ──
   const [ragMode, setRagMode] = useState(false)
   const [ragStrategy, setRagStrategy] = useState<RagStrategy>('hybrid')
@@ -287,10 +496,12 @@ export default function AiChatPage() {
     setMessages(next)
     setInput('')
     setSending(true)
+    const mode = agentMode ? 'agent' : ragMode ? 'rag' : 'chat'
     try {
+      let assistant: ChatMessage
       if (agentMode) {
         const res = await sendAgentRun(providerId, next, model || undefined)
-        setMessages([...next, { role: 'assistant', content: res.content, agentMeta: res }])
+        assistant = { role: 'assistant', content: res.content, agentMeta: res }
       } else if (ragMode) {
         const res = await queryRag({
           query: content,
@@ -298,11 +509,15 @@ export default function AiChatPage() {
           provider: providerId,
           model: model || undefined,
         })
-        setMessages([...next, { role: 'assistant', content: res.answer, ragMeta: res }])
+        assistant = { role: 'assistant', content: res.answer, ragMeta: res }
       } else {
         const res = await sendAiChat(providerId, next, model || undefined)
-        setMessages([...next, { role: 'assistant', content: res.content, fallback: res.fallback }])
+        assistant = { role: 'assistant', content: res.content, fallback: res.fallback }
       }
+      const full = [...next, assistant]
+      setMessages(full)
+      // Lưu vào nhật ký (chạy nền, không chặn UI)
+      persistHistory(content, assistant, full.length, mode, providerId, model)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Có lỗi xảy ra. Hãy thử lại.')
     } finally {
@@ -347,6 +562,32 @@ export default function AiChatPage() {
           AI Chat Pro
         </h1>
         <div className="flex items-center gap-2">
+          {/* Đoạn chat mới */}
+          <button
+            onClick={startNewChat}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border bg-dark-950/70 border-white/10 hover:border-white/25 text-slate-300 text-xs font-semibold transition-colors"
+            title="Bắt đầu đoạn chat mới"
+          >
+            <Plus className="w-4 h-4" />
+            <span className="hidden sm:inline">Chat mới</span>
+          </button>
+          {/* Mở nhật ký chat */}
+          <button
+            onClick={() => {
+              setHistoryOpen(true)
+              refreshSessions()
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border bg-dark-950/70 border-white/10 hover:border-white/25 text-slate-300 text-xs font-semibold transition-colors"
+            title="Xem nhật ký chat đã lưu"
+          >
+            <History className="w-4 h-4" />
+            <span className="hidden sm:inline">Lịch sử</span>
+            {sessions.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-brand-violet/20 text-brand-violet text-[10px] font-bold">
+                {sessions.length}
+              </span>
+            )}
+          </button>
           {/* Toggle chế độ Agent (gọi tools) */}
           <button
             onClick={toggleAgent}
@@ -485,29 +726,44 @@ export default function AiChatPage() {
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div
+            key={i}
+            className={`group flex gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+          >
             {m.role === 'assistant' && (
               <div className="w-8 h-8 shrink-0 rounded-xl bg-gradient-to-tr from-brand-violet to-brand-cyan flex items-center justify-center">
                 <Bot className="w-4 h-4 text-dark-950" />
               </div>
             )}
-            <div
-              className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                m.role === 'user'
-                  ? 'bg-gradient-to-r from-brand-emerald/90 to-brand-cyan/90 text-dark-950 font-medium'
-                  : 'bg-dark-950/70 border border-white/10 text-slate-200'
-              }`}
-            >
-              {m.role === 'user' ? (
-                m.content
-              ) : (
-                <>
-                  {renderMarkdown(m.content)}
-                  {m.fallback && <FallbackNotice fallback={m.fallback} nameOf={providerNameOf} />}
-                  {m.ragMeta && <RagMetaBlocks meta={m.ragMeta} />}
-                  {m.agentMeta && <AgentMetaBlocks meta={m.agentMeta} nameOf={providerNameOf} />}
-                </>
-              )}
+            <div className="relative max-w-[85%]">
+              <div
+                className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                  m.role === 'user'
+                    ? 'bg-gradient-to-r from-brand-emerald/90 to-brand-cyan/90 text-dark-950 font-medium'
+                    : 'bg-dark-950/70 border border-white/10 text-slate-200'
+                }`}
+              >
+                {m.role === 'user' ? (
+                  m.content
+                ) : (
+                  <>
+                    {renderMarkdown(m.content)}
+                    {m.fallback && <FallbackNotice fallback={m.fallback} nameOf={providerNameOf} />}
+                    {m.ragMeta && <RagMetaBlocks meta={m.ragMeta} />}
+                    {m.agentMeta && <AgentMetaBlocks meta={m.agentMeta} nameOf={providerNameOf} />}
+                  </>
+                )}
+              </div>
+              {/* Xóa tin nhắn này */}
+              <button
+                onClick={() => handleDeleteMessage(i)}
+                title="Xóa tin nhắn này"
+                className={`absolute -top-2 ${
+                  m.role === 'user' ? '-left-2' : '-right-2'
+                } w-5 h-5 rounded-full bg-dark-950 border border-white/20 text-slate-400 hover:text-red-300 hover:border-red-400/50 items-center justify-center hidden group-hover:flex transition-colors`}
+              >
+                <X className="w-3 h-3" />
+              </button>
             </div>
             {m.role === 'user' && (
               <div className="w-8 h-8 shrink-0 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center">
@@ -565,6 +821,145 @@ export default function AiChatPage() {
           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         </button>
       </div>
+
+      {/* ── Drawer nhật ký chat ── */}
+      {historyOpen && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setHistoryOpen(false)}
+          />
+          <div className="absolute right-0 top-0 h-full w-80 max-w-[88vw] bg-dark-950 border-l border-white/10 flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <h2 className="text-sm font-extrabold text-white flex items-center gap-2">
+                <History className="w-4 h-4 text-brand-violet" />
+                Nhật ký chat
+              </h2>
+              <div className="flex items-center gap-1">
+                {sessions.length > 0 && (
+                  <button
+                    onClick={handleClearAll}
+                    title="Xóa toàn bộ lịch sử chat"
+                    className="p-1.5 rounded-lg text-slate-500 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+                <button
+                  onClick={() => setHistoryOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                  aria-label="Đóng"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="px-4 pt-3">
+              <button
+                onClick={startNewChat}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r from-brand-violet to-brand-cyan text-dark-950 text-sm font-bold hover:opacity-95"
+              >
+                <Plus className="w-4 h-4" /> Đoạn chat mới
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+              {loadingSession && (
+                <p className="text-xs text-slate-500 text-center py-4 flex items-center justify-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Đang tải đoạn chat…
+                </p>
+              )}
+              {sessions.length === 0 && !loadingSession && (
+                <p className="text-xs text-slate-500 text-center py-8">
+                  Chưa có lịch sử.
+                  <br />
+                  Mỗi đoạn chat sẽ tự động được lưu lại tại đây.
+                </p>
+              )}
+              {sessions.map((s) => (
+                <div
+                  key={s.id}
+                  className={`group rounded-xl border px-3 py-2.5 transition-colors ${
+                    sessionId === s.id
+                      ? 'bg-brand-violet/10 border-brand-violet/40'
+                      : 'bg-white/[0.02] border-white/10 hover:border-white/25'
+                  }`}
+                >
+                  {renamingId === s.id ? (
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') submitRename(s.id)
+                        if (e.key === 'Escape') setRenamingId(null)
+                      }}
+                      onBlur={() => submitRename(s.id)}
+                      maxLength={120}
+                      className="w-full px-2 py-1 rounded-lg bg-dark-950 border border-brand-violet/50 text-white text-sm focus:outline-none"
+                    />
+                  ) : (
+                    <div className="flex items-start gap-1">
+                      <button
+                        onClick={() => loadSession(s.id)}
+                        className="flex-1 text-left min-w-0"
+                        title={s.preview || s.title}
+                      >
+                        <p className="text-sm font-semibold text-white truncate">{s.title}</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                          {s.providerName}
+                          {s.mode !== 'chat' && ` · ${s.mode === 'agent' ? 'Agent' : 'RAG'}`} ·{' '}
+                          {timeAgo(s.updatedAt)} · {s.messageCount} tin nhắn
+                        </p>
+                      </button>
+                      <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => {
+                            setRenamingId(s.id)
+                            setRenameValue(s.title)
+                          }}
+                          title="Đổi tên"
+                          className="p-1 rounded text-slate-500 hover:text-white"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSession(s.id)}
+                          title={confirmingDeleteId === s.id ? 'Bấm lần nữa để xóa' : 'Xóa đoạn chat'}
+                          className={`p-1 rounded transition-colors ${
+                            confirmingDeleteId === s.id
+                              ? 'text-red-300 bg-red-500/20'
+                              : 'text-slate-500 hover:text-red-300'
+                          }`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {confirmingDeleteId === s.id && (
+                    <p className="text-[11px] text-red-300 mt-1">
+                      Bấm vào thùng rác lần nữa để xác nhận xóa.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {sessions.length > 0 && (
+              <div className="px-4 py-3 border-t border-white/10">
+                <button
+                  onClick={handleClearAll}
+                  className="w-full text-xs text-slate-500 hover:text-red-300 py-1 transition-colors"
+                >
+                  Xóa toàn bộ lịch sử
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

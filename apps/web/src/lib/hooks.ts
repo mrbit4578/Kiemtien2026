@@ -12,6 +12,10 @@ import type {
   ChatMessage,
   ChatResponse,
   AgentRunResponse,
+  ChatSession,
+  ChatSessionDetail,
+  ChatHistoryMode,
+  ChatHistoryMeta,
   RagDocument,
   RagQueryBody,
   RagQueryResult,
@@ -329,6 +333,55 @@ export async function sendAgentRun(
   // Chỉ gửi role+content — xem chú thích ở sendAiChat.
   const clean = messages.map((m) => ({ role: m.role, content: m.content }))
   return api.post<AgentRunResponse>('/ai/agent/run', { provider, messages: clean, model, ...opts })
+}
+
+/* ─── Nhật ký chat AI Pro ─────────────────────────────────────────── */
+
+export async function listChatSessions(): Promise<ChatSession[]> {
+  return api.get<ChatSession[]>('/ai/chat/sessions')
+}
+
+export async function createChatSession(body: {
+  provider: string
+  model?: string
+  mode?: ChatHistoryMode
+  title?: string
+}): Promise<ChatSession> {
+  return api.post<ChatSession>('/ai/chat/sessions', body)
+}
+
+export async function getChatSession(id: string): Promise<ChatSessionDetail> {
+  return api.get<ChatSessionDetail>(`/ai/chat/sessions/${id}`)
+}
+
+export async function appendChatMessages(
+  id: string,
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; meta?: ChatHistoryMeta }>,
+): Promise<{ ok: boolean; title: string; messages: Array<{ id: string; role: string; createdAt: string }> }> {
+  return api.post(`/ai/chat/sessions/${id}/messages`, { messages })
+}
+
+export async function renameChatSession(id: string, title: string): Promise<ChatSession> {
+  return api.patch<ChatSession>(`/ai/chat/sessions/${id}`, { title })
+}
+
+export async function deleteChatSession(id: string): Promise<{ ok: boolean }> {
+  return api.del(`/ai/chat/sessions/${id}`)
+}
+
+export async function deleteChatMessage(
+  sessionId: string,
+  messageId: string,
+): Promise<{ ok: boolean }> {
+  return api.del(`/ai/chat/sessions/${sessionId}/messages/${messageId}`)
+}
+
+export async function clearAllChatSessions(): Promise<{
+  ok: boolean
+  deletedSessions: number
+  deletedMessages: number
+}> {
+  return api.del('/ai/chat/sessions')
 }
 
 /* ─── RAG / Kho tri thức ───────────────────────────────────────────── */

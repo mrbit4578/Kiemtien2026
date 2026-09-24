@@ -89,6 +89,8 @@ export interface ChatMessage {
   agentMeta?: AgentRunResponse
   /** Khi server tự chuyển provider dự phòng (combo key) */
   fallback?: { from: string; to: string; reason?: string }
+  /** Id tin nhắn trong DB khi đã lưu vào nhật ký — dùng để xóa từng tin nhắn */
+  historyId?: string
 }
 
 /* ─── AI Agent (gọi tools) ───────────────────────────────────────────── */
@@ -177,4 +179,41 @@ export interface ChatResponse {
   provider: string
   /** Có mặt khi server tự chuyển sang provider dự phòng (combo key) */
   fallback?: { from: string; to: string; reason: string }
+}
+
+/* ─── Nhật ký chat AI Pro ─────────────────────────────────────────────── */
+
+export type ChatHistoryMode = 'chat' | 'agent' | 'rag'
+
+export interface ChatHistoryMeta {
+  provider?: string
+  model?: string
+  fallback?: { from: string; to: string; reason?: string }
+  ragMeta?: RagQueryResult
+  agentMeta?: AgentRunResponse
+}
+
+export interface ChatSession {
+  id: string
+  provider: string
+  providerName: string
+  model: string | null
+  mode: ChatHistoryMode
+  title: string
+  messageCount: number
+  preview: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ChatHistoryMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  meta?: ChatHistoryMeta
+  createdAt: string
+}
+
+export interface ChatSessionDetail extends ChatSession {
+  messages: ChatHistoryMessage[]
 }
