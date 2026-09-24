@@ -19,6 +19,7 @@ import {
   CreateVideoAssetDto,
   CreateVideoClaimDto,
   CreateVideoAiEntryDto,
+  AutoBuildVideoDto,
 } from './dto'
 import { requireWorkspaceId } from '../common/session'
 import type { Request } from 'express'
@@ -43,6 +44,17 @@ export class VideoController {
   @HttpCode(200)
   async create(@Body() dto: CreateVideoProjectDto, @Session() session: any) {
     return this.video.createProject(requireWorkspaceId(session), dto)
+  }
+
+  /**
+   * POST /video/projects/auto-build — tự động dựng project từ nội dung nguồn:
+   * AI phân tích theo quy chuẩn pipeline (G0, claim guardrails) rồi tự điền
+   * brief, góc, kịch bản, caption, claim ledger, AI register, risk score.
+   */
+  @Post('projects/auto-build')
+  @HttpCode(200)
+  async autoBuild(@Body() dto: AutoBuildVideoDto, @Session() session: any) {
+    return this.video.autoBuildFromSource(requireWorkspaceId(session), dto)
   }
 
   @Get('projects/:id')

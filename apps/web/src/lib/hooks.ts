@@ -613,3 +613,31 @@ export async function createVideoProjectFromAgent(input: VideoFromAgentInput): P
   })
   return project.id
 }
+
+export interface AutoBuildResult {
+  projectId: string
+  title: string
+  provider: string
+  model: string
+  claimCount: number
+  riskScore: number
+  riskDecision: string
+}
+
+/**
+ * Auto-build: gửi nội dung nguồn lên server — AI phân tích theo đúng quy chuẩn
+ * pipeline faceless (G0 originality, claim guardrails, 3-block contract) rồi tự
+ * điền đầy đủ: brief, góc, kịch bản, caption, claim ledger, AI register,
+ * risk score. Trả về kết quả để điều hướng sang /video-faceless?project=<id>.
+ */
+export async function autoBuildVideoProjectFromSource(input: {
+  content: string
+  providerId?: string
+  model?: string
+}): Promise<AutoBuildResult> {
+  return api.post<AutoBuildResult>('/video/projects/auto-build', {
+    content: input.content,
+    providerId: input.providerId || undefined,
+    model: input.model || undefined,
+  })
+}

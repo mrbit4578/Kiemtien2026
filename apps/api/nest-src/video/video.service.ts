@@ -1,8 +1,12 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
+import { AiService, FALLBACK_PRIORITY } from '../ai/ai.service'
+import { getProviderMeta, type AiProviderId } from '../ai/ai.providers'
+import { videoBriefTool, videoScriptTool } from '../agent/video-tools'
 import { GATE_IDS, VIDEO_STAGES } from './dto'
 import type {
+  AutoBuildVideoDto,
   CreateVideoProjectDto,
   UpdateVideoProjectDto,
   CreateVideoAssetDto,
@@ -28,6 +32,7 @@ export class VideoService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditLogService,
+    private readonly ai: AiService,
   ) {}
 
   private async requireProject(workspaceId: string, id: string) {
@@ -74,6 +79,220 @@ export class VideoService {
         stage: 'intake',
       },
     })
+  }
+
+  // ─── Auto-build từ nội dung nguồn ───
+
+  private static readonly AUTO_BUILD_SYSTEM = `Bạn là trợ lý dựng video faceless của Kiemtien2026. Nhiệm vụ: đọc nội dung nguồn người dùng đưa và TRẢ VỀ DUY NHẤT một JSON hợp lệ (không markdown, không giải thích), đúng schema sau:
+
+{
+  "topic": "chủ đề rút ra từ tín hiệu viral (vấn đề/nhu cầu khán giả)",
+  "source_analysis": "phân tích nguồn: hook, claim chính, format, phản ứng khán giả. KHÔNG copy câu chữ nguồn",
+  "angles": ["góc mới 1 (1 câu)", "góc mới 2 (1 câu)", "góc mới 3 (1 câu)"],
+  "chosen_angle": "góc đã chọn — phải là 1 trong 3 góc trên",
+  "originality": {"o1": true, "o2": true, "o3": true, "o4": true, "o5": true},
+  "hook": "câu hook mở đầu video (tự viết, không copy nguồn)",
+  "body": "kịch bản đầy đủ: phân cảnh, lời thoại/voice-over, text trên màn hình, thời lượng từng đoạn",
+  "caption": "caption đăng bài: 1 HOOK + 2-3 câu ngắn + 1 CTA (ghi 'link trong bio', KHÔNG dán URL trần) + 5-8 hashtag",
+  "claims": [{"text": "nội dung claim", "claim_type": "fact|interpretation|forecast|allegation|opinion", "risk_level": "low|medium|high|critical", "confidence": "confirmed|probable|disputed|unverified"}],
+  "disclosure": {"affiliate": false, "sponsored": false, "ai_voice": false, "ai_visual": false, "music_source": ""},
+  "risk": {"c": 0, "p": 0, "l": 0, "a": 0, "m": 0, "h": 0},
+  "ai_voice_used": false
+}
+
+Nguyên tắc ràng buộc (bắt buộc tuân thủ):
+- O1-O5 originality: O1 bỏ video nguồn ra video vẫn đứng độc lập; O2 hook/cấu trúc/kết luận là của mình; O3 không dùng lại câu chữ/montage/nhạc/nhịp dựng/thumbnail của nguồn; O4 video KHÔNG thay thế nhu cầu xem video nguồn; O5 giải thích được giá trị mới trong 1 câu. Nếu góc nào trượt câu nào thì đặt false cho câu đó và vẫn trả đủ 3 góc — hệ thống sẽ từ chối góc trượt.
+- Claim risk high/critical mà confidence là unverified thì KHÔNG được đưa vào, hoặc hạ wording thành ý kiến ("nguồn X nói").
+- Viết tiếng Việt, ngắn gọn, đúng trọng tâm.`
+
+  /** Tách URL đầu tiên trong nội dung nguồn → viralSourceUrl. */
+  private extractFirstUrl(content: string): string | null {
+    const m = content.match(/https?:\/\/[^\s)"'\]]+/)
+    return m ? m[0] : null
+  }
+
+  private parseAutoBuildJson(raw: string): Record<string, any> {
+    const cleaned = raw.replace(/```json\s*/gi, '').replace(/```/g, '').trim()
+    const m = cleaned.match(/\{[\s\S]*\}/)
+    if (!m) throw new BadRequestException('AI không trả về JSON hợp lệ — hãy thử lại.')
+    try {
+      return JSON.parse(m[0])
+    } catch {
+      throw new BadRequestException('AI không trả về JSON hợp lệ — hãy thử lại.')
+    }
+  }
+
+  private titleFromCaption(caption: string, fallback: string): string {
+    const firstLine = caption
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0)
+    const base = firstLine || fallback
+    return base.length > 80 ? base.slice(0, 77) + '…' : base
+  }
+
+  /**
+   * Auto-build: từ nội dung nguồn (tin nhắn AI) → AI phân tích theo quy chuẩn
+   * pipeline faceless (G0 originality, claim guardrails, 3-block contract) →
+   * tự điền đầy đủ project: brief, góc, kịch bản, caption, claim ledger,
+   * AI register, risk score. Trả về id project để mở pipeline kiểm duyệt.
+   */
+  async autoBuildFromSource(workspaceId: string, dto: AutoBuildVideoDto) {
+    const content = dto.content.trim()
+    const viralSourceUrl = this.extractFirstUrl(content)
+
+    // 1. Chọn provider: ưu tiên providerId được chỉ định, ngược lại lấy key
+    //    đã kết nối đầu tiên theo FALLBACK_PRIORITY.
+    const conns = await this.prisma.aiConnection.findMany({
+      where: { workspaceId, status: 'active' },
+    })
+    if (conns.length === 0) {
+      throw new BadRequestException(
+        'Chưa kết nối AI Pro. Hãy vào Cài đặt → AI Pro để nhập API key trước.',
+      )
+    }
+    const rank = new Map(FALLBACK_PRIORITY.map((id, i) => [id, i]))
+    const sorted = [...conns].sort(
+      (a, b) => (rank.get(a.provider as AiProviderId) ?? 99) - (rank.get(b.provider as AiProviderId) ?? 99),
+    )
+    const picked =
+      (dto.providerId && conns.find((c) => c.provider === dto.providerId)) || sorted[0]
+    const meta = getProviderMeta(picked.provider)
+    if (!meta) throw new BadRequestException('Provider không được hỗ trợ.')
+    const model = dto.model?.trim() || meta.defaultModel
+
+    // 2. AI phân tích + sinh brief/script theo schema JSON (1 call duy nhất).
+    const aiRes = await this.ai.chat(
+      workspaceId,
+      {
+        provider: meta.id,
+        model,
+        maxTokens: 2048,
+        messages: [
+          { role: 'system', content: VideoService.AUTO_BUILD_SYSTEM },
+          { role: 'user', content: `NỘI DUNG NGUỒN:\n${content}` },
+        ],
+      } as any,
+      undefined,
+    )
+    const data = this.parseAutoBuildJson(aiRes.content ?? '')
+
+    // 3. Guardrail G0 originality — tool TỪ CHỐI khi góc trượt O1–O5.
+    const briefResult = await videoBriefTool.execute(
+      {
+        topic: data['topic'] ?? '',
+        source_analysis: data['source_analysis'] ?? '',
+        angles: data['angles'],
+        chosen_angle: data['chosen_angle'],
+        originality: data['originality'],
+      },
+      { workspaceId },
+    )
+    if (briefResult.startsWith('TỪ CHỐI') || briefResult.startsWith('G0 FAIL')) {
+      throw new BadRequestException(briefResult)
+    }
+
+    // 4. Guardrail claim — tool TỪ CHỐI khi có claim high/critical unverified.
+    const claims = Array.isArray(data['claims']) ? data['claims'] : []
+    const scriptResult = await videoScriptTool.execute(
+      {
+        hook: data['hook'] ?? '',
+        body: data['body'] ?? '',
+        caption: data['caption'] ?? '',
+        claims,
+        disclosure: data['disclosure'] ?? {},
+      },
+      { workspaceId },
+    )
+    if (scriptResult.startsWith('TỪ CHỐI')) {
+      throw new BadRequestException(scriptResult)
+    }
+
+    // 5. Nạp đầy đủ vào project.
+    const caption: string = String(data['caption'] ?? '').trim()
+    const hook: string = String(data['hook'] ?? '').trim()
+    if (!caption && !hook) {
+      throw new BadRequestException('AI không sinh được kịch bản/caption — hãy thử lại với nội dung nguồn rõ ràng hơn.')
+    }
+    const project = await this.createProject(workspaceId, {
+      title: this.titleFromCaption(caption, hook || 'Video từ AI'),
+      viralSourceUrl: viralSourceUrl ?? undefined,
+    })
+    const briefJson = JSON.stringify({
+      topic: data['topic'],
+      source_analysis: data['source_analysis'],
+      angles: data['angles'],
+      chosen_angle: data['chosen_angle'],
+      originality: 'G0 PASS (O1–O5 = YES)',
+      generated_by: `${meta.name} / ${model}`,
+    })
+    // Khối ## LƯU Ý ĐĂNG BÀI do tool sinh (disclosure) + ghi chú nguồn gốc.
+    const notesBlock = scriptResult.includes('## LƯU Ý ĐĂNG BÀI')
+      ? scriptResult.split('## LƯU Ý ĐĂNG BÀI')[1].trim()
+      : ''
+    await this.updateProject(workspaceId, project.id, {
+      sourceNote: String(data['source_analysis'] ?? ''),
+      stage: 'script',
+      angle: String(data['chosen_angle'] ?? ''),
+      briefJson,
+      script: String(data['body'] ?? ''),
+      caption,
+      publishNotes: notesBlock,
+    })
+
+    // 6. Claim ledger: mỗi claim một dòng để kiểm chứng.
+    const claimTypes = ['fact', 'interpretation', 'forecast', 'allegation', 'opinion']
+    const riskLevels = ['low', 'medium', 'high', 'critical']
+    const confidences = ['confirmed', 'probable', 'disputed', 'unverified']
+    let claimCount = 0
+    for (const c of claims.slice(0, 20)) {
+      const text = String(c?.['text'] ?? '').trim()
+      if (!text) continue
+      await this.addClaim(workspaceId, project.id, {
+        claimText: text.slice(0, 2000),
+        claimType: claimTypes.includes(c?.['claim_type']) ? c['claim_type'] : 'opinion',
+        riskLevel: riskLevels.includes(c?.['risk_level']) ? c['risk_level'] : 'low',
+        confidence: confidences.includes(c?.['confidence']) ? c['confidence'] : 'unverified',
+      } as CreateVideoClaimDto)
+      claimCount++
+    }
+
+    // 7. AI register: ghi nhận AI đã tham gia dựng kịch bản/caption (A1).
+    await this.addAiEntry(workspaceId, project.id, {
+      assetName: 'Kịch bản + caption (AI auto-build)',
+      tool: `${meta.name} / ${model}`.slice(0, 120),
+      inputSource: 'Nội dung nguồn từ AI Chat/Copilot',
+      outputUse: 'Kịch bản quay + caption đăng bài',
+      category: 'A1',
+      realPerson: false,
+    })
+
+    // 8. Risk score theo đánh giá của AI (R = C+P+L+A+M+H + veto).
+    const r = (data['risk'] ?? {}) as Record<string, unknown>
+    const clamp03 = (v: unknown) =>
+      typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(3, Math.round(v))) : 0
+    const criticalUnverified = claims.some(
+      (c: any) => c?.['risk_level'] === 'critical' && c?.['confidence'] === 'unverified',
+    )
+    const riskResult = await this.saveRiskScore(workspaceId, project.id, {
+      c: clamp03(r['c']),
+      p: clamp03(r['p']),
+      l: clamp03(r['l']),
+      a: clamp03(r['a']),
+      m: clamp03(r['m']),
+      h: clamp03(r['h']),
+      criticalHealthClaimUnverified: criticalUnverified,
+    })
+
+    return {
+      projectId: project.id,
+      title: project.title,
+      provider: meta.id,
+      model,
+      claimCount,
+      riskScore: riskResult.score,
+      riskDecision: riskResult.decision,
+    }
   }
 
   async getProject(workspaceId: string, id: string) {

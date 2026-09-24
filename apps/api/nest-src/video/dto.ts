@@ -122,6 +122,24 @@ export class UpdateVideoProjectDto {
   contentItemId?: string
 }
 
+/** POST /video/projects/auto-build — tự động dựng project từ nội dung nguồn (tin nhắn AI). */
+export class AutoBuildVideoDto {
+  @IsString()
+  @MinLength(1, { message: 'Nội dung nguồn không được rỗng.' })
+  @MaxLength(20000)
+  content!: string
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  providerId?: string
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  model?: string
+}
+
 /** PATCH /video/projects/:id/gates — cập nhật cổng QA. */
 export class UpdateGatesDto {
   @IsObject()

@@ -25,7 +25,6 @@ import {
   Clapperboard,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { extractShootScript, extractPublishCaption } from '../../components/AICopilotStudio'
 import {
   useAiProviders,
   useAiConnections,
@@ -41,7 +40,7 @@ import {
   deleteChatSession,
   deleteChatMessage,
   clearAllChatSessions,
-  createVideoProjectFromAgent,
+  autoBuildVideoProjectFromSource,
 } from '../../lib/hooks'
 import { ApiError } from '../../lib/api'
 import type {
@@ -263,23 +262,42 @@ export default function AiChatPage() {
   const [mappingIdx, setMappingIdx] = useState<number | null>(null)
   const router = useRouter()
 
-  /** Mapping tin nhắn agent → Video Faceless: tạo project, nạp script + caption, mở pipeline. */
+  /** Mapping tin nhắn → Video Faceless: auto-build đầy đủ theo quy chuẩn pipeline
+   *  (phân tích nguồn → chốt góc G0 → kịch bản/caption → claim ledger →
+   *  AI register → risk score), rồi mở pipeline kiểm duyệt. */
+  const [mappingStatus, setMappingStatus] = useState<string | null>(null)
   const handleMapToVideo = async (idx: number, content: string) => {
-    const script = extractShootScript(content)
-    const caption = extractPublishCaption(content)
-    if (!script && !caption.trim()) {
-      setError('Tin nhắn này không có kịch bản/caption để tạo video.')
+    if (!content.trim()) {
+      setError('Tin nhắn này trống, không có nội dung để dựng video.')
       return
     }
     setMappingIdx(idx)
     setError(null)
+    const stages = [
+      'Đang phân tích nội dung nguồn…',
+      'Đang chốt góc mới (kiểm tra originality G0)…',
+      'Đang viết kịch bản + caption theo quy chuẩn…',
+      'Đang nạp claim ledger, AI register, chấm risk score…',
+    ]
+    let stageIdx = 0
+    setMappingStatus(stages[0])
+    const timer = setInterval(() => {
+      stageIdx = (stageIdx + 1) % stages.length
+      setMappingStatus(stages[stageIdx])
+    }, 4000)
     try {
-      const id = await createVideoProjectFromAgent({ script, caption })
-      router.push(`/video-faceless?project=${id}`)
+      const res = await autoBuildVideoProjectFromSource({
+        content,
+        providerId: providerId || undefined,
+        model: model || undefined,
+      })
+      router.push(`/video-faceless?project=${res.projectId}`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Tạo dự án video thất bại.')
     } finally {
+      clearInterval(timer)
       setMappingIdx(null)
+      setMappingStatus(null)
     }
   }
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -825,6 +843,13 @@ export default function AiChatPage() {
         )}
         <div ref={bottomRef} />
       </div>
+
+      {mappingStatus && (
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-brand-emerald/10 border border-brand-emerald/30 text-brand-emerald text-sm">
+          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+          <span>{mappingStatus}</span>
+        </div>
+      )}
 
       {error && (
         <div className="flex items-start gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">

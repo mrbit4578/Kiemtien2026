@@ -139,3 +139,23 @@ G1 Source · G2 Rights · G3 Originality · G4 Accuracy · G5 AI/privacy · G6 P
 | Disclosure | Output contract thêm khối `## LƯU Ý ĐĂNG BÀI` (AI label, affiliate, nhạc, nguồn claim) | Cải tiến hiện có |
 
 **Gap ghi nhận (chưa làm trong đợt này):** TTS voiceover tích hợp (cần API key + chi phí), dispute workflow tự động (hiện là checklist tay), analytics 48h tự động (hiện xem tay).
+
+## Phần 4 — Auto-build từ mapping (2026-09-24)
+
+Nút 🎬 trên tin nhắn AI Chat Pro và "Tạo Video Faceless" trên AI Copilot không còn
+tạo project trống. Một lần bấm sẽ chạy **auto-build** server-side
+(`POST /video/projects/auto-build`):
+
+1. Server tách URL đầu tiên trong nội dung nguồn → `viralSourceUrl`.
+2. AI (provider đã kết nối, ưu tiên theo `FALLBACK_PRIORITY`) phân tích nội dung
+   nguồn và trả JSON: topic, source_analysis, 3 angles + chosen_angle + tự chấm
+   O1–O5, hook, body, caption, claims, disclosure, risk C/P/L/A/M/H.
+3. Guardrails bắt buộc: `video_brief` (G0 originality — trượt thì từ chối, không
+   tạo project) và `video_script` (chặn claim high/critical unverified).
+4. Tự điền đầy đủ project: tiêu đề, phân tích nguồn, góc đã chọn, brief JSON,
+   kịch bản, caption, ghi chú xuất bản (disclosure) — stage `script`.
+5. Tự nạp claim ledger (mỗi claim một dòng), AI register (A1 — kịch bản +
+   caption do AI dựng), và chấm risk score.
+
+Frontend hiển thị tiến trình theo từng chặng trong lúc chờ. G0 FAIL hoặc claim
+bị chặn sẽ báo rõ lý do để user điều chỉnh nội dung nguồn rồi bấm lại.

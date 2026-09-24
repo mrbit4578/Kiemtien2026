@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 
 import { useSession } from '../context/SessionContext'
-import { useContent, useAiConnections, useAiProviders, sendAgentRun, createVideoProjectFromAgent } from '../lib/hooks'
+import { useContent, useAiConnections, useAiProviders, sendAgentRun, autoBuildVideoProjectFromSource } from '../lib/hooks'
 import { ApiError } from '../lib/api'
 import { AiModelSelector } from './AiModelSelector'
 import { useRouter } from 'next/navigation'
@@ -240,27 +240,47 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
     }
   }
 
-  /** Mapping: tạo Video Faceless project từ Final Answer (kịch bản + caption) rồi điều hướng sang. */
+  /** Mapping: auto-build Video Faceless project từ Final Answer — AI phân tích
+   *  theo đúng quy chuẩn pipeline (G0, claim guardrails) rồi tự điền đầy đủ:
+   *  brief, góc, kịch bản, caption, claim ledger, AI register, risk score. */
+  const [mappingStatus, setMappingStatus] = useState<string | null>(null)
   const handleMapToVideo = async () => {
     const lastStep = steps.find((s) => s.type === 'answer')
     if (!lastStep) {
       setMapError('Chưa có Final Answer — hãy chạy agent xong rồi mới mapping.')
       return
     }
-    const script = extractShootScript(lastStep.content)
-    const caption = extractPublishCaption(lastStep.content)
-    if (!script && !caption.trim()) {
-      setMapError('Không tách được kịch bản/caption từ kết quả agent.')
+    if (!lastStep.content.trim()) {
+      setMapError('Final Answer trống — không có nội dung để dựng video.')
       return
     }
     setMapping(true)
     setMapError(null)
+    const stages = [
+      'Đang phân tích nội dung nguồn…',
+      'Đang chốt góc mới (kiểm tra originality G0)…',
+      'Đang viết kịch bản + caption theo quy chuẩn…',
+      'Đang nạp claim ledger, AI register, chấm risk score…',
+    ]
+    let stageIdx = 0
+    setMappingStatus(stages[0])
+    const timer = setInterval(() => {
+      stageIdx = (stageIdx + 1) % stages.length
+      setMappingStatus(stages[stageIdx])
+    }, 4000)
     try {
-      const id = await createVideoProjectFromAgent({ script, caption })
-      router.push(`/video-faceless?project=${id}`)
+      const res = await autoBuildVideoProjectFromSource({
+        content: lastStep.content,
+        providerId: providerId || undefined,
+        model: model || undefined,
+      })
+      router.push(`/video-faceless?project=${res.projectId}`)
     } catch (err) {
       setMapError(err instanceof ApiError ? err.message : 'Tạo dự án video thất bại.')
       setMapping(false)
+    } finally {
+      clearInterval(timer)
+      setMappingStatus(null)
     }
   }
 
@@ -391,11 +411,11 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
           <button
             onClick={handleMapToVideo}
             disabled={mapping}
-            title="Tạo dự án Video Faceless từ kịch bản + caption này và mở pipeline kiểm duyệt"
+            title="Auto-build Video Faceless: AI phân tích theo quy chuẩn pipeline (G0, claim guardrails) rồi tự điền đầy đủ brief, kịch bản, caption, claim ledger, AI register, risk score"
             className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-brand-emerald to-brand-cyan text-dark-950 font-bold flex items-center gap-1.5 transition-all hover:brightness-110 disabled:opacity-60"
           >
             {mapping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clapperboard className="w-3.5 h-3.5" />}
-            <span>{mapping ? 'Đang tạo dự án…' : 'Tạo Video Faceless'}</span>
+            <span>{mapping ? (mappingStatus ?? 'Đang tạo dự án…') : 'Tạo Video Faceless'}</span>
           </button>
         </div>
         {mapError && (
