@@ -156,10 +156,36 @@ function RagMetaBlocks({ meta }: { meta: RagQueryResult }) {
 
 /* ─── Agent ───────────────────────────────────────────────────────────── */
 
+/** Dòng thông báo khi server tự chuyển sang provider dự phòng (combo key). */
+function FallbackNotice({
+  fallback,
+  nameOf,
+}: {
+  fallback: { from: string; to: string; reason?: string }
+  nameOf: (id: string) => string
+}) {
+  return (
+    <div className="mt-2 flex items-start gap-2 rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2">
+      <span className="text-amber-400 text-xs mt-0.5">⚠️</span>
+      <p className="text-xs text-amber-200/90 leading-relaxed">
+        {nameOf(fallback.from)} gặp lỗi nên đã tự động chuyển sang {nameOf(fallback.to)}.
+        {fallback.reason && <span className="text-amber-200/60"> ({fallback.reason})</span>}
+      </p>
+    </div>
+  )
+}
+
 /** Khối "Quá trình agent" dưới câu trả lời ở chế độ Agent: các tool đã gọi. */
-function AgentMetaBlocks({ meta }: { meta: AgentRunResponse }) {
+function AgentMetaBlocks({
+  meta,
+  nameOf,
+}: {
+  meta: AgentRunResponse
+  nameOf: (id: string) => string
+}) {
   return (
     <div className="mt-3 space-y-3">
+      {meta.fallback && <FallbackNotice fallback={meta.fallback} nameOf={nameOf} />}
       <div className="rounded-xl bg-dark-900/70 border border-white/10 p-3">
         <p className="text-[11px] font-extrabold text-slate-300 uppercase tracking-wide mb-2">
           Quá trình agent · {meta.turns} vòng · {meta.toolCalls.length} tool
@@ -231,6 +257,7 @@ export default function AiChatPage() {
   const activeConns = connections.filter((c) => c.status === 'active')
   const activeMeta = providers.filter((p) => activeConns.some((c) => c.provider === p.id))
   const currentMeta = providers.find((p) => p.id === providerId)
+  const providerNameOf = (id: string) => providers.find((p) => p.id === id)?.name ?? id
 
   // Mặc định chọn provider active đầu tiên
   useEffect(() => {
@@ -274,7 +301,7 @@ export default function AiChatPage() {
         setMessages([...next, { role: 'assistant', content: res.answer, ragMeta: res }])
       } else {
         const res = await sendAiChat(providerId, next, model || undefined)
-        setMessages([...next, { role: 'assistant', content: res.content }])
+        setMessages([...next, { role: 'assistant', content: res.content, fallback: res.fallback }])
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Có lỗi xảy ra. Hãy thử lại.')
@@ -476,8 +503,9 @@ export default function AiChatPage() {
               ) : (
                 <>
                   {renderMarkdown(m.content)}
+                  {m.fallback && <FallbackNotice fallback={m.fallback} nameOf={providerNameOf} />}
                   {m.ragMeta && <RagMetaBlocks meta={m.ragMeta} />}
-                  {m.agentMeta && <AgentMetaBlocks meta={m.agentMeta} />}
+                  {m.agentMeta && <AgentMetaBlocks meta={m.agentMeta} nameOf={providerNameOf} />}
                 </>
               )}
             </div>

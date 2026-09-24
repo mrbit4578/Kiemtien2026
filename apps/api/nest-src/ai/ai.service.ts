@@ -16,6 +16,20 @@ import type { ConnectAiDto, ChatDto, ChatMessageDto } from './dto'
 const VALIDATE_TIMEOUT_MS = 10_000
 const CHAT_TIMEOUT_MS = 90_000
 
+/**
+ * Thứ tự ưu tiên khi tự động chuyển provider (combo key).
+ * Ví dụ: grok qua ExperientialLabs lỗi 429 model_requires_purchase → tự chuyển
+ * sang OpenAI, rồi Gemini — miễn là workspace đã kết nối key đó.
+ */
+export const FALLBACK_PRIORITY: AiProviderId[] = [
+  'openai',
+  'gemini',
+  'experientiallabs',
+  'deepseek',
+  'anthropic',
+  'xai',
+]
+
 export interface EmbeddingKeyInfo {
   meta: AiProviderMeta
   apiKey: string
@@ -249,18 +263,90 @@ export class AiService {
       )
     }
 
-    let apiKey: string
+    return { meta, apiKey: this.decryptConnKey(conn.keyCipher), connId: conn.id }
+  }
+
+  // ─── Combo fallback: provider chính lỗi → tự chuyển sang key khác ───────────
+
+  /** Chỉ lỗi phía provider/server (5xx) mới đáng thử provider khác. */
+  private isFallbackableError(err: unknown): boolean {
+    return err instanceof HttpException && err.getStatus() >= 500
+  }
+
+  /** Lý do ngắn gọn khi đã tự chuyển provider — không chứa secret (đã sanitize ở providerError). */
+  private fallbackReason(err: unknown): string {
+    const msg = err instanceof Error ? err.message : String(err)
+    return msg.length > 160 ? msg.slice(0, 160) + '…' : msg
+  }
+
+  /** Giải mã key của 1 connection — ném lỗi 500 khi key mã hóa không khớp. */
+  private decryptConnKey(keyCipher: string): string {
     try {
-      apiKey = decrypt(conn.keyCipher)
+      return decrypt(keyCipher)
     } catch {
       throw new InternalServerErrorException(
         'Lỗi giải mã key: TOKEN_ENCRYPTION_KEY chưa được cấu hình đúng.',
       )
     }
-    return { meta, apiKey, connId: conn.id }
   }
 
-  /** POST /ai/chat — giải mã key server-side rồi proxy tới provider. */
+  /** Gọi provider một lần: gọi model + cập nhật lastUsedAt + audit log. */
+  private async runSingleProviderChat(
+    workspaceId: string,
+    meta: AiProviderMeta,
+    apiKey: string,
+    connId: string,
+    model: string,
+    messages: ChatMessageDto[],
+    maxTokens: number,
+    ip?: string,
+  ) {
+    let result: { content: string; usage?: Record<string, unknown> }
+    try {
+      switch (meta.kind) {
+        case 'gemini':
+          result = await this.chatGemini(meta, apiKey, model, messages, maxTokens, connId)
+          break
+        case 'anthropic':
+          result = await this.chatAnthropic(meta, apiKey, model, messages, maxTokens, connId)
+          break
+        default:
+          result = await this.chatOpenAiCompatible(meta, apiKey, model, messages, maxTokens, connId)
+      }
+    } catch (err) {
+      if (err instanceof HttpException) throw err
+      throw new HttpException(
+        `Không kết nối được tới ${meta.name}. Hãy thử lại sau.`,
+        HttpStatus.BAD_GATEWAY,
+      )
+    }
+
+    await this.prisma.aiConnection.update({
+      where: { id: connId },
+      data: { lastUsedAt: new Date() },
+    })
+    await this.audit.log({
+      workspaceId,
+      actorId: workspaceId,
+      action: 'ai_chat',
+      provider: meta.id,
+      entityType: 'ai_connection',
+      targetId: connId,
+      result: 'success',
+      // Chỉ log metadata — KHÔNG log nội dung chat của user
+      metadata: { model, messageCount: messages.length },
+      ip,
+    })
+
+    return { content: result.content, model, usage: result.usage ?? null, provider: meta.id }
+  }
+
+  /**
+   * POST /ai/chat — giải mã key server-side rồi proxy tới provider.
+   * Combo fallback: provider chính lỗi (5xx/timeout/key hỏng) → tự động thử
+   * các key khác đã kết nối theo FALLBACK_PRIORITY. Response kèm `fallback`
+   * để frontend hiển thị cho user biết đã chuyển provider.
+   */
   async chat(workspaceId: string, dto: ChatDto, ip?: string) {
     const meta = getProviderMeta(dto.provider)
     if (!meta) throw new BadRequestException('Provider không được hỗ trợ.')
@@ -274,56 +360,72 @@ export class AiService {
       )
     }
 
-    let apiKey: string
-    try {
-      apiKey = decrypt(conn.keyCipher)
-    } catch {
-      throw new InternalServerErrorException(
-        'Lỗi giải mã key: TOKEN_ENCRYPTION_KEY chưa được cấu hình đúng.',
-      )
-    }
-
     const model = dto.model?.trim() || meta.defaultModel
     const maxTokens = dto.maxTokens ?? 1024
 
+    // Thử provider chính trước
+    let primaryError: unknown = null
     try {
-      let result: { content: string; usage?: Record<string, unknown> }
-      switch (meta.kind) {
-        case 'gemini':
-          result = await this.chatGemini(meta, apiKey, model, dto.messages, maxTokens, conn.id)
-          break
-        case 'anthropic':
-          result = await this.chatAnthropic(meta, apiKey, model, dto.messages, maxTokens, conn.id)
-          break
-        default:
-          result = await this.chatOpenAiCompatible(meta, apiKey, model, dto.messages, maxTokens, conn.id)
-      }
-
-      await this.prisma.aiConnection.update({
-        where: { id: conn.id },
-        data: { lastUsedAt: new Date() },
-      })
-      await this.audit.log({
+      const apiKey = this.decryptConnKey(conn.keyCipher)
+      return await this.runSingleProviderChat(
         workspaceId,
-        actorId: workspaceId,
-        action: 'ai_chat',
-        provider: meta.id,
-        entityType: 'ai_connection',
-        targetId: conn.id,
-        result: 'success',
-        // Chỉ log metadata — KHÔNG log nội dung chat của user
-        metadata: { model, messageCount: dto.messages.length },
+        meta,
+        apiKey,
+        conn.id,
+        model,
+        dto.messages,
+        maxTokens,
         ip,
-      })
-
-      return { content: result.content, model, usage: result.usage ?? null, provider: meta.id }
-    } catch (err) {
-      if (err instanceof HttpException) throw err
-      throw new HttpException(
-        `Không kết nối được tới ${meta.name}. Hãy thử lại sau.`,
-        HttpStatus.BAD_GATEWAY,
       )
+    } catch (err) {
+      primaryError = err
     }
+
+    // Lỗi do user (400) thì không fallback — báo thẳng
+    if (!this.isFallbackableError(primaryError)) throw primaryError
+
+    // Tìm key dự phòng: các connection active khác, xếp theo thứ tự ưu tiên
+    const others = await this.prisma.aiConnection.findMany({
+      where: { workspaceId, status: 'active', provider: { not: meta.id } },
+    })
+    const rank = new Map(FALLBACK_PRIORITY.map((id, i) => [id, i]))
+    others.sort(
+      (a, b) =>
+        (rank.get(a.provider as AiProviderId) ?? 99) - (rank.get(b.provider as AiProviderId) ?? 99),
+    )
+
+    for (const fbConn of others) {
+      const fbMeta = getProviderMeta(fbConn.provider)
+      if (!fbMeta) continue
+      try {
+        const fbKey = this.decryptConnKey(fbConn.keyCipher)
+        // Model của provider chính có thể không tồn tại ở provider dự phòng
+        // → dùng defaultModel của provider dự phòng
+        const fbResult = await this.runSingleProviderChat(
+          workspaceId,
+          fbMeta,
+          fbKey,
+          fbConn.id,
+          fbMeta.defaultModel,
+          dto.messages,
+          maxTokens,
+          ip,
+        )
+        return {
+          ...fbResult,
+          fallback: {
+            from: meta.id,
+            to: fbMeta.id,
+            reason: this.fallbackReason(primaryError),
+          },
+        }
+      } catch {
+        // Thử provider tiếp theo
+      }
+    }
+
+    // Không có provider dự phòng nào chạy được → ném lỗi gốc của provider chính
+    throw primaryError
   }
 
   /** Thay key bằng [redacted] trong mọi message lỗi trước khi trả về client. */
@@ -343,25 +445,29 @@ export class AiService {
     const conns = await this.prisma.aiConnection.findMany({
       where: { workspaceId, status: 'active' },
     })
-    const chosen =
-      conns.find((c) => c.provider === 'openai') ?? conns.find((c) => c.provider === 'gemini')
-    if (!chosen) {
+    // Combo key: ưu tiên OpenAI rồi Gemini — thử giải mã từng key, key nào
+    // giải mã được thì dùng (chống lệch TOKEN_ENCRYPTION_KEY giữa các deploy).
+    const ordered = [
+      conns.find((c) => c.provider === 'openai'),
+      conns.find((c) => c.provider === 'gemini'),
+    ].filter((c): c is (typeof conns)[number] => Boolean(c))
+    if (ordered.length === 0) {
       throw new BadRequestException(
         'Chưa có API key nào để tạo embedding. Hãy vào Cài đặt → AI Pro để thêm key OpenAI (khuyến nghị) hoặc Gemini.',
       )
     }
-    const meta = getProviderMeta(chosen.provider)
-    if (!meta) {
-      throw new BadRequestException('Provider không được hỗ trợ.')
+    for (const chosen of ordered) {
+      const meta = getProviderMeta(chosen.provider)
+      if (!meta) continue
+      try {
+        const apiKey = decrypt(chosen.keyCipher)
+        // KHÔNG log apiKey
+        return { meta, apiKey, dims: 1536 }
+      } catch {
+        // Thử key tiếp theo
+      }
     }
-    let apiKey: string
-    try {
-      apiKey = decrypt(chosen.keyCipher)
-    } catch {
-      throw new InternalServerErrorException('Lỗi giải mã key: TOKEN_ENCRYPTION_KEY chưa đúng.')
-    }
-    // KHÔNG log apiKey
-    return { meta, apiKey, dims: 1536 }
+    throw new InternalServerErrorException('Lỗi giải mã key: TOKEN_ENCRYPTION_KEY chưa đúng.')
   }
 
   /**

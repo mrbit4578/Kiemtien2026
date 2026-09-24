@@ -87,6 +87,8 @@ export interface ChatMessage {
   ragMeta?: RagQueryResult
   /** Metadata agent khi message được tạo ở chế độ Agent (không có ở chat thường) */
   agentMeta?: AgentRunResponse
+  /** Khi server tự chuyển provider dự phòng (combo key) */
+  fallback?: { from: string; to: string; reason?: string }
 }
 
 /* ─── AI Agent (gọi tools) ───────────────────────────────────────────── */
@@ -108,6 +110,8 @@ export interface AgentRunResponse {
   turns: number
   stoppedReason: string
   toolCalls: AgentToolCall[]
+  /** Có mặt khi server tự chuyển sang provider dự phòng (combo key) */
+  fallback?: { from: string; to: string }
 }
 
 /* ─── RAG / Kho tri thức ───────────────────────────────────────────── */
@@ -171,4 +175,6 @@ export interface ChatResponse {
   model: string
   usage: Record<string, unknown> | null
   provider: string
+  /** Có mặt khi server tự chuyển sang provider dự phòng (combo key) */
+  fallback?: { from: string; to: string; reason: string }
 }

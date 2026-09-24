@@ -3,7 +3,8 @@ import { AiService } from '../ai/ai.service'
 import { RagService } from '../rag/rag.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
-import { getProviderMeta } from '../ai/ai.providers'
+import { getProviderMeta, type AiProviderId } from '../ai/ai.providers'
+import { FALLBACK_PRIORITY } from '../ai/ai.service'
 import { ToolRegistry, type ToolDefinition } from './tool-registry'
 import {
   runAgent,
@@ -102,12 +103,36 @@ export class AgentService {
     }
   }
 
+  /**
+   * Combo fallback cho agent: lấy key provider chính, nếu lỗi phía server (5xx:
+   * key giải mã lỗi, provider sập, hết quota…) thì tự thử các key khác đã kết
+   * nối theo FALLBACK_PRIORITY. Lỗi do user (400: chưa kết nối…) thì báo thẳng.
+   */
+  private async resolveAgentKey(workspaceId: string, provider: AiProviderId) {
+    try {
+      const primary = await this.aiService.getChatKey(workspaceId, provider)
+      return { ...primary, fallback: null as { from: string; to: string } | null }
+    } catch (err) {
+      const status = err instanceof HttpException ? err.getStatus() : 0
+      if (status < 500) throw err
+      for (const fbId of FALLBACK_PRIORITY.filter((id) => id !== provider)) {
+        try {
+          const fb = await this.aiService.getChatKey(workspaceId, fbId)
+          return { ...fb, fallback: { from: provider, to: fbId } }
+        } catch {
+          // Thử key tiếp theo
+        }
+      }
+      throw err
+    }
+  }
+
   /** POST /ai/agent/run */
   async run(workspaceId: string, dto: AgentRunDto, ip?: string) {
     const meta = getProviderMeta(dto.provider)
     if (!meta) throw new BadRequestException('Provider không được hỗ trợ.')
 
-    const { apiKey, connId } = await this.aiService.getChatKey(workspaceId, dto.provider)
+    const { meta: runMeta, apiKey, connId, fallback } = await this.resolveAgentKey(workspaceId, dto.provider)
     // KHÔNG log apiKey ở bất cứ đâu trong hàm này
 
     const registry = this.buildRegistry(workspaceId)
@@ -121,9 +146,11 @@ export class AgentService {
       tools = tools.filter((t) => allow.has(t.name))
     }
 
-    const model = dto.model?.trim() || meta.defaultModel
+    // Đã fallback sang provider khác → dùng defaultModel của provider đó
+    // (model user chọn có thể không tồn tại ở provider dự phòng)
+    const model = fallback ? runMeta.defaultModel : dto.model?.trim() || runMeta.defaultModel
     const maxTokens = dto.maxTokens ?? 2048
-    const backend = this.buildBackend(meta.kind, meta.baseUrl, apiKey, model, maxTokens)
+    const backend = this.buildBackend(runMeta.kind, runMeta.baseUrl, apiKey, model, maxTokens)
 
     const messages: AgentMessage[] = [
       { role: 'system', content: buildAgentSystemPrompt(tools.map((t) => t.name)) },
@@ -147,7 +174,7 @@ export class AgentService {
         workspaceId,
         actorId: workspaceId,
         action: 'ai_agent_run',
-        provider: meta.id,
+        provider: runMeta.id,
         entityType: 'ai_connection',
         targetId: connId,
         result: 'success',
@@ -164,7 +191,7 @@ export class AgentService {
       return {
         content: result.content,
         model,
-        provider: meta.id,
+        provider: runMeta.id,
         turns: result.turns,
         stoppedReason: result.stoppedReason,
         toolCalls: result.toolCalls.map((t) => ({
@@ -174,6 +201,7 @@ export class AgentService {
           truncated: t.truncated,
           output: t.output,
         })),
+        ...(fallback ? { fallback } : {}),
       }
     } catch (err) {
       if (err instanceof HttpException) throw err
@@ -184,14 +212,14 @@ export class AgentService {
           .update({ where: { id: connId }, data: { status: 'invalid' } })
           .catch(() => {})
         throw new HttpException(
-          `API key ${meta.name} đã bị từ chối (có thể đã bị thu hồi). Hãy kết nối lại key mới.`,
+          `API key ${runMeta.name} đã bị từ chối (có thể đã bị thu hồi). Hãy kết nối lại key mới.`,
           HttpStatus.BAD_GATEWAY,
         )
       }
       // Sanitize: thay key bằng [redacted] nếu chẳng may lọt vào message
       const safe = message.split(apiKey).join('[redacted]').slice(0, 500)
       throw new HttpException(
-        `Agent chạy lỗi qua ${meta.name}: ${safe}`,
+        `Agent chạy lỗi qua ${runMeta.name}: ${safe}`,
         HttpStatus.BAD_GATEWAY,
       )
     }
