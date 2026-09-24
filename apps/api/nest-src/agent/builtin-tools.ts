@@ -203,6 +203,8 @@ export function makeRenderVideoTool(
     clips: Array<{ source: string; start?: number; duration?: number }>
     captions?: Array<{ text: string; start: number; duration: number }>
     effectId?: string
+    width?: number
+    height?: number
   }) => Promise<{ id: string; status: string }>,
 ): ToolDefinition {
   return {
@@ -250,6 +252,14 @@ export function makeRenderVideoTool(
           type: 'string',
           description: 'ID hiệu ứng phủ toàn video (lấy từ render_video catalogue — hiện để trống nếu chưa biết).',
         },
+        width: {
+          type: 'number',
+          description: 'Chiều rộng px (144–4096, bỏ qua = 1080). Dùng 720 khi server yếu RAM.',
+        },
+        height: {
+          type: 'number',
+          description: 'Chiều cao px (144–4096, bỏ qua = 1920). Dùng 1280 khi server yếu RAM.',
+        },
       },
       required: ['name', 'clips'],
       additionalProperties: false,
@@ -261,6 +271,8 @@ export function makeRenderVideoTool(
           clips: args['clips'] as Array<{ source: string; start?: number; duration?: number }>,
           captions: args['captions'] as Array<{ text: string; start: number; duration: number }> | undefined,
           effectId: args['effectId'] as string | undefined,
+          width: args['width'] as number | undefined,
+          height: args['height'] as number | undefined,
         })
         return `Đã xếp job render video "${args['name']}" (id ${job.id}, trạng thái ${job.status}). Hỏi tôi "trạng thái job ${job.id}" để kiểm tra tiến độ và lấy link tải MP4.`
       } catch (err) {
