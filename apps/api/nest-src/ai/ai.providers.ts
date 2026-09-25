@@ -96,10 +96,10 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     id: 'apmix',
     name: 'Apmix',
     keyUrl: 'https://apmix.ai/dashboard',
-    models: ['deepseek-v4.1-flash-free', 'deepseek-v4-flash-free'],
-    defaultModel: 'deepseek-v4.1-flash-free',
+    models: ['deepseek/deepseek-v4-flash-free', 'openai/gpt-6-luna-free'],
+    defaultModel: 'deepseek/deepseek-v4-flash-free',
     description:
-      'Miễn phí 4M tokens — 2 model DeepSeek free (v4 Flash / v4.1 Flash), nhập key là chạy ngay.',
+      'Miễn phí — model DeepSeek free + GPT free qua Apmix (ID dạng hãng/tên-model), nhập key là chạy ngay.',
     baseUrl: 'https://api.apmix.ai/v1',
     kind: 'openai-compatible',
   },
