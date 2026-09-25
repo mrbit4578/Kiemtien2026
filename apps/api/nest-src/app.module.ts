@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common'
 import { APP_GUARD } from '@nestjs/core'
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler'
+import { ApiKeyGuard } from './common/api-key.guard'
 import { PrismaModule } from './prisma/prisma.module'
 import { AuditModule } from './audit/audit.module'
 import { AuthModule } from './auth/auth.module'
@@ -33,6 +34,10 @@ import { VideoModule } from './video/video.module'
     RenderModule,
     VideoModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // API key server-to-server (X-API-Key): không header → giữ nguyên flow session.
+    { provide: APP_GUARD, useClass: ApiKeyGuard },
+  ],
 })
 export class AppModule {}

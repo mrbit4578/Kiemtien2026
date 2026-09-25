@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
+import { PublishWebhookService } from './publish-webhook.service'
 import { getConnector } from '../common/provider-registry'
 import { encrypt } from '@orh/crypto'
 import { OrhError, detectMediaKind } from '@orh/shared'
@@ -187,6 +188,7 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditLogService,
+    private readonly webhook: PublishWebhookService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -303,6 +305,17 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
         },
       })
       this.logger.log(`Publish job ${job.id} thành công (${result.platformPostId}).`)
+      // Bắn webhook outbound cho Make (Publish Sentinel) — service này không
+      // bao giờ throw nên worker an toàn dù webhook chết.
+      await this.webhook.notify('publish.succeeded', {
+        jobId: job.id,
+        contentId: job.contentItemId,
+        workspaceId: job.workspaceId,
+        platform: job.connection.provider,
+        status: 'done',
+        platformPostId: result.platformPostId,
+        url: result.url,
+      })
     } catch (err) {
       const attempts = job.attempts // đã increment lúc claim
       const decision = decideRetry(err, attempts)
@@ -341,6 +354,14 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
           metadata: { contentId: job.contentItemId, error: message.slice(0, 500) },
         })
         this.logger.error(`Publish job ${job.id} ${decision.status}: ${message}`)
+        await this.webhook.notify('publish.failed', {
+          jobId: job.id,
+          contentId: job.contentItemId,
+          workspaceId: job.workspaceId,
+          platform: job.connection.provider,
+          status: decision.status,
+          error: message.slice(0, 500),
+        })
       }
     }
   }
