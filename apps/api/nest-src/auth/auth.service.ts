@@ -6,7 +6,7 @@ import {
   InternalServerErrorException,
   ServiceUnavailableException,
 } from '@nestjs/common'
-import { OAuthNotConfiguredError } from '@orh/connectors'
+import { OAuthNotConfiguredError, oauthCallbackUrl } from '@orh/connectors'
 import { createHash } from 'crypto'
 import * as bcrypt from 'bcryptjs'
 import {
@@ -44,10 +44,12 @@ export class AuthService {
     private readonly audit: AuditLogService,
   ) {}
 
+  /**
+   * Dựng callback URL — dùng chung helper với connector để hai phía luôn
+   * sinh ra đúng cùng một chuỗi (chuẩn hóa trailing slash của API_URL).
+   */
   private callbackUrl(providerName: string): string {
-    const apiUrl = process.env.API_URL
-    if (!apiUrl) throw new InternalServerErrorException('API_URL chưa được cấu hình.')
-    return `${apiUrl}/auth/${providerName}/callback`
+    return oauthCallbackUrl(providerName)
   }
 
   async startOAuth(providerName: string, session: Record<string, any>, ip?: string) {

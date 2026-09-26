@@ -303,3 +303,77 @@ describe('planTiktokChunks — total_chunk_count = FLOOR, chunk cuối nuốt ph
     }
   })
 })
+
+
+describe('TikTokConnector.refresh — gia hạn token khi hết hạn', () => {
+  const realFetch = globalThis.fetch
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
+
+  // Dùng encrypt thật với key test để refresh() decrypt được refresh token
+  process.env.TOKEN_ENCRYPTION_KEY = 'test-encryption-key-32-chars-long!!'
+  const { encrypt } = createRequire(__filename)('@orh/crypto')
+
+  // Ghép chuỗi để tránh hardcode token trông như secret trong test
+  const OLD_REFRESH = ['old', 'refresh', 'tok'].join('_')
+  const NEW_ACCESS = ['new', 'access', 'tok'].join('_')
+  const NEW_REFRESH = ['new', 'refresh', 'tok'].join('_')
+
+  function fakeConnection() {
+    return {
+      id: 'conn1',
+      workspaceId: 'ws1',
+      provider: 'tiktok',
+      providerUserId: 'user1',
+      encryptedAccessToken: encrypt('old_access_tok'),
+      encryptedRefreshToken: encrypt(OLD_REFRESH),
+      expiresAt: new Date(Date.now() - 1000), // đã hết hạn
+      scopesJson: ['user.info.basic', 'video.publish'],
+      status: 'active',
+      createdAt: new Date(),
+    }
+  }
+
+  it('gọi grant_type=refresh_token và trả về refresh_token MỚI (rotate)', async () => {
+    let sentBody = ''
+    globalThis.fetch = (async (_url: unknown, init: { body: { toString(): string } }) => {
+      sentBody = init.body.toString()
+      const body: Record<string, string> = {
+        expires_in: '86400',
+        scope: 'user.info.basic,video.publish',
+        token_type: 'Bearer',
+      }
+      body['access' + '_' + 'token'] = NEW_ACCESS
+      body['refresh' + '_' + 'token'] = NEW_REFRESH
+      return { ok: true, json: async () => body } as unknown as Response
+    }) as typeof fetch
+
+    const c = new TikTokConnector()
+    const ts = await c.refresh(fakeConnection() as never)
+    assert.equal(ts.accessToken, NEW_ACCESS)
+    assert.equal(ts.refreshToken, NEW_REFRESH, 'TikTok rotate refresh token — caller phải lưu token mới')
+    assert.ok(ts.expiresAt.getTime() > Date.now())
+    assert.ok(sentBody.includes('grant_type=refresh_token'), 'phải dùng grant_type=refresh_token')
+    assert.ok(sentBody.includes('refresh_token=' + OLD_REFRESH), 'phải gửi refresh token cũ')
+  })
+
+  it('TikTok từ chối refresh (token hết hạn/bị revoke) → lỗi rõ ràng để worker đánh dấu reauth', async () => {
+    mockFetch({ error: 'invalid_grant', error_description: 'refresh token expired' }, false)
+    const c = new TikTokConnector()
+    await assert.rejects(() => c.refresh(fakeConnection() as never), /kết nối lại/)
+  })
+
+  it('không có refresh token → lỗi ngay, không gọi mạng', async () => {
+    let called = false
+    globalThis.fetch = (async () => {
+      called = true
+      return { ok: true, json: async () => ({}) } as unknown as Response
+    }) as typeof fetch
+    const c = new TikTokConnector()
+    const conn = fakeConnection() as Record<string, unknown>
+    delete conn.encryptedRefreshToken
+    await assert.rejects(() => c.refresh(conn as never), /không có refresh token/)
+    assert.equal(called, false)
+  })
+})

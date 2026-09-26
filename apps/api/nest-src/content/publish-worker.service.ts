@@ -418,13 +418,33 @@ export class PublishWorkerService implements OnModuleInit, OnModuleDestroy {
     // Token hết hạn → thử refresh một lần trước khi publish
     if (sharedConnection.expiresAt.getTime() < Date.now()) {
       try {
+        if (typeof connector.refresh !== 'function') {
+          throw new OrhError(
+            'PROVIDER_REAUTH_REQUIRED',
+            `${connection.provider}: connector chưa hỗ trợ refresh token.`,
+            false,
+            connection.provider,
+          )
+        }
         const refreshed = await connector.refresh(sharedConnection)
         const encrypted = encrypt(refreshed.accessToken)
+        // Một số provider (TikTok) ROTATE refresh token mỗi lần refresh —
+        // phải lưu token mới, nếu không lần refresh kế tiếp sẽ fail.
+        const encryptedRefresh = refreshed.refreshToken
+          ? encrypt(refreshed.refreshToken)
+          : undefined
         await this.prisma.connection.update({
           where: { id: connection.id },
-          data: { encryptedAccessToken: encrypted, expiresAt: refreshed.expiresAt },
+          data: {
+            encryptedAccessToken: encrypted,
+            ...(encryptedRefresh ? { encryptedRefreshToken: encryptedRefresh } : {}),
+            expiresAt: refreshed.expiresAt,
+            status: 'active',
+            lastError: null,
+          },
         })
         sharedConnection.encryptedAccessToken = encrypted
+        if (encryptedRefresh) sharedConnection.encryptedRefreshToken = encryptedRefresh
         sharedConnection.expiresAt = refreshed.expiresAt
         this.logger.log(`Đã refresh token cho connection ${connection.id} (${connection.provider}).`)
       } catch {

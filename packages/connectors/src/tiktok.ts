@@ -1,5 +1,5 @@
 import type { SocialConnector } from './interface';
-import { requiredEnv } from './env';
+import { requiredEnv, oauthCallbackUrl } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider, PublishInput, PublishResult, MediaKind } from '@orh/shared'
 import { buildOAuthUrl, validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -50,7 +50,17 @@ export const TIKTOK_MANIFEST: PermissionManifest = {
 }
 
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize'
-const ALLOWED_REDIRECT_URIS = [`${process.env.API_URL}/auth/tiktok/callback`]
+/**
+ * Allowlist redirect URI — tính LAZY (lúc gọi) thay vì lúc module load, để
+ * luôn dùng API_URL hiện hành và được chuẩn hóa (cắt trailing slash).
+ * URI này PHẢI khớp từng ký tự với Redirect URI đã đăng ký trong TikTok
+ * Developer Dashboard (Login Kit) — nếu TikTok báo lỗi `redirect_uri` ở
+ * trang authorize, nghĩa là dashboard còn lưu URL cũ (ví dụ sau khi đổi
+ * domain API service), cần vào dashboard sửa lại, không phải lỗi code.
+ */
+function allowedRedirectUris(): string[] {
+  return [oauthCallbackUrl('tiktok')]
+}
 
 const TIKTOK_API_BASE = 'https://open.tiktokapis.com'
 /** Kích thước mỗi chunk upload (10MB — đúng ví dụ trong docs TikTok). */
@@ -118,7 +128,7 @@ export class TikTokConnector implements SocialConnector {
   manifest(): PermissionManifest { return TIKTOK_MANIFEST }
 
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     return buildOAuthUrl(TIKTOK_AUTH_URL, {
       clientId: requiredEnv('tiktok', 'TIKTOK_CLIENT_KEY'),
       redirectUri: input.redirectUri,
@@ -138,7 +148,7 @@ export class TikTokConnector implements SocialConnector {
   }
 
   async exchangeCode(input: OAuthCallbackInput): Promise<TokenSet> {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     const res = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -163,6 +173,50 @@ export class TikTokConnector implements SocialConnector {
     }
     return {
       accessToken: d.access_token,
+      refreshToken: d.refresh_token,
+      expiresAt: new Date(Date.now() + (d.expires_in ?? 86400) * 1000),
+      scopes: (d.scope ?? '').split(',').filter(Boolean),
+      tokenType: 'Bearer',
+    }
+  }
+
+  /**
+   * Refresh access token — TikTok hỗ trợ grant_type=refresh_token.
+   * QUAN TRỌNG: TikTok ROTATE refresh token — mỗi lần refresh thành công trả
+   * về refresh_token MỚI, token cũ bị vô hiệu ngay. Caller (publish worker)
+   * BẮT BUỘC lưu refreshToken mới vào DB, nếu không lần refresh kế tiếp sẽ
+   * fail vì dùng token cũ đã bị revoke.
+   * Docs: https://developers.tiktok.com/docs/en/oauth-user-access-token-management
+   */
+  async refresh(connection: Connection): Promise<TokenSet> {
+    const refreshToken = connection.encryptedRefreshToken
+      ? decrypt(connection.encryptedRefreshToken)
+      : undefined
+    if (!refreshToken) {
+      throw new OrhError('PROVIDER_REAUTH_REQUIRED', 'TikTok: không có refresh token để gia hạn.', false, 'tiktok')
+    }
+    const res = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_key: requiredEnv('tiktok', 'TIKTOK_CLIENT_KEY'),
+        client_secret: requiredEnv('tiktok', 'TIKTOK_CLIENT_SECRET'),
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+      }),
+    })
+    if (!res.ok) {
+      // Refresh token hết hạn/bị revoke → user phải kết nối lại (không retry được)
+      throw new OrhError('PROVIDER_REAUTH_REQUIRED', 'TikTok: refresh token không còn hiệu lực, cần kết nối lại.', false, 'tiktok')
+    }
+    const d = await res.json()
+    if (!d.access_token) {
+      const reason = d.error_description ?? d.error ?? 'không rõ nguyên nhân'
+      throw new OrhError('PROVIDER_REAUTH_REQUIRED', `TikTok từ chối refresh token: ${reason}`, false, 'tiktok')
+    }
+    return {
+      accessToken: d.access_token,
+      // Có thể undefined nếu TikTok không rotate lần này — caller giữ token cũ
       refreshToken: d.refresh_token,
       expiresAt: new Date(Date.now() + (d.expires_in ?? 86400) * 1000),
       scopes: (d.scope ?? '').split(',').filter(Boolean),

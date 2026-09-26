@@ -33,3 +33,15 @@ export function requiredEnv(provider: string, name: string): string {
   if (!v || !v.trim()) throw new OAuthNotConfiguredError(provider, name)
   return v.trim()
 }
+
+/**
+ * Dựng OAuth callback URL cho provider — chuẩn hóa API_URL (cắt trailing
+ * slash) để tránh sinh URL lỗi kiểu `https://host//auth/...` khi env var
+ * vô tình có dấu `/` ở cuối. Dùng chung cho cả phía auth.service
+ * (lúc start OAuth) và connector (lúc validate redirect_uri ở callback) —
+ * hai nơi PHẢI sinh ra đúng cùng một chuỗi, nếu không validate sẽ fail.
+ */
+export function oauthCallbackUrl(provider: string): string {
+  const apiUrl = requiredEnv('oauth', 'API_URL').replace(/\/+$/, '')
+  return `${apiUrl}/auth/${provider}/callback`
+}

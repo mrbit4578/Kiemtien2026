@@ -417,6 +417,20 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+// Session đăng nhập (express-session) — lưu DB thay vì MemoryStore mặc định.
+// Lý do: Render restart/redeploy là mất hết session trong RAM → toàn bộ user
+// bị "tự động thoát" dù cookie còn hạn. Lưu DB thì session sống sót qua restart.
+// sess là JSON payload của express-session (userId, workspaceId, oauthPending);
+// KHÔNG chứa secret (secret nằm ở cookie signature phía client).
+model Session {
+  sid       String   @id // session id (đã sign ở cookie)
+  sess      String   // JSON payload
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
 // Cửa hàng WooCommerce đã kết nối (API key, KHÔNG OAuth).
 // Consumer key/secret LUÔN mã hóa bằng TOKEN_ENCRYPTION_KEY — không bao giờ trả ra API.
 model WooStore {

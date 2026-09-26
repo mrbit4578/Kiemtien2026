@@ -6,6 +6,8 @@ import { json } from 'express'
 import session from 'express-session'
 import helmet from 'helmet'
 import { AppModule } from './app.module'
+import { PrismaService } from './prisma/prisma.service'
+import { PrismaSessionStore } from './auth/prisma-session.store'
 
 async function bootstrap() {
   // Express adapter (mặc định) — khớp với express types dùng trong controllers
@@ -30,11 +32,18 @@ async function bootstrap() {
     console.warn('[warn] SESSION_SECRET chưa set — dùng secret tạm thời, KHÔNG dùng cho production.')
   }
   const isProd = process.env.NODE_ENV === 'production'
+  // Session lưu vào DB (PrismaSessionStore) thay vì MemoryStore mặc định:
+  // Render restart/redeploy làm mất RAM → user bị "tự động thoát".
+  // rolling: true = mỗi request còn hoạt động thì gia hạn cookie (sliding),
+  // maxAge 7 ngày = chỉ logout khi 7 ngày không động vào app.
+  const prisma = app.get(PrismaService)
   app.use(
     session({
+      store: new PrismaSessionStore(prisma),
       secret: sessionSecret ?? randomBytes(32).toString('hex'),
       resave: false,
       saveUninitialized: false,
+      rolling: true,
       cookie: {
         httpOnly: true,
         secure: isProd,
@@ -44,7 +53,7 @@ async function bootstrap() {
         sameSite:
           (process.env.SESSION_SAMESITE as 'lax' | 'strict' | 'none' | undefined) ??
           (isProd ? 'none' : 'lax'),
-        maxAge: 30 * 60 * 1000, // 30 phút
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
       },
     }),
   )
@@ -75,6 +84,17 @@ async function bootstrap() {
     )
   } else {
     console.log(`[crypto] TOKEN_ENCRYPTION_KEY đã cấu hình (${tokenKey.length} ký tự).`)
+  }
+
+  // In ra callback URL OAuth thực tế để đối chiếu với cấu hình trên dashboard
+  // của provider (TikTok/Google/Meta...). Lỗi `redirect_uri` ở trang authorize
+  // của TikTok gần như luôn do URL dưới đây KHÁC với URL đã đăng ký trong
+  // TikTok Developer Dashboard → vào dashboard sửa, không phải lỗi code.
+  const apiUrl = (process.env.API_URL ?? '').replace(/\/+$/, '')
+  if (apiUrl) {
+    console.log(`[oauth] Callback URL mẫu: ${apiUrl}/auth/<provider>/callback`)
+  } else {
+    console.warn('[warn] API_URL chưa set — OAuth start sẽ lỗi 503.')
   }
 
   // Railway/Render cấp PORT động; API_PORT dành cho tự host thủ công.
