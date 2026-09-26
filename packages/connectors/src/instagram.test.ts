@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { asInstagramError, cdnProxyUrl } from './instagram'
+import { asInstagramError, cdnProxyUrl, isMediaNotReadyError, publishWithRetry } from './instagram'
 import { OrhError } from '@orh/shared'
 
 describe('asInstagramError — Meta Timeout là lỗi nhất thời', () => {
@@ -59,5 +59,40 @@ describe('cdnProxyUrl — proxy ảnh imgbb chậm qua weserv', () => {
 
   it('URL lỗi → giữ nguyên, không crash', () => {
     assert.equal(cdnProxyUrl('not-a-url'), 'not-a-url')
+  })
+})
+
+describe('publishWithRetry — race condition "Media ID is not available" của Meta', () => {
+  const notReadyBody = { error: { message: 'Media ID is not available', code: 9007, error_subcode: 2207027 } }
+  const mkRes = (ok: boolean, body: unknown) =>
+    ({ ok, json: async () => body, status: ok ? 200 : 400 }) as unknown as Response
+
+  it('isMediaNotReadyError: nhận diện code 9007 / subcode 2207027 / message', () => {
+    assert.equal(isMediaNotReadyError(notReadyBody), true)
+    assert.equal(isMediaNotReadyError({ error: { message: 'Media ID is not available' } }), true)
+    assert.equal(isMediaNotReadyError({ error: { message: 'Unsupported post request', code: 100 } }), false)
+    assert.equal(isMediaNotReadyError({}), false)
+  })
+
+  it('2 lần not-ready rồi ok → thành công sau retry', async () => {
+    let calls = 0
+    const res = await publishWithRetry(async () => {
+      calls++
+      return calls < 3 ? mkRes(false, notReadyBody) : mkRes(true, { id: '123' })
+    }, 10) // delay 10ms cho test nhanh
+    assert.equal(calls, 3)
+    assert.equal(res.ok, true)
+  })
+
+  it('lỗi khác (không phải race) → fail ngay, không retry', async () => {
+    let calls = 0
+    await assert.rejects(
+      publishWithRetry(async () => {
+        calls++
+        return mkRes(false, { error: { message: 'Unsupported post request', code: 100 } })
+      }),
+      /Instagram từ chối ở bước publish/,
+    )
+    assert.equal(calls, 1)
   })
 })

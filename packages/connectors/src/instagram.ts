@@ -328,16 +328,17 @@ export class InstagramConnector implements SocialConnector {
     // publish — publish quá sớm sẽ bị lỗi 400 "Media ID is not available".
     await waitContainerReady(containerId)
 
-    // Step 2: Publish container
-    const publishRes = await fetch(`${IG_GRAPH_URL}/${igUserId}/media_publish`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ creation_id: containerId }),
-    })
-    if (!publishRes.ok) {
-      const err = await publishRes.json().catch(() => ({}))
-      throw asInstagramError(err, 'publish', publishRes.status)
-    }
+    // Step 2: Publish container — có retry riêng cho race condition của Meta:
+    // status_code đã FINISHED nhưng endpoint publish chưa kịp "thấy" media
+    // (eventual consistency, lỗi 9007/subcode 2207027 "Media ID is not available").
+    // Chỉ retry đúng lỗi này; mọi lỗi khác fail ngay.
+    const publishRes = await publishWithRetry(() =>
+      fetch(`${IG_GRAPH_URL}/${igUserId}/media_publish`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ creation_id: containerId }),
+      }),
+    )
     const { id: mediaId } = await publishRes.json()
     return {
       platformPostId: mediaId,
@@ -345,4 +346,46 @@ export class InstagramConnector implements SocialConnector {
       status: 'published',
     }
   }
+}
+
+/**
+ * Gọi media_publish với retry cho race condition "Media ID is not available"
+ * (code 9007 / subcode 2207027): container đã FINISHED nhưng Meta chưa sẵn sàng
+ * publish — thường tự hết sau vài chục giây. Tối đa 4 lần, cách nhau 10s.
+ * Export để test.
+ */
+export async function publishWithRetry(
+  doPublish: () => Promise<Response>,
+  retryDelayMs = 10_000,
+): Promise<Response> {
+  const MAX_PUBLISH_ATTEMPTS = 4
+  const RETRY_DELAY_MS = retryDelayMs
+  let lastErr: unknown = null
+  for (let attempt = 1; attempt <= MAX_PUBLISH_ATTEMPTS; attempt++) {
+    const res = await doPublish()
+    if (res.ok) return res
+    const err = await res.json().catch(() => ({}))
+    lastErr = err
+    if (isMediaNotReadyError(err) && attempt < MAX_PUBLISH_ATTEMPTS) {
+      console.log(
+        `[instagram] media_publish báo "Media ID is not available" (lần ${attempt}/${MAX_PUBLISH_ATTEMPTS}) — ` +
+          `chờ ${RETRY_DELAY_MS / 1000}s rồi thử lại (race condition phía Meta).`,
+      )
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS))
+      continue
+    }
+    throw asInstagramError(err, 'publish', res.status)
+  }
+  throw asInstagramError(lastErr, 'publish')
+}
+
+/**
+ * Nhận diện đúng lỗi race condition của Meta (không retry bừa mọi lỗi 400).
+ * Code 9007 / subcode 2207027, message "Media ID is not available".
+ */
+export function isMediaNotReadyError(err: unknown): boolean {
+  const e = (err as { error?: { message?: string; code?: number; error_subcode?: number } })?.error
+  if (!e) return false
+  if (e.code === 9007 || e.error_subcode === 2207027) return true
+  return /media id is not available/i.test(e.message ?? '')
 }
