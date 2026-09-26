@@ -35,6 +35,31 @@ export function encrypt(plaintext: string): string {
   return Buffer.concat([iv, authTag, encrypted]).toString('base64')
 }
 
+/**
+ * Lỗi giải mã token đã lưu.
+ *
+ * BỐI CẢNH: Node crypto ném lỗi gốc "Unsupported state or unable to
+ * authenticate data" khi AES-GCM verify auth tag thất bại — tức key giải mã
+ * không khớp key lúc mã hóa. Nguyên nhân điển hình:
+ * - TOKEN_ENCRYPTION_KEY bị đổi/xoay sau khi tài khoản được kết nối, hoặc
+ * - token được mã hóa bởi một service/API khác dùng key khác (ví dụ API cũ
+ *   trước khi chuyển sang service Docker mới).
+ *
+ * Lỗi này KHÔNG BAO GIỜ tự hết bằng retry — cách duy nhất là ngắt kết nối
+ * và kết nối lại tài khoản để hệ thống mã hóa token mới bằng key hiện tại.
+ * Vì vậy worker phải classify lỗi này là terminal (fail ngay), không retry.
+ */
+export class TokenDecryptError extends Error {
+  constructor() {
+    super(
+      'Không giải mã được token đã lưu: TOKEN_ENCRYPTION_KEY trên server không khớp ' +
+        'với key lúc mã hóa (có thể key đã bị đổi sau khi bạn kết nối tài khoản). ' +
+        'Hãy ngắt kết nối (Rút Quyền) và kết nối lại tài khoản để cấp token mới.',
+    )
+    this.name = 'TokenDecryptError'
+  }
+}
+
 export function decrypt(ciphertext: string): string {
   const key = getKey()
   const buf = Buffer.from(ciphertext, 'base64')
@@ -46,7 +71,13 @@ export function decrypt(ciphertext: string): string {
   const decipher = createDecipheriv(ALGORITHM, key, iv)
   decipher.setAuthTag(authTag)
 
-  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')
+  try {
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')
+  } catch {
+    // Auth tag không verify được = sai key (hoặc dữ liệu bị sửa) → lỗi rõ
+    // nghĩa thay vì message crypto khô khốc của Node.
+    throw new TokenDecryptError()
+  }
 }
 
 // KHÔNG export raw key. Không log plaintext token.

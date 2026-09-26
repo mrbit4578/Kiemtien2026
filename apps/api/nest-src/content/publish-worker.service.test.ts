@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import { computeBackoffMs, decideRetry, probeMediaUrl, fitCaptionToPlatformLimit, INSTAGRAM_CAPTION_LIMIT } from './publish-worker.service'
 import { OrhError, detectMediaKind } from '@orh/shared'
+import { TokenDecryptError } from '@orh/crypto'
 
 describe('computeBackoffMs', () => {
   it('backoff mũ: 30s, 60s, 120s cho attempts 1,2,3', () => {
@@ -58,6 +59,18 @@ describe('decideRetry', () => {
   it('RATE_LIMITED hết lượt → dead_letter', () => {
     const d = decideRetry(new OrhError('RATE_LIMITED', 'limit', false), 5)
     assert.deepEqual(d, { kind: 'terminal', status: 'dead_letter' })
+  })
+
+  it('TokenDecryptError (sai TOKEN_ENCRYPTION_KEY) → failed NGAY, không retry vô ích', () => {
+    const d = decideRetry(new TokenDecryptError(), 1)
+    assert.deepEqual(d, { kind: 'terminal', status: 'failed' })
+  })
+
+  it('TokenDecryptError có message hướng dẫn ngắt kết nối → kết nối lại', () => {
+    const msg = new TokenDecryptError().message
+    assert.ok(msg.includes('TOKEN_ENCRYPTION_KEY'))
+    assert.ok(msg.includes('kết nối lại'))
+    assert.ok(!msg.includes('Unsupported state'))
   })
 })
 

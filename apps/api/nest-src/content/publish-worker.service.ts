@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
 import { PublishWebhookService } from './publish-webhook.service'
 import { getConnector } from '../common/provider-registry'
-import { encrypt } from '@orh/crypto'
+import { encrypt, TokenDecryptError } from '@orh/crypto'
 import { OrhError, detectMediaKind } from '@orh/shared'
 import type { Connection, Provider, PublishInput, MediaKind } from '@orh/shared'
 
@@ -50,6 +50,13 @@ export type RetryDecision =
 
 export function decideRetry(err: unknown, attempts: number): RetryDecision {
   const isRateLimited = err instanceof OrhError && err.code === 'RATE_LIMITED'
+  // TokenDecryptError: TOKEN_ENCRYPTION_KEY không khớp key lúc mã hóa token —
+  // retry không bao giờ thành công (key không tự đúng lại). Fail ngay để user
+  // thấy hướng dẫn "ngắt kết nối → kết nối lại" thay vì chờ hết backoff rồi
+  // mới dead-letter với message crypto khó hiểu.
+  if (err instanceof TokenDecryptError) {
+    return { kind: 'terminal', status: 'failed' }
+  }
   // Lỗi lạ không phải OrhError (ví dụ TypeError do fetch rớt mạng, DNS fail)
   // không chứng minh được là vĩnh viễn → coi như transient, retry với backoff.
   // Chỉ OrhError có retryable=false mới là lỗi vĩnh viễn (fail ngay).
