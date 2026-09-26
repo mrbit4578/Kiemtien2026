@@ -15,7 +15,8 @@ import {
   KeyRound,
   LogOut,
   Map,
-  Clapperboard
+  Clapperboard,
+  Store,
 } from 'lucide-react'
 
 import { useSession } from '../context/SessionContext'
@@ -34,6 +35,7 @@ export function Navbar() {
     { href: '/campaigns', label: 'Chiến dịch Affiliate', icon: TrendingUp },
     { href: '/settings/ai', label: 'AI Pro', icon: KeyRound },
     { href: '/settings/connections', label: 'Kết nối & Bảo mật', icon: ShieldCheck },
+    { href: '/settings/woocommerce', label: 'WooCommerce', icon: Store },
     { href: '/huong-dan', label: 'Hướng dẫn', icon: Map },
   ]
 

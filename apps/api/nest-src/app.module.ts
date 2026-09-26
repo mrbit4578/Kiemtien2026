@@ -15,6 +15,7 @@ import { AgentModule } from './agent/agent.module'
 import { CanvaModule } from './canva/canva.module'
 import { RenderModule } from './render/render.module'
 import { VideoModule } from './video/video.module'
+import { WooCommerceModule } from './woocommerce/woocommerce.module'
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { VideoModule } from './video/video.module'
     CanvaModule,
     RenderModule,
     VideoModule,
+    WooCommerceModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

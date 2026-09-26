@@ -27,6 +27,8 @@ import type {
   GateState,
   RiskResult,
   PublishReadiness,
+  WooStore,
+  WooProductList,
 } from './types'
 
 function toMessage(err: unknown): string {
@@ -640,4 +642,51 @@ export async function autoBuildVideoProjectFromSource(input: {
     providerId: input.providerId || undefined,
     model: input.model || undefined,
   })
+}
+
+/* ─── WooCommerce ───────────────────────────────────────────── */
+
+export function useWooStores() {
+  const [stores, setStores] = useState<WooStore[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setStores(await api.get<WooStore[]>('/woocommerce'))
+    } catch (err) {
+      setError(toMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { stores, loading, error, refresh }
+}
+
+export async function connectWooStore(body: { storeUrl: string; consumerKey: string; consumerSecret: string }) {
+  return api.post<WooStore>('/woocommerce/connect', body)
+}
+
+export async function testWooStore(id: string) {
+  return api.post<WooStore>(`/woocommerce/${id}/test`)
+}
+
+export async function disconnectWooStore(id: string) {
+  return api.del<{ ok: boolean }>(`/woocommerce/${id}`)
+}
+
+export async function listWooProducts(id: string, params: { search?: string; page?: number; perPage?: number } = {}) {
+  const qs = new URLSearchParams()
+  if (params.search) qs.set('search', params.search)
+  if (params.page) qs.set('page', String(params.page))
+  if (params.perPage) qs.set('perPage', String(params.perPage))
+  const suffix = qs.toString() ? `?${qs}` : ''
+  return api.get<WooProductList>(`/woocommerce/${id}/products${suffix}`)
 }

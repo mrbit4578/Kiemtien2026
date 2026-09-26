@@ -46,6 +46,7 @@ model Workspace {
   jobs        Job[]
   renderJobs  RenderJob[]
   auditLogs   AuditLog[]
+  wooStores   WooStore[]
 
   @@map("workspaces")
 }
@@ -414,4 +415,29 @@ model AuditLog {
   workspace Workspace @relation(fields: [workspaceId], references: [id])
 
   @@map("audit_logs")
+}
+
+// Cửa hàng WooCommerce đã kết nối (API key, KHÔNG OAuth).
+// Consumer key/secret LUÔN mã hóa bằng TOKEN_ENCRYPTION_KEY — không bao giờ trả ra API.
+model WooStore {
+  id                    String   @id @default(cuid())
+  workspaceId           String
+  storeUrl              String   // https://shopcuaban.com (đã chuẩn hóa, không trailing slash)
+  storeName             String?
+  currency              String?
+  wcVersion             String?
+  encryptedConsumerKey    String   @db.Text
+  encryptedConsumerSecret String @db.Text
+  status                String   @default("connected") // connected | error
+  lastError             String?
+  productCount          Int      @default(0)
+  lastSyncAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, storeUrl])
+  @@index([workspaceId])
+  @@map("woo_stores")
 }

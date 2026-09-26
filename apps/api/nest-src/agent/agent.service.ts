@@ -15,10 +15,11 @@ import {
   type AgentMessage,
   type ChatBackend,
 } from './agent-loop'
-import { buildBuiltinTools, makeRenderVideoTool, makeRenderStatusTool, makeRenderCancelTool } from './builtin-tools'
+import { buildBuiltinTools, makeRenderVideoTool, makeRenderStatusTool, makeRenderCancelTool, makeWooProductsTool } from './builtin-tools'
 import { videoTools } from './video-tools'
 import type { AgentRunDto } from './dto'
 import { RenderService } from '../render/render.service'
+import { WooCommerceService } from '../woocommerce/woocommerce.service'
 
 /**
  * AgentService — AI agent gọi tools (port kiến trúc runner của Strix).
@@ -41,6 +42,7 @@ export class AgentService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditLogService,
     private readonly renderService: RenderService,
+    private readonly wooService: WooCommerceService,
   ) {}
 
   private buildRegistry(workspaceId: string): ToolRegistry {
@@ -66,6 +68,10 @@ export class AgentService {
         const base = (process.env.API_URL || '').replace(/\/+$/, '')
         return { jobs, downloadUrl: (id: string) => `${base}/render/jobs/${id}/file` }
       }),
+    )
+    // woo_products: tìm sản phẩm thật trong cửa hàng WooCommerce đã kết nối.
+    registry.register(
+      makeWooProductsTool((keyword, limit) => this.wooService.searchForAgent(workspaceId, keyword, limit)),
     )
     // render_cancel: dừng job đang queued/running (vd job kẹt, OOM-loop).
     registry.register(

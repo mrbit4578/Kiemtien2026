@@ -370,3 +370,72 @@ export function makeRenderCancelTool(
     },
   }
 }
+
+/** Tool tìm sản phẩm trong cửa hàng WooCommerce đã kết nối — để AI viết content affiliate từ sản phẩm THẬT. */
+export function makeWooProductsTool(
+  search: (keyword: string, limit: number) => Promise<{
+    connected: boolean
+    storeUrl?: string
+    products: Array<{
+      id: number
+      name: string
+      price: string
+      regularPrice: string
+      onSale: boolean
+      permalink: string
+      image: string
+      categories: string
+      shortDescription: string
+      rating: string
+    }>
+    total?: number
+  }>,
+): ToolDefinition {
+  return {
+    name: 'woo_products',
+    description:
+      'Tìm sản phẩm trong cửa hàng WooCommerce đã kết nối của người dùng. ' +
+      'DÙNG khi viết kịch bản/caption/content bán hàng hoặc affiliate: lấy tên, giá, link, ảnh, mô tả THẬT của sản phẩm ' +
+      'thay vì bịa. Nếu chưa kết nối cửa hàng, hãy nói người dùng vào Cài đặt → WooCommerce để kết nối.',
+    parameters: {
+      type: 'object',
+      properties: {
+        keyword: {
+          type: 'string',
+          description: 'Từ khóa tìm sản phẩm (vd: "áo thun", "mỹ phẩm"). Bỏ trống để lấy sản phẩm mới nhất.',
+          maxLength: 120,
+        },
+        limit: { type: 'number', description: 'Số sản phẩm tối đa (1-12, mặc định 8).' },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+    execute: async (args) => {
+      const keyword = String(args['keyword'] || '').slice(0, 120)
+      const limit = Math.min(Math.max(Number(args['limit']) || 8, 1), 12)
+      try {
+        const r = await search(keyword, limit)
+        if (!r.connected) {
+          return 'Chưa kết nối cửa hàng WooCommerce nào. Người dùng cần vào Cài đặt → WooCommerce để kết nối trước.'
+        }
+        if (r.products.length === 0) {
+          return `Không tìm thấy sản phẩm nào với từ khóa "${keyword}" trong cửa hàng ${r.storeUrl}.`
+        }
+        const lines = r.products.map(
+          (p) =>
+            `- [${p.id}] ${p.name} — giá ${p.price}${p.onSale ? ` (đang sale, giá gốc ${p.regularPrice})` : ''}` +
+            `${p.categories ? ` | nhóm: ${p.categories}` : ''}` +
+            `${p.rating && p.rating !== '0' ? ` | đánh giá ${p.rating}` : ''}\n  Link: ${p.permalink}` +
+            `${p.shortDescription ? `\n  Mô tả: ${p.shortDescription.slice(0, 200)}` : ''}`,
+        )
+        return (
+          `Tìm thấy ${r.products.length}/${r.total ?? r.products.length} sản phẩm ` +
+          `${keyword ? `với từ khóa "${keyword}" ` : ''}trong cửa hàng ${r.storeUrl}:\n` +
+          lines.join('\n')
+        )
+      } catch (err) {
+        return `Không đọc được sản phẩm WooCommerce: ${(err as Error).message}`
+      }
+    },
+  }
+}

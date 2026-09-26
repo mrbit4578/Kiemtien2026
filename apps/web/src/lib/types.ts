@@ -345,3 +345,45 @@ export interface PublishReadiness {
   blockingAssets: Array<{ id: string; name: string; status: string }>
   riskyClaims: Array<{ id: string; claimText: string }>
 }
+
+export interface WooStore {
+  id: string
+  storeUrl: string
+  storeName: string | null
+  currency: string | null
+  wcVersion: string | null
+  status: 'connected' | 'error'
+  lastError: string | null
+  productCount: number
+  lastSyncAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WooProductList {
+  products: Array<{
+    id: number
+    name: string
+    slug: string
+    permalink: string
+    sku: string
+    price: string
+    regularPrice: string
+    salePrice: string
+    onSale: boolean
+    purchasable: boolean
+    stockStatus: string
+    stockQuantity: number | null
+    description: string
+    shortDescription: string
+    categories: Array<{ id: number; name: string; slug: string }>
+    images: Array<{ src: string; alt: string }>
+    averageRating: string
+    ratingCount: number
+    totalSales: number
+  }>
+  page: number
+  perPage: number
+  totalPages: number
+  total: number
+}
