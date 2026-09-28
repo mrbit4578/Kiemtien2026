@@ -1,5 +1,5 @@
 import type { SocialConnector } from './interface';
-import { requiredEnv } from './env';
+import { requiredEnv, oauthCallbackUrl } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider } from '@orh/shared'
 import { buildOAuthUrl, validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -30,14 +30,20 @@ export const META_MANIFEST: PermissionManifest = {
 
 const META_AUTH_URL = 'https://www.facebook.com/v19.0/dialog/oauth'
 const META_TOKEN_URL = 'https://graph.facebook.com/v19.0/oauth/access_token'
-const ALLOWED_REDIRECT_URIS = [`${process.env.API_URL}/auth/facebook/callback`]
+/**
+ * Allowlist redirect URI — tính LAZY (lúc gọi) thay vì lúc module load, để
+ * luôn dùng API_URL hiện hành và được chuẩn hóa (cắt trailing slash).
+ */
+function allowedRedirectUris(): string[] {
+  return [oauthCallbackUrl('facebook')]
+}
 
 export class MetaConnector implements SocialConnector {
   provider(): Provider { return 'facebook' }
   manifest(): PermissionManifest { return META_MANIFEST }
 
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     return buildOAuthUrl(META_AUTH_URL, {
       clientId: requiredEnv('facebook', 'META_APP_ID'),
       redirectUri: input.redirectUri,
@@ -48,7 +54,7 @@ export class MetaConnector implements SocialConnector {
   }
 
   async exchangeCode(input: OAuthCallbackInput): Promise<TokenSet> {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     // A2: client_secret và code đi trong POST body, KHÔNG qua query string
     const res = await fetch(META_TOKEN_URL, {
       method: 'POST',

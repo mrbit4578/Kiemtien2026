@@ -126,15 +126,23 @@ model Job {
   contentItemId   String?
   idempotencyKey  String   @unique // ngăn duplicate publish
   attempts        Int      @default(0)
-  status          String   @default("pending") // pending | running | done | failed | dead_letter
+  // pending | running | publishing | publish_confirm_pending | done | failed | dead_letter
+  // publishing: đã gọi provider, có thể đã đăng — chống đăng trùng P0.
+  // publish_confirm_pending: đã đăng nhưng DB lỗi khi ghi done — tick sau chỉ
+  //   xác minh rồi đánh dấu done, TUYỆT ĐỐI không publish lại.
+  status          String   @default("pending")
   nextRunAt       DateTime?
   lastError       String?
+  // ID bài đăng trên nền tảng (để nhánh publish_confirm_pending verify mà
+  // không cần publish lại). Null cho tới khi provider trả về.
+  providerPostId  String?
   workspaceId     String
 
   connection    Connection  @relation(fields: [connectionId], references: [id])
   contentItem   ContentItem? @relation(fields: [contentItemId], references: [id])
   workspace     Workspace    @relation(fields: [workspaceId], references: [id])
 
+  @@index([status, nextRunAt]) // worker poll mỗi 15s: where status + orderBy nextRunAt
   @@map("jobs")
 }
 

@@ -1,5 +1,5 @@
 import type { SocialConnector } from './interface';
-import { requiredEnv } from './env';
+import { requiredEnv, oauthCallbackUrl } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider } from '@orh/shared'
 import { buildOAuthUrl, validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -20,14 +20,20 @@ export const GITHUB_MANIFEST: PermissionManifest = {
   notes: 'Tùy chọn cho developer. Ưu tiên fine-grained token.',
 }
 
-const ALLOWED_REDIRECT_URIS = [`${process.env.API_URL}/auth/github/callback`]
+/**
+ * Allowlist redirect URI — tính LAZY (lúc gọi) thay vì lúc module load, để
+ * luôn dùng API_URL hiện hành và được chuẩn hóa (cắt trailing slash).
+ */
+function allowedRedirectUris(): string[] {
+  return [oauthCallbackUrl('github')]
+}
 
 export class GitHubConnector implements SocialConnector {
   provider(): Provider { return 'github' }
   manifest(): PermissionManifest { return GITHUB_MANIFEST }
 
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     return buildOAuthUrl('https://github.com/login/oauth/authorize', {
       clientId: requiredEnv('github', 'GITHUB_CLIENT_ID'),
       redirectUri: input.redirectUri,
@@ -38,7 +44,7 @@ export class GitHubConnector implements SocialConnector {
   }
 
   async exchangeCode(input: OAuthCallbackInput): Promise<TokenSet> {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     const res = await fetch('https://github.com/login/oauth/access_token', {
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },

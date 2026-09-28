@@ -1,5 +1,5 @@
 import type { SocialConnector } from './interface';
-import { requiredEnv } from './env';
+import { requiredEnv, oauthCallbackUrl } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider } from '@orh/shared'
 import { buildOAuthUrl, validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -46,16 +46,22 @@ export const GOOGLE_MANIFEST: PermissionManifest = {
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
-const ALLOWED_REDIRECT_URIS = [
-  `${process.env.API_URL}/auth/google/callback`,
-]
+/**
+ * Allowlist redirect URI — tính LAZY (lúc gọi) thay vì lúc module load, để
+ * luôn dùng API_URL hiện hành và được chuẩn hóa (cắt trailing slash).
+ * URI này PHẢI khớp từng ký tự với Redirect URI đã đăng ký trong
+ * Google Cloud Console.
+ */
+function allowedRedirectUris(): string[] {
+  return [oauthCallbackUrl('google')]
+}
 
 export class GoogleConnector implements SocialConnector {
   provider(): Provider { return 'google' }
   manifest(): PermissionManifest { return GOOGLE_MANIFEST }
 
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     return buildOAuthUrl(GOOGLE_AUTH_URL, {
       clientId: requiredEnv('google', 'GOOGLE_CLIENT_ID'),
       redirectUri: input.redirectUri,
@@ -67,7 +73,7 @@ export class GoogleConnector implements SocialConnector {
   }
 
   async exchangeCode(input: OAuthCallbackInput): Promise<TokenSet> {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
 
     const res = await fetch(GOOGLE_TOKEN_URL, {
       method: 'POST',

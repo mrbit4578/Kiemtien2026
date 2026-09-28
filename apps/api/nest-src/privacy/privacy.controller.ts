@@ -3,6 +3,7 @@ import type { Response, Request } from 'express'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
 import { requireWorkspaceId } from '../common/session'
+import { Roles } from '../common/roles.decorator'
 
 /**
  * Privacy endpoints — yêu cầu bởi GDPR và Nghị định 13/2023/NĐ-CP.
@@ -15,7 +16,9 @@ export class PrivacyController {
     private readonly audit: AuditLogService,
   ) {}
 
-  /** GET /privacy/export — xuất tất cả dữ liệu của workspace (JSON) */
+  /** GET /privacy/export — xuất tất cả dữ liệu của workspace (JSON).
+   *  Chỉ owner/admin — chứa toàn bộ data workspace, member không được phép. */
+  @Roles('owner', 'admin')
   @Get('export')
   async export(@Session() session: any, @Req() req: Request, @Res() res: Response) {
     const workspaceId = requireWorkspaceId(session)

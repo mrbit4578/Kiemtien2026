@@ -18,6 +18,7 @@ import {
   UploadedFiles,
 } from '@nestjs/common'
 import { FilesInterceptor } from '@nestjs/platform-express'
+import { Roles } from '../common/roles.decorator'
 import {
   IsString,
   IsOptional,
@@ -335,7 +336,9 @@ export class ContentController {
     return item
   }
 
-  /** POST /content/:id/approve — approve/reject để đủ điều kiện publish */
+  /** POST /content/:id/approve — approve/reject để đủ điều kiện publish.
+   *  Chỉ owner/admin được duyệt — member duyệt tùy ý sẽ phá vỡ approval workflow. */
+  @Roles('owner', 'admin')
   @Post(':id/approve')
   @HttpCode(200)
   async approve(
@@ -458,14 +461,18 @@ export class ContentController {
       return { id: item.id, queued: true, jobId: job.id }
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        // P2002 còn sót: job đang pending/running/done → báo rõ trạng thái thay vì lỗi kỹ thuật
+        // P2002 còn sót: job đang pending/running/publishing/done → báo rõ trạng thái thay vì lỗi kỹ thuật
         const existing = await this.prisma.job.findUnique({ where: { idempotencyKey } })
         const statusMsg =
-          existing?.status === 'pending' || existing?.status === 'running'
+          existing?.status === 'pending' ||
+          existing?.status === 'running' ||
+          existing?.status === 'publishing'
             ? 'Bài đang trong hàng chờ đăng, không cần đẩy lại.'
             : existing?.status === 'done'
               ? 'Bài này đã được đăng rồi.'
-              : 'Job publish đã tồn tại, hãy dùng nút Thử lại.'
+              : existing?.status === 'publish_confirm_pending'
+                ? 'Bài có thể đã được đăng, hệ thống đang xác nhận — không cần đẩy lại.'
+                : 'Job publish đã tồn tại, hãy dùng nút Thử lại.'
         throw new ConflictException(statusMsg)
       }
       throw err
@@ -576,8 +583,8 @@ export class ContentController {
   /**
    * DELETE /content/:id — xóa bài viết khỏi Content Studio.
    * - Xóa luôn các job publish liên quan (pending/failed/dead_letter/done).
-   * - Từ chối nếu đang có job 'running' (worker đang xử lý) để tránh
-   *   xóa giữa chừng gây trạng thái dở dang.
+   * - Từ chối nếu đang có job 'running'/'publishing' (worker đang xử lý hoặc
+   *   đã gọi provider) để tránh xóa giữa chừng gây trạng thái dở dang.
    * - Bài đã xuất bản: chỉ xóa bản ghi local, bài đăng trên mạng xã hội
    *   vẫn giữ nguyên (UI sẽ cảnh báo trước khi xóa).
    */
@@ -592,7 +599,7 @@ export class ContentController {
     const item = await this.prisma.contentItem.findFirst({ where: { id, workspaceId } })
     if (!item) throw new NotFoundException('Không tìm thấy content.')
     const running = await this.prisma.job.count({
-      where: { contentItemId: item.id, status: 'running' },
+      where: { contentItemId: item.id, status: { in: ['running', 'publishing'] } },
     })
     if (running > 0) {
       throw new ConflictException('Bài viết đang được xử lý, không thể xóa lúc này. Hãy thử lại sau.')

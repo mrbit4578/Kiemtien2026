@@ -1,4 +1,5 @@
 export * from './interface'
+export * from './sanitize'
 export * from './google'
 export * from './meta'
 export * from './instagram'

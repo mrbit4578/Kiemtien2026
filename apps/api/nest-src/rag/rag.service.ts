@@ -1069,11 +1069,13 @@ export class RagService {
       const prompt = 'Mô tả ngắn gọn nội dung chính của ảnh này bằng tiếng Việt (1-2 câu).'
 
       if (meta.kind === 'gemini') {
+        // API key qua header x-goog-api-key, KHÔNG nhúng vào query string
+        // (tránh lọt vào access log/proxy log).
         const res = await fetchTimeout(
-          `${meta.baseUrl}/v1beta/models/${encodeURIComponent(meta.defaultModel)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+          `${meta.baseUrl}/v1beta/models/${encodeURIComponent(meta.defaultModel)}:generateContent`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
             body: JSON.stringify({
               contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: b64 } }] }],
               generationConfig: { maxOutputTokens: 300 },

@@ -1,13 +1,12 @@
 import {
   Injectable,
   BadRequestException,
-  ConflictException,
+  OnModuleInit,
   UnauthorizedException,
   InternalServerErrorException,
   ServiceUnavailableException,
 } from '@nestjs/common'
 import { OAuthNotConfiguredError, oauthCallbackUrl } from '@orh/connectors'
-import { createHash } from 'crypto'
 import * as bcrypt from 'bcryptjs'
 import {
   generatePkce,
@@ -18,18 +17,23 @@ import {
 import { encrypt } from '@orh/crypto'
 import type { Provider } from '@orh/shared'
 import { CURRENT_POLICY_VERSION, isConsentRequired } from '@orh/policy'
+import {
+  getHashPepper,
+  hashEmail,
+  hashEmailLegacy,
+  hashIp,
+  hashOpaque,
+  hashOpaqueLegacy,
+} from '../common/hash'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
 import { getConnector } from '../common/provider-registry'
 import type { RegisterDto, LoginDto } from './dto'
 
-/**
- * Hash email chuẩn hóa (lowercase + trim) — dùng chung cho register/login/OAuth
- * để 1 email luôn ánh xạ tới 1 user duy nhất. KHÔNG lưu email plaintext (privacy).
- */
-export function hashEmail(email: string): string {
-  return createHash('sha256').update(email.trim().toLowerCase()).digest('hex')
-}
+// Tương thích ngược: hashEmail từng được định nghĩa tại module này dưới dạng
+// SHA-256 unsalted. Nay là HMAC-SHA256(pepper) ở ../common/hash — giữ re-export
+// để code bên ngoài (nếu có import) không vỡ.
+export { hashEmail }
 
 // Hash giả cho dummy compare — chống timing attack khi user không tồn tại.
 const DUMMY_HASH = bcrypt.hashSync('dummy-password-never-matches', 12)
@@ -38,11 +42,40 @@ const DUMMY_HASH = bcrypt.hashSync('dummy-password-never-matches', 12)
 const INVALID_CREDENTIALS = 'Email hoặc mật khẩu không đúng.'
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditLogService,
   ) {}
+
+  /**
+   * Fail-closed khi boot: production thiếu HASH_PEPPER (hoặc quá ngắn) thì
+   * từ chối khởi động ngay, thay vì âm thầm hash yếu. Check đặt tại module
+   * để không phải sửa main.ts (module khác đang sở hữu file đó).
+   */
+  onModuleInit() {
+    getHashPepper()
+  }
+
+  /**
+   * Migration minh bạch hash unsalted → peppered.
+   *
+   * DB cũ lưu emailHash dạng SHA-256(email) không pepper. Khi lookup bằng hash
+   * peppered không thấy, thử lại bằng hash legacy; nếu khớp thì re-hash sang
+   * peppered NGAY (giữ nguyên user id) rồi trả về user. User không cần làm gì.
+   * Trả về null khi không có bản ghi legacy nào.
+   */
+  private async migrateLegacyEmailHash(pepperedHash: string, legacyHash: string) {
+    if (pepperedHash === legacyHash) return null
+    const legacyUser = await this.prisma.user.findUnique({ where: { emailHash: legacyHash } })
+    if (!legacyUser) return null
+    const user = await this.prisma.user.update({
+      where: { id: legacyUser.id },
+      data: { emailHash: pepperedHash },
+    })
+    console.info(`[auth] emailHash của user ${legacyUser.id} đã migrate sang peppered (HMAC-SHA256).`)
+    return user
+  }
 
   /**
    * Dựng callback URL — dùng chung helper với connector để hai phía luôn
@@ -188,17 +221,31 @@ export class AuthService {
         createdAt: new Date(),
       })
 
-      // 6. Định danh user bằng hash (không lưu email plaintext)
-      // Email thật → hash chuẩn hóa; fallback synthetic id → hash thô (giữ nguyên case của providerUserId)
+      // 6. Định danh user bằng hash peppered (không lưu email plaintext).
+      // Email thật → HMAC chuẩn hóa; fallback synthetic id → HMAC thô (giữ
+      // nguyên case của providerUserId). DB cũ lưu hash unsalted → lookup
+      // legacy rồi re-hash minh bạch (giữ nguyên user id, xem
+      // migrateLegacyEmailHash).
       const rawIdentity = identity.email ?? `${providerName}:${identity.providerUserId}`
-      const emailHash = identity.email
-        ? hashEmail(rawIdentity)
-        : createHash('sha256').update(rawIdentity).digest('hex')
-      const user = await this.prisma.user.upsert({
-        where: { emailHash },
-        create: { emailHash, displayName: identity.displayName },
-        update: { displayName: identity.displayName },
-      })
+      const emailHash = identity.email ? hashEmail(rawIdentity) : hashOpaque(rawIdentity)
+      const emailHashLegacy = identity.email
+        ? hashEmailLegacy(rawIdentity)
+        : hashOpaqueLegacy(rawIdentity)
+      let user = await this.prisma.user.findUnique({ where: { emailHash } })
+      if (!user) {
+        user =
+          (await this.migrateLegacyEmailHash(emailHash, emailHashLegacy)) ??
+          (await this.prisma.user.create({
+            data: { emailHash, displayName: identity.displayName },
+          }))
+      }
+      // Đồng bộ displayName mới nhất từ provider (giữ behavior của upsert cũ).
+      if (user.displayName !== identity.displayName) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { displayName: identity.displayName },
+        })
+      }
 
       await this.prisma.workspace.upsert({
         where: { id: workspaceId },
@@ -227,7 +274,7 @@ export class AuthService {
             purpose: 'oauth_connect',
             scopesJson: tokenSet.scopes,
             policyVersion: CURRENT_POLICY_VERSION,
-            ipHash: createHash('sha256').update(ip ?? 'unknown').digest('hex'),
+            ipHash: hashIp(ip ?? 'unknown'),
           },
         })
       }
@@ -302,10 +349,29 @@ export class AuthService {
     const email = dto.email.trim().toLowerCase()
     const emailHash = hashEmail(email)
 
-    const existing = await this.prisma.user.findUnique({ where: { emailHash } })
+    let existing = await this.prisma.user.findUnique({ where: { emailHash } })
+    if (!existing) {
+      // DB cũ (hash unsalted): phải kiểm tra cả bản ghi legacy để không tạo
+      // trùng user cho cùng một email.
+      existing = await this.prisma.user.findUnique({ where: { emailHash: hashEmailLegacy(email) } })
+    }
     if (existing) {
+      // ── Chống user enumeration ──────────────────────────────────────
+      // KHÔNG trả 409 "Email này đã được đăng ký" (lộ email tồn tại).
+      // Trả 201 thành công GIẢ với body cùng shape, không phân biệt được với
+      // đăng ký thật: KHÔNG tạo session, KHÔNG tạo workspace, KHÔNG gửi email
+      // (dự án hiện chưa có hệ thống gửi mail). User thật bị nhầm lẫn chỉ cần
+      // đăng nhập lại bằng email đó.
+      // Lưu ý còn lại (đã ghi nhận): attacker rất tinh ý vẫn có thể suy luận
+      // qua trang đích sau đăng ký (dashboard khi có session vs /login khi
+      // không). Muốn kín tuyệt đối: tắt auto-login ở cả luồng đăng ký thật
+      // để hai trường hợp đều rơi về /login.
       // Không audit ở đây: chưa có workspace hợp lệ để gắn (AuditLog.workspaceId có FK).
-      throw new ConflictException('Email này đã được đăng ký. Hãy đăng nhập.')
+      return {
+        user: { id: '', name: dto.name?.trim() || email.split('@')[0], email },
+        workspace: { id: '', name: '', plan: '' },
+        message: 'Nếu email hợp lệ, tài khoản đã được tạo. Vui lòng đăng nhập.',
+      }
     }
 
     // KHÔNG bao giờ log password — chỉ hash bcrypt (cost 12)
@@ -347,7 +413,12 @@ export class AuthService {
     const email = dto.email.trim().toLowerCase()
     const emailHash = hashEmail(email)
 
-    const user = await this.prisma.user.findUnique({ where: { emailHash } })
+    let user = await this.prisma.user.findUnique({ where: { emailHash } })
+    if (!user) {
+      // DB cũ (hash unsalted): lookup legacy rồi re-hash sang peppered ngay
+      // trong lần login này — user không cần làm gì thêm.
+      user = await this.migrateLegacyEmailHash(emailHash, hashEmailLegacy(email))
+    }
     // Dummy compare khi user không tồn tại hoặc chưa có password → chống timing attack
     const passwordOk = await bcrypt.compare(dto.password, user?.passwordHash ?? DUMMY_HASH)
 

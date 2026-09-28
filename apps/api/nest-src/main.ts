@@ -8,6 +8,7 @@ import helmet from 'helmet'
 import { AppModule } from './app.module'
 import { PrismaService } from './prisma/prisma.service'
 import { PrismaSessionStore } from './auth/prisma-session.store'
+import { csrfCookieMiddleware } from './common/csrf.middleware'
 
 async function bootstrap() {
   // Express adapter (mặc định) — khớp với express types dùng trong controllers
@@ -57,6 +58,12 @@ async function bootstrap() {
       },
     }),
   )
+
+  // CSRF double-submit cookie: mọi response set cookie `orh_csrf` (đọc được từ
+  // JS) để frontend gửi lại qua header X-CSRF-Token ở request đổi trạng thái.
+  // Đặt sau session để thứ tự Set-Cookie ổn định; CsrfGuard (APP_GUARD) sẽ
+  // kiểm tra token ở các request POST/PUT/PATCH/DELETE đã xác thực.
+  app.use(csrfCookieMiddleware)
 
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),

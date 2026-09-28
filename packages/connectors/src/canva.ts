@@ -1,5 +1,5 @@
 import type { SocialConnector } from './interface';
-import { requiredEnv } from './env';
+import { requiredEnv, oauthCallbackUrl } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider } from '@orh/shared'
 import { buildOAuthUrl, validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -48,7 +48,13 @@ const CANVA_AUTH_URL = 'https://www.canva.com/api/oauth/authorize'
 const CANVA_TOKEN_URL = 'https://api.canva.com/rest/v1/oauth/token'
 const CANVA_API_BASE = 'https://api.canva.com/rest/v1'
 const CANVA_REVOKE_URL = 'https://api.canva.com/rest/v1/oauth/revoke'
-const ALLOWED_REDIRECT_URIS = [`${process.env.API_URL}/auth/canva/callback`]
+/**
+ * Allowlist redirect URI — tính LAZY (lúc gọi) thay vì lúc module load, để
+ * luôn dùng API_URL hiện hành và được chuẩn hóa (cắt trailing slash).
+ */
+function allowedRedirectUris(): string[] {
+  return [oauthCallbackUrl('canva')]
+}
 const DEFAULT_SCOPES = [
   'design:content:read',
   'design:content:write',
@@ -105,7 +111,7 @@ export class CanvaConnector implements SocialConnector {
   manifest(): PermissionManifest { return CANVA_MANIFEST }
 
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     // Canva bắt buộc PKCE (S256)
     return buildOAuthUrl(CANVA_AUTH_URL, {
       clientId: requiredEnv('canva', 'CANVA_CLIENT_ID'),
@@ -117,7 +123,7 @@ export class CanvaConnector implements SocialConnector {
   }
 
   async exchangeCode(input: OAuthCallbackInput): Promise<TokenSet> {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
       code: input.code,

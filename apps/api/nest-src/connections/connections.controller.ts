@@ -14,6 +14,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
 import { getConnector } from '../common/provider-registry'
 import { requireWorkspaceId } from '../common/session'
+import { Roles } from '../common/roles.decorator'
 
 type ConnectionRow = {
   id: string
@@ -87,7 +88,9 @@ export class ConnectionsController {
     return row
   }
 
-  /** POST /connections/:id/revoke — revoke token ở provider, xóa token trong DB, audit log */
+  /** POST /connections/:id/revoke — revoke token ở provider, xóa token trong DB, audit log.
+   *  Chỉ owner/admin — member revoke bừa sẽ làm gián đoạn publish của cả workspace. */
+  @Roles('owner', 'admin')
   @Post(':id/revoke')
   @HttpCode(200)
   async revoke(@Param('id') id: string, @Session() session: any, @Req() req: Request) {

@@ -8,7 +8,8 @@ import type { Request } from 'express'
 /**
  * AI Agent — chat có gọi tools (port kiến trúc runner của Strix).
  *
- * GET    /ai/agent/tools  → metadata tools khả dụng (không cần auth)
+ * GET    /ai/agent/tools  → metadata tools khả dụng (yêu cầu đăng nhập —
+ * trước đây public, lộ surface tool nội bộ cho người chưa xác thực)
  * POST   /ai/agent/run    → chạy vòng lặp think→act→observe
  */
 @Controller('ai/agent')
@@ -16,7 +17,8 @@ export class AgentController {
   constructor(private readonly agentService: AgentService) {}
 
   @Get('tools')
-  listTools() {
+  listTools(@Session() session: any) {
+    requireWorkspaceId(session)
     return this.agentService.listTools()
   }
 

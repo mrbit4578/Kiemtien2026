@@ -14,6 +14,7 @@ import {
 import { Throttle } from '@nestjs/throttler'
 import { AuthService } from './auth.service'
 import { RegisterDto, LoginDto } from './dto'
+import { getRequestCsrfToken } from '../common/csrf.middleware'
 import type { Response, Request } from 'express'
 
 /**
@@ -84,6 +85,25 @@ export class AuthController {
   @Get('session')
   async session(@Session() session: any) {
     return this.authService.getSession(session)
+  }
+
+  /**
+   * GET /auth/csrf-token — trả CSRF token dạng JSON cho frontend cross-domain.
+   *
+   * Production web (Vercel) và API (Railway/Render) khác domain → JS ở web domain
+   * KHÔNG đọc được cookie `orh_csrf` do API domain set qua `document.cookie`.
+   * Endpoint này là cầu nối: frontend gọi 1 lần (kèm credentials để cookie cũng
+   * được set/refresh), cache token trong memory rồi gửi lại qua header
+   * `X-CSRF-Token` ở mọi request đổi trạng thái.
+   *
+   * PHẢI khai báo trước các route `:provider` để Express không match nhầm.
+   * GET là method an toàn nên CsrfGuard bỏ qua; token này vô dụng với attacker
+   * vì không đọc được cross-origin khi CORS không cho phép (không có
+   * Access-Control-Allow-Origin: * khi credentials: include).
+   */
+  @Get('csrf-token')
+  csrfToken(@Req() req: Request) {
+    return { csrfToken: getRequestCsrfToken(req) }
   }
 
   // ─── OAuth ───────────────────────────────────────────────────────────────

@@ -31,6 +31,40 @@ function parseJsonSafe(text: string): any {
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
+/**
+ * Lấy CSRF token (double-submit pattern).
+ * 1. Ưu tiên đọc cookie `orh_csrf` (cùng domain / localhost dev).
+ * 2. Fallback cross-domain production: cookie do API domain set nên JS ở web
+ *    domain không đọc được → gọi 1 lần GET /auth/csrf-token (kèm credentials
+ *    để cookie cũng được set/refresh), cache trong memory.
+ */
+let csrfMemoryCache: string | undefined
+let csrfFetchPromise: Promise<string | undefined> | undefined
+
+async function getCsrfToken(): Promise<string | undefined> {
+  if (typeof document !== 'undefined') {
+    const match = document.cookie.match(/(?:^|;\s*)orh_csrf=([^;]*)/)
+    if (match) return decodeURIComponent(match[1])
+  }
+  if (csrfMemoryCache) return csrfMemoryCache
+  if (!csrfFetchPromise) {
+    csrfFetchPromise = fetch(`${API_BASE_URL}/auth/csrf-token`, {
+      credentials: 'include',
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        csrfMemoryCache =
+          data && typeof data.csrfToken === 'string' ? data.csrfToken : undefined
+        return csrfMemoryCache
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        csrfFetchPromise = undefined
+      })
+  }
+  return csrfFetchPromise
+}
+
 async function request<T>(
   path: string,
   method: HttpMethod = 'GET',
@@ -40,11 +74,19 @@ async function request<T>(
 ): Promise<T> {
   let res: Response
   try {
+    // CSRF double-submit: backend yêu cầu header X-CSRF-Token khớp cookie
+    // `orh_csrf` ở mọi request đổi trạng thái đã đăng nhập (POST/PUT/PATCH/DELETE).
+    const headers: Record<string, string> = {}
+    if (!asForm) headers['Content-Type'] = 'application/json'
+    if (method !== 'GET') {
+      const csrf = await getCsrfToken()
+      if (csrf) headers['X-CSRF-Token'] = csrf
+    }
     res = await fetch(`${API_BASE_URL}${path}`, {
       method,
       // Quan trọng: gửi session cookie để backend nhận diện workspace
       credentials: 'include',
-      headers: asForm ? undefined : { 'Content-Type': 'application/json' },
+      headers,
       body:
         body !== undefined
           ? asForm

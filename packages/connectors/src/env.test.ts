@@ -93,7 +93,7 @@ describe('Instagram connector dùng Instagram Login (không qua Facebook dialog)
 
 describe('connector fail-fast khi thiếu client id', () => {
   it('GoogleConnector.authorizationUrl throw OAuthNotConfiguredError (không còn client_id=undefined)', async () => {
-    // ALLOWED_REDIRECT_URIS được build lúc module load → set API_URL trước dynamic import
+    // Redirect URI tính lazy lúc gọi (qua oauthCallbackUrl) → set API_URL trước khi gọi connector
     process.env.API_URL = 'https://api.example.com'
     delete process.env.GOOGLE_CLIENT_ID
 

@@ -10,7 +10,7 @@ export interface PublishWebhookPayload {
   workspaceId: string
   /** Provider đích: instagram | tiktok | facebook */
   platform: string
-  /** Trạng thái cuối của job: done | failed | dead_letter */
+  /** Trạng thái job: done | failed | dead_letter | publish_confirm_pending */
   status: string
   /** Message lỗi (chỉ khi failed) — đã cắt ngắn ở worker */
   error?: string

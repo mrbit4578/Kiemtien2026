@@ -1,5 +1,6 @@
 import type { SocialConnector } from './interface';
-import { requiredEnv } from './env';
+import { sanitizeUrl } from './sanitize';
+import { requiredEnv, oauthCallbackUrl } from './env';
 import type { Connection, OAuthStartInput, OAuthCallbackInput, TokenSet, ProviderIdentity, PermissionManifest, Provider, PublishInput, PublishResult, MediaKind } from '@orh/shared'
 import { validateRedirectUri } from '@orh/auth'
 import { decrypt } from '@orh/crypto'
@@ -58,7 +59,12 @@ export const INSTAGRAM_MANIFEST: PermissionManifest = {
 const IG_AUTH_URL = 'https://www.instagram.com/oauth/authorize'
 const IG_TOKEN_URL = 'https://api.instagram.com/oauth/access_token'
 const IG_GRAPH_URL = 'https://graph.instagram.com'
-const ALLOWED_REDIRECT_URIS = [`${process.env.API_URL}/auth/instagram/callback`]
+// Lazy (gọi lúc dùng, không phải lúc load module): API_URL có trailing slash
+// hoặc chưa set lúc import sẽ làm validateRedirectUri fail toàn bộ OAuth.
+// Cùng mẫu với tiktok.ts / google.ts / meta.ts / github.ts / canva.ts.
+function allowedRedirectUris(): string[] {
+  return [oauthCallbackUrl('instagram')]
+}
 const DEFAULT_SCOPES = ['instagram_business_basic', 'instagram_business_content_publish']
 
 /**
@@ -116,7 +122,7 @@ export class InstagramConnector implements SocialConnector {
   manifest(): PermissionManifest { return INSTAGRAM_MANIFEST }
 
   authorizationUrl(input: OAuthStartInput & { codeChallenge: string }): string {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     // Instagram Login không dùng PKCE → build URL thủ công, không gắn code_challenge
     const url = new URL(IG_AUTH_URL)
     url.searchParams.set('client_id', requiredEnv('instagram', 'INSTAGRAM_APP_ID'))
@@ -128,7 +134,7 @@ export class InstagramConnector implements SocialConnector {
   }
 
   async exchangeCode(input: OAuthCallbackInput): Promise<TokenSet> {
-    validateRedirectUri(input.redirectUri, ALLOWED_REDIRECT_URIS)
+    validateRedirectUri(input.redirectUri, allowedRedirectUris())
     // Instagram trả code kèm hậu tố '#_' — strip trước khi dùng
     const code = input.code.split('#')[0]
     const appId = requiredEnv('instagram', 'INSTAGRAM_APP_ID')
@@ -157,13 +163,25 @@ export class InstagramConnector implements SocialConnector {
     const shortToken: string | undefined = d.access_token ?? d.data?.[0]?.access_token
     if (!shortToken) throw new OrhError('TRANSIENT_NETWORK_ERROR', 'Instagram không trả access_token.', true, 'instagram')
 
-    // 2. short-lived → long-lived (60 ngày). Meta chỉ document dạng GET
-    // server-to-server; secret không bao giờ lộ ra browser.
-    const llRes = await fetch(
+    // 2. short-lived → long-lived (60 ngày). Meta chỉ document dạng GET với
+    // secret trong query string (không có phiên bản POST body) — gọi
+    // server-to-server nên secret không bao giờ lộ ra browser. Mọi error liên
+    // quan URL đều đi qua sanitizeUrl() để secret không lọt vào log.
+    const exchangeUrl =
       `${IG_GRAPH_URL}/access_token?grant_type=ig_exchange_token` +
-        `&client_secret=${encodeURIComponent(appSecret)}` +
-        `&access_token=${encodeURIComponent(shortToken)}`,
-    )
+      `&client_secret=${encodeURIComponent(appSecret)}` +
+      `&access_token=${encodeURIComponent(shortToken)}`
+    let llRes: Response
+    try {
+      llRes = await fetch(exchangeUrl)
+    } catch (err) {
+      throw new OrhError(
+        'TRANSIENT_NETWORK_ERROR',
+        `Không kết nối được Meta (${sanitizeUrl(exchangeUrl)}): ${err instanceof Error ? err.message : String(err)}.`,
+        true,
+        'instagram',
+      )
+    }
     if (!llRes.ok) {
       const body = await llRes.json().catch(() => ({}))
       const detail = body?.error?.message
@@ -182,10 +200,22 @@ export class InstagramConnector implements SocialConnector {
 
   async refresh(connection: Connection): Promise<TokenSet> {
     const token = decrypt(connection.encryptedAccessToken)
-    const res = await fetch(
+    // Meta chỉ document endpoint này dạng GET với token trong query string
+    // (không có phiên bản POST body). Error liên quan URL → sanitizeUrl().
+    const refreshUrl =
       `${IG_GRAPH_URL}/refresh_access_token?grant_type=ig_refresh_token` +
-        `&access_token=${encodeURIComponent(token)}`,
-    )
+      `&access_token=${encodeURIComponent(token)}`
+    let res: Response
+    try {
+      res = await fetch(refreshUrl)
+    } catch (err) {
+      throw new OrhError(
+        'TOKEN_EXPIRED',
+        `Không kết nối được Meta để refresh token (${sanitizeUrl(refreshUrl)}): ${err instanceof Error ? err.message : String(err)}.`,
+        true,
+        'instagram',
+      )
+    }
     if (!res.ok) throw new OrhError('TOKEN_EXPIRED', 'Instagram token refresh failed.', true, 'instagram')
     const d = await res.json()
     return {

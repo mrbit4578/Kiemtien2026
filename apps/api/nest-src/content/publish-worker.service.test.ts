@@ -89,6 +89,9 @@ describe('probeMediaUrl', () => {
   let server: Server
   let base: string
   before(async () => {
+    // Test dùng server local 127.0.0.1 → bật bypass SSRF CHỈ trong test
+    // (production probeMediaUrl luôn chặn IP nội bộ qua assertSafeUrl).
+    process.env.ALLOW_PRIVATE_MEDIA_URLS = 'true'
     server = createServer((req, res) => {
       if (req.url === '/a.png') {
         res.writeHead(200, { 'content-type': 'image/png' })
@@ -122,6 +125,7 @@ describe('probeMediaUrl', () => {
     base = `http://127.0.0.1:${port}`
   })
   after(async () => {
+    delete process.env.ALLOW_PRIVATE_MEDIA_URLS
     await new Promise<void>((resolve) => server.close(() => resolve()))
   })
 

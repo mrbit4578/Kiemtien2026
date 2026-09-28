@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
 import { getConnector } from '../common/provider-registry'
 import { requireWorkspaceId } from '../common/session'
+import { Roles } from '../common/roles.decorator'
 
 /**
  * DELETE /me/data — xóa tài khoản và dữ liệu.
@@ -24,6 +25,11 @@ export class MeController {
     private readonly audit: AuditLogService,
   ) {}
 
+  // CHỈ owner được gọi: endpoint này revoke toàn bộ connection của workspace và
+  // soft-delete tài khoản của workspace owner. API hiện không có chế độ xóa
+  // per-user cho member (không có bảng dữ liệu riêng theo user để xóa), nên
+  // phương án an toàn nhất là giới hạn ở owner — member gọi sẽ nhận 403.
+  @Roles('owner')
   @Delete('data')
   @HttpCode(200)
   async deleteMyData(@Session() session: any, @Req() req: Request) {

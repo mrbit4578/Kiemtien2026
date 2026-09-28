@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common'
 import { APP_GUARD } from '@nestjs/core'
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler'
 import { ApiKeyGuard } from './common/api-key.guard'
+import { CsrfGuard } from './common/csrf.guard'
+import { RolesGuard } from './common/roles.guard'
 import { PrismaModule } from './prisma/prisma.module'
 import { AuditModule } from './audit/audit.module'
 import { AuthModule } from './auth/auth.module'
@@ -40,6 +42,11 @@ import { WooCommerceModule } from './woocommerce/woocommerce.module'
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     // API key server-to-server (X-API-Key): không header → giữ nguyên flow session.
     { provide: APP_GUARD, useClass: ApiKeyGuard },
+    // CSRF double-submit: đặt sau ApiKeyGuard để request X-API-Key
+    // (server-to-server, không dùng cookie) được miễn kiểm tra CSRF.
+    { provide: APP_GUARD, useClass: CsrfGuard },
+    // RBAC: chỉ tác động endpoint có @Roles(...), endpoint còn lại cho qua.
+    { provide: APP_GUARD, useClass: RolesGuard },
   ],
 })
 export class AppModule {}

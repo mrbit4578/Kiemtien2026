@@ -36,4 +36,12 @@ export interface SocialConnector {
 
   /** Publish nội dung (chỉ connector có capability này) */
   publish?(input: PublishInput): Promise<PublishResult>
+
+  /**
+   * Kiểm tra bài đăng có thật sự tồn tại trên provider không.
+   * Phục vụ nhánh 'publish_confirm_pending' của publish worker: bài có thể đã
+   * được đăng nhưng worker chưa ghi 'done' (DB hiccup ngay sau publish).
+   * Không implement → worker đánh dấu done kèm audit warn, KHÔNG publish lại.
+   */
+  verifyPublish?(connection: Connection, platformPostId: string): Promise<boolean>
 }
