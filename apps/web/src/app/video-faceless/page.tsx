@@ -25,6 +25,9 @@ import {
   addVideoAiEntry,
   setVideoAiLabel,
   deleteVideoAiEntry,
+  listVideoPresets,
+  createVideoProjectFromPreset,
+  type VideoPresetSummary,
 } from '../../lib/hooks'
 import {
   VIDEO_STAGES,
@@ -104,15 +107,69 @@ function VideoFacelessInner() {
 /* ─── Danh sách dự án ─── */
 
 function ProjectList({ onSelect }: { onSelect: (id: string) => void }) {
-  const { projects, loading, error, create, remove } = useVideoProjects()
+  const { projects, loading, error, create, remove, refresh } = useVideoProjects()
   const [showNew, setShowNew] = useState(false)
   const [title, setTitle] = useState('')
   const [series, setSeries] = useState('')
   const [viralSourceUrl, setViralSourceUrl] = useState('')
   const [creating, setCreating] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  // Preset shot-list (timelapse công trình…)
+  const [presets, setPresets] = useState<VideoPresetSummary[]>([])
+  const [presetId, setPresetId] = useState('')
+  const [boiCanh, setBoiCanh] = useState('')
+  const [vatNeo, setVatNeo] = useState('')
+  const [kienTruc, setKienTruc] = useState('')
+  const [chu, setChu] = useState('Nể phục')
+  const [duration, setDuration] = useState<'short' | 'long'>('short')
+  const [presetError, setPresetError] = useState<string | null>(null)
+
+  const openNew = () => {
+    setPresetError(null)
+    setShowNew(true)
+    if (presets.length === 0) {
+      listVideoPresets().then(setPresets).catch(() => {})
+    }
+  }
+
+  const resetForm = () => {
+    setShowNew(false)
+    setTitle(''); setSeries(''); setViralSourceUrl('')
+    setPresetId(''); setBoiCanh(''); setVatNeo(''); setKienTruc('')
+    setChu('Nể phục'); setDuration('short'); setPresetError(null)
+  }
 
   const doCreate = async () => {
+    setPresetError(null)
+    // Tạo từ preset shot-list
+    if (presetId) {
+      if (!boiCanh.trim() || !vatNeo.trim() || !kienTruc.trim()) {
+        setPresetError('Hãy điền đủ Bối cảnh, Vật neo và Kiến trúc để render shot-list.')
+        return
+      }
+      setCreating(true)
+      try {
+        const r = await createVideoProjectFromPreset({
+          presetId,
+          title: title.trim() || undefined,
+          series: series.trim() || undefined,
+          boiCanh: boiCanh.trim(),
+          vatNeo: vatNeo.trim(),
+          kienTruc: kienTruc.trim(),
+          chu: chu.trim() || undefined,
+          duration,
+        })
+        await refresh()
+        resetForm()
+        onSelect(r.projectId)
+      } catch (err) {
+        setPresetError(err instanceof Error ? err.message : 'Tạo project từ preset thất bại.')
+      } finally {
+        setCreating(false)
+      }
+      return
+    }
+    // Tạo thủ công như cũ
     if (!title.trim()) return
     setCreating(true)
     try {
@@ -121,8 +178,7 @@ function ProjectList({ onSelect }: { onSelect: (id: string) => void }) {
         series: series.trim() || undefined,
         viralSourceUrl: viralSourceUrl.trim() || undefined,
       })
-      setShowNew(false)
-      setTitle(''); setSeries(''); setViralSourceUrl('')
+      resetForm()
       onSelect(p.id)
     } finally {
       setCreating(false)
@@ -143,7 +199,7 @@ function ProjectList({ onSelect }: { onSelect: (id: string) => void }) {
             rồi gửi sang Content Studio để xuất bản.
           </p>
         </div>
-        <button onClick={() => setShowNew(true)} className={btnPrimary}>
+        <button onClick={openNew} className={btnPrimary}>
           <Plus className="w-4 h-4" /> Dự án mới
         </button>
       </div>
@@ -234,7 +290,7 @@ function ProjectList({ onSelect }: { onSelect: (id: string) => void }) {
 
       {showNew && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowNew(false)}>
-          <div className="w-full max-w-md p-6 rounded-2xl bg-dark-900 border border-dark-700 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 rounded-2xl bg-dark-900 border border-dark-700 space-y-4" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-bold text-white">Dự án video mới</h2>
             <div>
               <label className={labelCls}>Tiêu đề *</label>
@@ -248,9 +304,51 @@ function ProjectList({ onSelect }: { onSelect: (id: string) => void }) {
               <label className={labelCls}>URL video viral tham khảo (chỉ để phân tích — không tải lại)</label>
               <input className={inputCls} value={viralSourceUrl} onChange={(e) => setViralSourceUrl(e.target.value)} placeholder="https://..." />
             </div>
+            <div className="border-t border-dark-700 pt-4">
+              <label className={labelCls}>Tạo nhanh từ preset shot-list</label>
+              <select className={inputCls} value={presetId} onChange={(e) => setPresetId(e.target.value)}>
+                <option value="">— Tự tạo thủ công —</option>
+                {presets.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.keyframeCount} keyframe)</option>
+                ))}
+              </select>
+              {presetId && (
+                <div className="mt-3 space-y-3">
+                  <p className="text-[11px] text-dark-400">{presets.find((p) => p.id === presetId)?.tagline}</p>
+                  <div>
+                    <label className={labelCls}>Bối cảnh lô đất *</label>
+                    <input className={inputCls} value={boiCanh} onChange={(e) => setBoiCanh(e.target.value)} placeholder="VD: narrow urban lot between two houses, street in foreground" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Vật neo — nghịch lý không gian *</label>
+                    <input className={inputCls} value={vatNeo} onChange={(e) => setVatNeo(e.target.value)} placeholder="VD: giant granite boulder, 8 meters tall" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Kiến trúc công trình cuối *</label>
+                    <input className={inputCls} value={kienTruc} onChange={(e) => setKienTruc(e.target.value)} placeholder="VD: modern minimalist villa, concrete, glass, wood slats" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>Chữ overlay</label>
+                      <input className={inputCls} value={chu} onChange={(e) => setChu(e.target.value)} placeholder="Nể phục" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Thời lượng</label>
+                      <select className={inputCls} value={duration} onChange={(e) => setDuration(e.target.value as 'short' | 'long')}>
+                        {presets.find((p) => p.id === presetId)?.durations.map((d) => (
+                          <option key={d.id} value={d.id}>{d.label} ({d.shotCount} shot)</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  {presetError && <p className="text-xs text-red-400">{presetError}</p>}
+                  <p className="text-[11px] text-dark-400">Tạo từ preset sẽ tự render shot-list thành kịch bản, điền brief, ghi AI register A3 (bắt buộc gắn nhãn AI khi đăng).</p>
+                </div>
+              )}
+            </div>
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowNew(false)} className={btnGhost}>Hủy</button>
-              <button onClick={doCreate} disabled={!title.trim() || creating} className={btnPrimary}>
+              <button onClick={doCreate} disabled={creating || (!presetId && !title.trim())} className={btnPrimary}>
                 {creating ? 'Đang tạo…' : 'Tạo dự án'}
               </button>
             </div>
