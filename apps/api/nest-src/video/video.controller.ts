@@ -20,6 +20,7 @@ import {
   CreateVideoClaimDto,
   CreateVideoAiEntryDto,
   AutoBuildVideoDto,
+  CreateProjectFromPresetDto,
 } from './dto'
 import { requireWorkspaceId } from '../common/session'
 import type { Request } from 'express'
@@ -55,6 +56,34 @@ export class VideoController {
   @HttpCode(200)
   async autoBuild(@Body() dto: AutoBuildVideoDto, @Session() session: any) {
     return this.video.autoBuildFromSource(requireWorkspaceId(session), dto)
+  }
+
+  // ─── Presets ───
+
+  /**
+   * GET /video/presets — liệt kê preset shot-list (timelapse công trình…).
+   */
+  @Get('presets')
+  async listPresets() {
+    return this.video.listPresets()
+  }
+
+  /**
+   * GET /video/presets/:presetId — chi tiết preset (30 keyframes, prompt mẫu).
+   */
+  @Get('presets/:presetId')
+  async getPreset(@Param('presetId') presetId: string) {
+    return this.video.getPresetDetail(presetId)
+  }
+
+  /**
+   * POST /video/projects/from-preset — tạo project từ preset: điền 4 biến
+   * bối cảnh → render shot-list → nạp kịch bản, brief, AI register A3.
+   */
+  @Post('projects/from-preset')
+  @HttpCode(200)
+  async createFromPreset(@Body() dto: CreateProjectFromPresetDto, @Session() session: any) {
+    return this.video.createProjectFromPreset(requireWorkspaceId(session), dto)
   }
 
   @Get('projects/:id')

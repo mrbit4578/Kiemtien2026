@@ -5,6 +5,8 @@ import { AiService, FALLBACK_PRIORITY } from '../ai/ai.service'
 import { getProviderMeta, type AiProviderId } from '../ai/ai.providers'
 import { videoBriefTool, videoScriptTool } from '../agent/video-tools'
 import { GATE_IDS, VIDEO_STAGES } from './dto'
+import { getPresetById, listPresetSummaries } from './presets'
+import { renderShotList } from './presets/timelapse-construction'
 import type {
   AutoBuildVideoDto,
   CreateVideoProjectDto,
@@ -13,6 +15,7 @@ import type {
   CreateVideoClaimDto,
   CreateVideoAiEntryDto,
   RiskScoreDto,
+  CreateProjectFromPresetDto,
 } from './dto'
 
 export interface RiskResult {
@@ -566,5 +569,100 @@ Nguyên tắc ràng buộc (bắt buộc tuân thủ):
       ip,
     })
     return { ok: true, contentItemId: item.id }
+  }
+
+  // ─── Presets ───
+
+  /** GET /video/presets — liệt kê preset shot-list có sẵn. */
+  listPresets() {
+    return listPresetSummaries()
+  }
+
+  /** GET /video/presets/:presetId — chi tiết 1 preset (không render prompt). */
+  getPresetDetail(presetId: string) {
+    const preset = getPresetById(presetId)
+    if (!preset) throw new NotFoundException(`Không tìm thấy preset "${presetId}".`)
+    return preset
+  }
+
+  /**
+   * POST /video/projects/from-preset — tạo project từ preset shot-list:
+   * render prompt theo 4 biến bối cảnh, nạp kịch bản (shot-list), brief,
+   * publish notes (audio/overlay/luật sắt) và ghi AI register A3
+   * (hình ảnh AI chân thực → bắt buộc gắn nhãn khi đăng).
+   */
+  async createProjectFromPreset(workspaceId: string, dto: CreateProjectFromPresetDto) {
+    const preset = getPresetById(dto.presetId)
+    if (!preset) throw new NotFoundException(`Không tìm thấy preset "${dto.presetId}".`)
+    const vars = {
+      boiCanh: dto.boiCanh.trim(),
+      vatNeo: dto.vatNeo.trim(),
+      kienTruc: dto.kienTruc.trim(),
+      chu: dto.chu?.trim() || 'Nể phục',
+    }
+    const { duration, shots } = renderShotList(preset, dto.duration, vars)
+
+    const project = await this.createProject(workspaceId, {
+      title: dto.title?.trim() || `${preset.name} — ${duration.label}`,
+      series: dto.series?.trim() || undefined,
+    } as CreateVideoProjectDto)
+
+    // Kịch bản = shot-list đã render (mỗi shot: pha + thay đổi + prompt).
+    const script = shots
+      .map(
+        (s, i) =>
+          `${i + 1}. [${s.id} · ${s.phase}] ${s.title}\n   Thay đổi: ${s.change}\n   Ánh sáng: ${s.light}\n   Prompt:\n${s.prompt}`,
+      )
+      .join('\n\n')
+
+    const briefJson = JSON.stringify({
+      presetId: preset.id,
+      presetName: preset.name,
+      duration: duration.id,
+      durationLabel: duration.label,
+      vars,
+      keyframeCount: shots.length,
+      generated_by: `preset/${preset.id}`,
+    })
+
+    const publishNotes = [
+      'ÂM THANH:',
+      `- Nhạc: ${preset.audio.music}`,
+      `- Mức: ${preset.audio.level}`,
+      `- Ambient: ${preset.audio.ambient}`,
+      `- ${preset.audio.voiceover}`,
+      '',
+      'OVERLAY:',
+      `- ${preset.overlay.text.replace('{{chu}}', vars.chu)}`,
+      `- ${preset.overlay.position}`,
+      `- ${preset.overlay.safeZone}`,
+      `- ${preset.overlay.aiLabel}`,
+      '',
+      'LUẬT SẮT:',
+      ...preset.ironRules.map((r, i) => `${i + 1}. ${r}`),
+    ].join('\n')
+
+    await this.updateProject(workspaceId, project.id, {
+      stage: 'script',
+      angle: `${preset.name} — ${duration.label}`,
+      briefJson,
+      script,
+      publishNotes,
+    })
+
+    // AI register A3: toàn bộ keyframe là hình ảnh AI chân thực → bắt buộc nhãn.
+    await this.addAiEntry(workspaceId, project.id, {
+      assetName: `${shots.length} keyframe AI (${preset.id})`,
+      tool: 'Image AI (preset timelapse-construction)',
+      inputSource: 'Bối cảnh do người dùng điền (4 biến preset)',
+      outputUse: 'Keyframe dựng video timelapse',
+      category: 'A3',
+      realPerson: false,
+      labelRequired: true,
+      labelApplied: false,
+      consentStatus: 'na',
+    } as CreateVideoAiEntryDto)
+
+    return { projectId: project.id, presetId: preset.id, duration: duration.id, shotCount: shots.length }
   }
 }

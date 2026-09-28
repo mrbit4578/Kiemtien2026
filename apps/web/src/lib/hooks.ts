@@ -489,6 +489,33 @@ export function useVideoProjects() {
   return { projects, loading, error, refresh, create, remove }
 }
 
+export interface VideoPresetSummary {
+  id: string
+  name: string
+  tagline: string
+  keyframeCount: number
+  phaseCount: number
+  durations: { id: string; label: string; shotCount: number; secondsPerKeyframe: number }[]
+  placeholders: { key: string; label: string; hint: string; example: string }[]
+}
+
+export async function listVideoPresets(): Promise<VideoPresetSummary[]> {
+  return api.get<VideoPresetSummary[]>('/video/presets')
+}
+
+export async function createVideoProjectFromPreset(input: {
+  presetId: string
+  title?: string
+  series?: string
+  boiCanh: string
+  vatNeo: string
+  kienTruc: string
+  chu?: string
+  duration?: 'short' | 'long'
+}): Promise<{ projectId: string; presetId: string; duration: string; shotCount: number }> {
+  return api.post('/video/projects/from-preset', input)
+}
+
 export async function getVideoProject(id: string): Promise<VideoProjectDetail> {
   return api.get<VideoProjectDetail>(`/video/projects/${id}`)
 }
