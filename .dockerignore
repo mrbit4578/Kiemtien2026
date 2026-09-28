@@ -1,0 +1,28 @@
+# Build context cho Docker image Kiemtien2026 API + Concat renderer.
+# Nguyên tắc: context chỉ chứa source — mọi thứ build được đều build lại
+# trong image. NGOẠI LỆ DUY NHẤT: docker/concat-src được giữ lại vì stage
+# rust-builder COPY nó từ build context (vendored Concat 0.2.3, đã loại target/).
+
+**/.git
+**/.gitignore
+**/node_modules
+**/dist
+**/target
+**/.next
+**/.turbo
+**/coverage
+
+# Env / secrets: KHÔNG BAO GIỜ vào image. Render inject lúc runtime.
+**/.env
+**/.env.*
+!.env.example
+
+# File dev local
+**/.DS_Store
+**/*.log
+.vscode/
+.idea/
+
+# Giữ lại: docker/concat-src (vendored source cho rust-builder)
+!docker/concat-src/
+!docker/concat-src/**

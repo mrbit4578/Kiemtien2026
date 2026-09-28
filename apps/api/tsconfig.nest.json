@@ -1,0 +1,1 @@
+{"compilerOptions":{"declaration":false,"noEmit":false,"outDir":"dist","rootDir":"nest-src","sourceMap":true},"exclude":["node_modules","dist"],"extends":"./tsconfig.json","include":["nest-src/**/*"]}

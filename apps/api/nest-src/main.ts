@@ -1,0 +1,106 @@
+import 'reflect-metadata'
+import { randomBytes } from 'crypto'
+import { NestFactory } from '@nestjs/core'
+import { ValidationPipe } from '@nestjs/common'
+import { json } from 'express'
+import session from 'express-session'
+import helmet from 'helmet'
+import { AppModule } from './app.module'
+import { PrismaService } from './prisma/prisma.service'
+import { PrismaSessionStore } from './auth/prisma-session.store'
+
+async function bootstrap() {
+  // Express adapter (mặc định) — khớp với express types dùng trong controllers
+  const app = await NestFactory.create(AppModule)
+
+  // Tin tưởng reverse proxy (Railway/Render terminate TLS phía trước) để
+  // cookie `secure` và req.ip hoạt động đúng sau proxy.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1)
+
+  // Security headers (thay cho 3 header set thủ công trước đây)
+  app.use(helmet())
+
+  // Giới hạn body để chống payload quá lớn
+  app.use(json({ limit: '1mb' }))
+
+  // Session server-side qua HttpOnly cookie
+  const sessionSecret = process.env.SESSION_SECRET
+  if (!sessionSecret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('SESSION_SECRET chưa được cấu hình — từ chối khởi động ở production.')
+    }
+    console.warn('[warn] SESSION_SECRET chưa set — dùng secret tạm thời, KHÔNG dùng cho production.')
+  }
+  const isProd = process.env.NODE_ENV === 'production'
+  // Session lưu vào DB (PrismaSessionStore) thay vì MemoryStore mặc định:
+  // Render restart/redeploy làm mất RAM → user bị "tự động thoát".
+  // rolling: true = mỗi request còn hoạt động thì gia hạn cookie (sliding),
+  // maxAge 7 ngày = chỉ logout khi 7 ngày không động vào app.
+  const prisma = app.get(PrismaService)
+  app.use(
+    session({
+      store: new PrismaSessionStore(prisma),
+      secret: sessionSecret ?? randomBytes(32).toString('hex'),
+      resave: false,
+      saveUninitialized: false,
+      rolling: true,
+      cookie: {
+        httpOnly: true,
+        secure: isProd,
+        // Frontend (Vercel) và backend (Railway/Render) khác domain → request
+        // cross-site, nên production cần SameSite=None (bắt buộc kèm Secure).
+        // Ghi đè bằng SESSION_SAMESITE nếu deploy cùng domain.
+        sameSite:
+          (process.env.SESSION_SAMESITE as 'lax' | 'strict' | 'none' | undefined) ??
+          (isProd ? 'none' : 'lax'),
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
+      },
+    }),
+  )
+
+  app.useGlobalPipes(
+    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+  )
+
+  // CORS fail-closed: chỉ bật khi APP_URL được cấu hình
+  const appUrl = process.env.APP_URL
+  if (appUrl) {
+    app.enableCors({ origin: [appUrl], credentials: true })
+  } else {
+    console.warn('[warn] APP_URL chưa set — CORS tắt (fail-closed).')
+  }
+
+  // Chẩn đoán cấu hình mã hóa token ngay khi khởi động (chỉ log trạng thái +
+  // độ dài, KHÔNG BAO GIỜ log giá trị key). Thiếu key → OAuth callback sẽ 500
+  // ở bước mã hóa token — phát hiện sớm ở đây thay vì đoán mò.
+  const tokenKey = process.env.TOKEN_ENCRYPTION_KEY
+  if (!tokenKey) {
+    console.warn(
+      '[warn] TOKEN_ENCRYPTION_KEY chưa set — OAuth callback sẽ lỗi 500 khi mã hóa token.',
+    )
+  } else if (tokenKey.length < 32) {
+    console.warn(
+      `[warn] TOKEN_ENCRYPTION_KEY quá ngắn (${tokenKey.length} ký tự, cần ≥ 32) — OAuth callback sẽ lỗi 500 khi mã hóa token.`,
+    )
+  } else {
+    console.log(`[crypto] TOKEN_ENCRYPTION_KEY đã cấu hình (${tokenKey.length} ký tự).`)
+  }
+
+  // In ra callback URL OAuth thực tế để đối chiếu với cấu hình trên dashboard
+  // của provider (TikTok/Google/Meta...). Lỗi `redirect_uri` ở trang authorize
+  // của TikTok gần như luôn do URL dưới đây KHÁC với URL đã đăng ký trong
+  // TikTok Developer Dashboard → vào dashboard sửa, không phải lỗi code.
+  const apiUrl = (process.env.API_URL ?? '').replace(/\/+$/, '')
+  if (apiUrl) {
+    console.log(`[oauth] Callback URL mẫu: ${apiUrl}/auth/<provider>/callback`)
+  } else {
+    console.warn('[warn] API_URL chưa set — OAuth start sẽ lỗi 503.')
+  }
+
+  // Railway/Render cấp PORT động; API_PORT dành cho tự host thủ công.
+  const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000)
+  await app.listen(port, '0.0.0.0')
+  console.log(`API running on :${port}`)
+}
+
+bootstrap()
