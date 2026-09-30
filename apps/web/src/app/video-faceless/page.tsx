@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import {
   Plus, ArrowLeft, Clapperboard, AlertTriangle, Trash2, Send, ShieldCheck,
   Bot, ClipboardCheck, Gauge, Save, CheckCircle2, XCircle, Link2, Sparkles,
-  FileText, Scale, BrainCircuit,
+  FileText, Scale, BrainCircuit, Zap,
 } from 'lucide-react'
 import {
   useVideoProjects,
@@ -26,6 +26,7 @@ import {
   setVideoAiLabel,
   deleteVideoAiEntry,
 } from '../../lib/hooks'
+import { VideoGenStudio } from './studio'
 import {
   VIDEO_STAGES,
   VIDEO_STAGE_LABELS,
@@ -94,16 +95,24 @@ export default function VideoFacelessPage() {
 function VideoFacelessInner() {
   const searchParams = useSearchParams()
   const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('project'))
-  return selectedId ? (
-    <ProjectDetail id={selectedId} onBack={() => setSelectedId(null)} />
-  ) : (
-    <ProjectList onSelect={setSelectedId} />
-  )
+  const [studio, setStudio] = useState(false)
+  if (selectedId) return <ProjectDetail id={selectedId} onBack={() => setSelectedId(null)} />
+  if (studio)
+    return (
+      <VideoGenStudio
+        onBack={() => setStudio(false)}
+        onCreatedProject={(id) => {
+          setStudio(false)
+          setSelectedId(id)
+        }}
+      />
+    )
+  return <ProjectList onSelect={setSelectedId} onStudio={() => setStudio(true)} />
 }
 
 /* ─── Danh sách dự án ─── */
 
-function ProjectList({ onSelect }: { onSelect: (id: string) => void }) {
+function ProjectList({ onSelect, onStudio }: { onSelect: (id: string) => void; onStudio: () => void }) {
   const { projects, loading, error, create, remove } = useVideoProjects()
   const [showNew, setShowNew] = useState(false)
   const [title, setTitle] = useState('')
@@ -143,9 +152,14 @@ function ProjectList({ onSelect }: { onSelect: (id: string) => void }) {
             rồi gửi sang Content Studio để xuất bản.
           </p>
         </div>
-        <button onClick={() => setShowNew(true)} className={btnPrimary}>
-          <Plus className="w-4 h-4" /> Dự án mới
-        </button>
+        <div className="flex gap-2 shrink-0">
+          <button onClick={onStudio} className={btnGhost}>
+            <Zap className="w-4 h-4" /> Studio tạo video
+          </button>
+          <button onClick={() => setShowNew(true)} className={btnPrimary}>
+            <Plus className="w-4 h-4" /> Dự án mới
+          </button>
+        </div>
       </div>
 
       <div className="p-4 rounded-xl bg-brand-cyan/5 border border-brand-cyan/20 flex items-start gap-3">
