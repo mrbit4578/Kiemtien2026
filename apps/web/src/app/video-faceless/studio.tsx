@@ -35,8 +35,10 @@ interface GenScene {
   seconds: number
   imageDataUrl: string | null
   imageLoading: boolean
+  imageProvider: string | null
   audioUrl: string | null
   voiceLoading: boolean
+  voiceProvider: string | null
   clipUrl: string | null
   clipJobId: string | null
   clipStatus: string | null
@@ -221,8 +223,10 @@ export function VideoGenStudio({
           seconds: s.seconds,
           imageDataUrl: null,
           imageLoading: false,
+          imageProvider: null,
           audioUrl: null,
           voiceLoading: false,
+          voiceProvider: null,
           clipUrl: null,
           clipJobId: null,
           clipStatus: null,
@@ -254,7 +258,7 @@ export function VideoGenStudio({
           provider: provParam(imageProvider),
         },
       )
-      updateScene(i, { imageDataUrl: res.url, imageLoading: false })
+      updateScene(i, { imageDataUrl: res.url, imageLoading: false, imageProvider: res.provider })
     } catch (err) {
       updateScene(i, { imageLoading: false })
       say('err', `Scene ${i + 1}: ${toMessage(err)}`)
@@ -289,7 +293,7 @@ export function VideoGenStudio({
         voice: voiceName.trim() || undefined,
         provider: provParam(voiceProvider),
       })
-      updateScene(i, { audioUrl: dataUrl(res.mime, res.audioBase64), voiceLoading: false })
+      updateScene(i, { audioUrl: dataUrl(res.mime, res.audioBase64), voiceLoading: false, voiceProvider: res.provider })
       return true
     } catch (err) {
       updateScene(i, { voiceLoading: false })
@@ -415,6 +419,8 @@ export function VideoGenStudio({
 
   const connectedCaps = providers.filter((p) => p.connected)
   const canImage = providers.some((p) => p.connected && p.capabilities.includes('image'))
+  /** Tên hiển thị của provider (để báo key nào thực sự đã chạy khi có fallback) */
+  const provName = (id: string | null) => providers.find((p) => p.id === id)?.name ?? id ?? ''
   const canVoice = providers.some((p) => p.connected && p.capabilities.includes('voice'))
   const canVideo = providers.some((p) => p.connected && p.capabilities.includes('video'))
 
@@ -670,6 +676,9 @@ export function VideoGenStudio({
                 >
                   {s.imageDataUrl ? 'Sinh lại' : 'Sinh ảnh'}
                 </button>
+                {s.imageProvider && (
+                  <p className="text-center text-[10px] text-slate-500 pb-1">via {provName(s.imageProvider)}</p>
+                )}
               </div>
             ))}
           </div>
@@ -722,6 +731,9 @@ export function VideoGenStudio({
                   <>
                     <audio src={s.audioUrl} controls className="h-8 flex-1 min-w-0" />
                     <CheckCircle2 className="w-4 h-4 text-brand-emerald shrink-0" />
+                    {s.voiceProvider && (
+                      <span className="text-[10px] text-slate-500 shrink-0">via {provName(s.voiceProvider)}</span>
+                    )}
                   </>
                 ) : (
                   <>

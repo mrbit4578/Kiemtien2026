@@ -111,18 +111,19 @@ export class VideogenService {
     })
   }
 
-  /** Chọn provider: user chỉ định (phải connected + đủ capability) hoặc auto. */
+  /** Chọn provider: ưu tiên provider được chỉ định (nếu đủ capability + đã kết nối),
+   *  nếu không thì tự fallback sang AUTO_ORDER (Gemini → OpenAI) thay vì báo lỗi. */
   private async resolveProvider(
     workspaceId: string,
     requested: string | undefined,
     need: Capability,
   ): Promise<{ meta: AiProviderMeta; apiKey: string; connId: string }> {
     const tried: string[] = []
-    const candidates: AiProviderId[] = requested
-      ? [requested as AiProviderId]
+    const ordered: AiProviderId[] = requested
+      ? [requested as AiProviderId, ...AUTO_ORDER.filter((id) => id !== requested)]
       : AUTO_ORDER
 
-    for (const id of candidates) {
+    for (const id of ordered) {
       const meta = getProviderMeta(id)
       if (!meta) continue
       if (!(CAPABILITIES[id] ?? []).includes(need)) {
