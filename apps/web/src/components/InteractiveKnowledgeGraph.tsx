@@ -19,7 +19,19 @@ import {
   X,
   TriangleAlert,
 } from 'lucide-react'
-import { useAiConnections, useAiProviders, sendAgentRun } from '../lib/hooks'
+import {
+  useAiConnections,
+  useAiProviders,
+  sendAgentRun,
+  fetchUsedNiches,
+  markNicheUsed,
+  unmarkNicheUsed,
+  recordNicheFeedback,
+  mixNiches,
+  slugifyNiche,
+  type UsedNiche,
+  type MixedNiche,
+} from '../lib/hooks'
 import { ApiError } from '../lib/api'
 import { AiModelSelector } from './AiModelSelector'
 
@@ -156,12 +168,27 @@ const DEFAULT_LINKS: GraphLink[] = [
  * Prompt yêu cầu agent (có web_search) nghiên cứu trend MMO/affiliate Việt Nam
  * hiện tại và trả về các ngách MỚI dưới dạng JSON chuẩn để vẽ lên graph.
  */
-function buildNicheScanPrompt(existingLabels: string[], linkableIds: string[]): string {
+function buildNicheScanPrompt(existingLabels: string[], linkableIds: string[], usedLabels: string[]): string {
+  const banList =
+    usedLabels.length > 0
+      ? [
+          '',
+          'DANH SÁCH CẤM — TUYỆT ĐỐI KHÔNG đề xuất lại các ngách sau (người dùng đã chọn/dùng, không bao giờ lặp lại):',
+          ...usedLabels.map((l) => `- ${l}`),
+          'Cấm cả việc paraphrase/đổi tên các ngách trong danh sách cấm thành ngách "mới".',
+        ]
+      : []
   return [
     'Bạn là chuyên gia nghiên cứu thị trường MMO/affiliate Việt Nam.',
     'Nhiệm vụ: dùng web_search để tìm các xu hướng kiếm tiền online / tiếp thị liên kết ĐANG LÊN tại Việt Nam trong năm 2026,',
     'rồi đề xuất 3–5 NGÁCH MỚI tiềm năng nhất mà chưa có trong danh sách sau:',
     existingLabels.map((l) => `- ${l}`).join('\n'),
+    ...banList,
+    '',
+    'YÊU CẦU ĐA DẠNG (bắt buộc):',
+    '- Mỗi ngách phải thuộc một góc tiếp cận khác nhau (đừng đưa 5 biến thể của cùng một chủ đề).',
+    '- Ít nhất 1 ngách là "wild-card": mới nổi, ít người làm, chưa phổ biến đại trà.',
+    '- Ưu tiên ngách con (sub-niche) cụ thể thay vì ngách lớn chung chung.',
     '',
     'QUY TẮC OUTPUT (bắt buộc): chỉ trả về DUY NHẤT một khối JSON trong ```json ... ```, không thêm chữ nào ngoài khối JSON.',
     'Mỗi phần tử là một ngách với đúng các trường:',
@@ -309,6 +336,19 @@ export function InteractiveKnowledgeGraph() {
   const [analyzing, setAnalyzing] = useState(false)
   const [aiInsight, setAiInsight] = useState<string | null>(null)
   const [aiInsightFor, setAiInsightFor] = useState<string | null>(null)
+  // Ngách đã dùng — nguyên tắc: đã dùng thì không bao giờ đề xuất lại
+  const [usedNiches, setUsedNiches] = useState<UsedNiche[]>([])
+  const usedSlugs = new Set(usedNiches.map((u) => u.slug))
+  const [markingUsed, setMarkingUsed] = useState(false)
+
+  // Nạp danh sách đã dùng lúc mở trang (để loại trừ + gắn badge)
+  useEffect(() => {
+    fetchUsedNiches()
+      .then(setUsedNiches)
+      .catch(() => {
+        /* backend cũ chưa có API — quét vẫn chạy, chỉ thiếu chống lặp */
+      })
+  }, [])
 
   const aiNodes = nodes.filter((n) => n.aiGenerated).sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
 
@@ -320,7 +360,7 @@ export function InteractiveKnowledgeGraph() {
     return providerId
   }
 
-  /** Agent research trend MMO 2026 → đề xuất ngách mới → vẽ lên graph. */
+  /** Agent research trend MMO 2026 → đề xuất ngách mới → trộn server-side → vẽ lên graph. */
   const handleScan = async () => {
     if (scanning) return
     const provider = requireProvider()
@@ -328,9 +368,26 @@ export function InteractiveKnowledgeGraph() {
     setScanning(true)
     setScanError(null)
     try {
+      // Lấy danh sách đã dùng MỚI NHẤT để loại trừ cứng trong prompt
+      let used: UsedNiche[] = usedNiches
+      try {
+        used = await fetchUsedNiches()
+        setUsedNiches(used)
+      } catch {
+        /* bỏ qua — vẫn quét được, chỉ thiếu chống lặp */
+      }
       const res = await sendAgentRun(
         provider,
-        [{ role: 'user' as const, content: buildNicheScanPrompt(nodes.map((n) => n.label), nodes.map((n) => n.id)) }],
+        [
+          {
+            role: 'user' as const,
+            content: buildNicheScanPrompt(
+              nodes.map((n) => n.label),
+              nodes.map((n) => n.id),
+              used.map((u) => u.label),
+            ),
+          },
+        ],
         model || undefined,
         { maxTurns: 10, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 4096 },
       )
@@ -338,14 +395,29 @@ export function InteractiveKnowledgeGraph() {
       if (!parsed || parsed.length === 0) {
         throw new Error('AI không trả về danh sách ngách hợp lệ. Hãy bấm quét lại.')
       }
+      // Trộn tối ưu server-side: loại cứng đã dùng + loại mềm paraphrase +
+      // chấm điểm đa tiêu chí + MMR đa dạng hóa → top 5
+      let suggestions: MixedNiche[]
+      try {
+        const mixed = await mixNiches(parsed.slice(0, 12), 5)
+        suggestions = mixed.picked
+      } catch {
+        // Backend cũ chưa có /niches/mix — fallback: dùng trực tiếp kết quả AI
+        suggestions = (parsed.slice(0, 5) as MixedNiche[]).map((s) => ({ ...s, mixScore: s.score ?? 70 }))
+      }
+      if (suggestions.length === 0) {
+        throw new Error('Tất cả ngách AI đề xuất đều đã dùng hoặc trùng lặp. Hãy bấm quét lại để AI tìm hướng mới.')
+      }
       const knownIds = new Set(nodes.map((n) => n.id))
       const newNodes: GraphNode[] = []
       const newLinks: GraphLink[] = []
-      parsed.slice(0, 5).forEach((raw) => {
+      suggestions.forEach((raw) => {
         const s = raw as AiNicheSuggestion
         const node = toAiNode(s, newNodes.length)
         if (!node || knownIds.has(node.id)) return
         knownIds.add(node.id)
+        // Điểm hiển thị: ưu tiên mixScore từ thuật toán trộn
+        if (typeof raw.mixScore === 'number') node.score = Math.max(0, Math.min(100, Math.round(raw.mixScore)))
         newNodes.push(node)
         const targets = Array.isArray(s.suggestedLinks) ? (s.suggestedLinks as unknown[]) : []
         targets.slice(0, 3).forEach((t) => {
@@ -367,9 +439,72 @@ export function InteractiveKnowledgeGraph() {
     }
   }
 
+  /** Slug chuẩn của node — khớp logic chống lặp phía backend. */
+  const nodeSlug = (n: GraphNode): string => {
+    const m = /^ai_niche_(.+)$/.exec(n.id)
+    if (m && m[1] && !/^scan\d+_\d+$/.test(m[1])) return m[1]
+    return slugifyNiche(n.label)
+  }
+  const isNodeUsed = (n: GraphNode | null): boolean => !!n && usedSlugs.has(nodeSlug(n))
+
+  /** Đánh dấu ngách đã dùng — từ đó thuật toán trộn không bao giờ đề xuất lại. */
+  const handleMarkUsed = async (n: GraphNode) => {
+    if (markingUsed) return
+    setMarkingUsed(true)
+    try {
+      await markNicheUsed({
+        slug: nodeSlug(n),
+        label: n.label,
+        category: n.category,
+        score: n.score,
+        rationale: n.rationale,
+        source: 'scan',
+      })
+      setUsedNiches(await fetchUsedNiches())
+    } catch {
+      setScanError('Không lưu được trạng thái đã dùng. Hãy thử lại.')
+    } finally {
+      setMarkingUsed(false)
+    }
+  }
+
+  const handleUnmarkUsed = async (n: GraphNode) => {
+    try {
+      await unmarkNicheUsed(nodeSlug(n))
+      setUsedNiches(await fetchUsedNiches())
+    } catch {
+      setScanError('Không bỏ đánh dấu được. Hãy thử lại.')
+    }
+  }
+
+  /** Click "Dùng Copilot tạo kịch bản" = chọn ngách → tự động đánh dấu đã dùng. */
+  const handleCopilotClick = (n: GraphNode | null) => {
+    if (!n || isNodeUsed(n)) return
+    markNicheUsed({
+      slug: nodeSlug(n),
+      label: n.label,
+      category: n.category,
+      score: n.score,
+      rationale: n.rationale,
+      source: 'scan',
+    })
+      .then(() => fetchUsedNiches().then(setUsedNiches).catch(() => {}))
+      .catch(() => {})
+  }
+
+  /** Ghi nhận kết quả dùng ngách — vòng kaizen cho lần trộn sau. */
+  const handleFeedback = async (n: GraphNode, outcome: number, label: string) => {
+    try {
+      if (!isNodeUsed(n)) await handleMarkUsed(n)
+      await recordNicheFeedback(nodeSlug(n), { status: 'done', outcome, feedback: label })
+      setUsedNiches(await fetchUsedNiches())
+    } catch {
+      setScanError('Không ghi nhận kết quả được. Hãy thử lại.')
+    }
+  }
+
   /** Xóa toàn bộ node/link do AI đề xuất, giữ nguyên dữ liệu gốc. */
-  const clearAiNodes = () => {
-    const aiIds = new Set(nodes.filter((n) => n.aiGenerated).map((n) => n.id))
+  const clearAiNodes = () => {    const aiIds = new Set(nodes.filter((n) => n.aiGenerated).map((n) => n.id))
     if (aiIds.size === 0) return
     setNodes((prev) => prev.filter((n) => !n.aiGenerated))
     setLinks((prev) => prev.filter((l) => !aiIds.has(l.source) && !aiIds.has(l.target)))
@@ -736,6 +871,11 @@ export function InteractiveKnowledgeGraph() {
               </div>
 
               <h4 className="text-base font-extrabold text-white mb-2">{selectedNode.label}</h4>
+              {isNodeUsed(selectedNode) && (
+                <span className="inline-block mb-2 text-[11px] px-2.5 py-1 rounded-full font-bold bg-slate-500/20 text-slate-300 border border-slate-500/40">
+                  ✓ Đã dùng — sẽ không đề xuất lại
+                </span>
+              )}
 
               {selectedNode.details ? (
                 <div className="space-y-3 text-xs mt-4">
@@ -771,6 +911,43 @@ export function InteractiveKnowledgeGraph() {
 
                   <div className="p-3 rounded-lg bg-red-950/20 border border-red-500/20 text-red-200 text-[11px]">
                     <span className="font-bold text-red-400">Lưu ý ToS:</span> {selectedNode.details.tosCaution}
+                  </div>
+
+                  {/* Chống lặp + kaizen */}
+                  <div className="p-3 rounded-lg bg-dark-850/80 border border-white/5">
+                    <p className="text-slate-400 font-semibold mb-2">Trạng thái ngách:</p>
+                    {isNodeUsed(selectedNode) ? (
+                      <button
+                        onClick={() => handleUnmarkUsed(selectedNode)}
+                        className="text-[11px] px-3 py-1.5 rounded-lg border border-white/15 text-slate-300 hover:text-white hover:border-white/30 transition-all"
+                      >
+                        Bỏ đánh dấu (cho phép đề xuất lại)
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleMarkUsed(selectedNode)}
+                        disabled={markingUsed}
+                        className="text-[11px] px-3 py-1.5 rounded-lg border border-brand-emerald/40 text-brand-emerald font-bold hover:bg-brand-emerald/10 transition-all disabled:opacity-50"
+                      >
+                        {markingUsed ? 'Đang lưu...' : '✓ Đánh dấu đã dùng (không đề xuất lại)'}
+                      </button>
+                    )}
+                    <p className="text-slate-500 text-[11px] mt-3 mb-1.5">Kết quả sau khi dùng (kaizen cho lần quét sau):</p>
+                    <div className="flex gap-1.5">
+                      {[
+                        { outcome: 1, label: '👍 Hiệu quả', cls: 'border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10' },
+                        { outcome: 0, label: '😐 Trung bình', cls: 'border-white/15 text-slate-300 hover:bg-white/5' },
+                        { outcome: -1, label: '👎 Kém', cls: 'border-red-500/40 text-red-300 hover:bg-red-500/10' },
+                      ].map((f) => (
+                        <button
+                          key={f.outcome}
+                          onClick={() => handleFeedback(selectedNode, f.outcome, f.label)}
+                          className={`flex-1 text-[11px] px-2 py-1.5 rounded-lg border font-medium transition-all ${f.cls}`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -811,6 +988,7 @@ export function InteractiveKnowledgeGraph() {
             )}
             <a
               href={copilotUrl}
+              onClick={() => handleCopilotClick(selectedNode)}
               className="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-brand-emerald to-brand-cyan text-dark-950 font-bold text-xs flex items-center justify-center gap-2 hover:opacity-95 shadow-glow-emerald transition-all"
             >
               <span>Dùng AI Copilot Tạo Kịch Bản Cho Node Này</span>

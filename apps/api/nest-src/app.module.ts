@@ -16,6 +16,7 @@ import { CanvaModule } from './canva/canva.module'
 import { RenderModule } from './render/render.module'
 import { VideoModule } from './video/video.module'
 import { WooCommerceModule } from './woocommerce/woocommerce.module'
+import { NicheModule } from './niche/niche.module'
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { WooCommerceModule } from './woocommerce/woocommerce.module'
     RenderModule,
     VideoModule,
     WooCommerceModule,
+    NicheModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
