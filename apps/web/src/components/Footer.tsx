@@ -50,6 +50,10 @@ export function Footer() {
         <div className="pt-6 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
           <p>© {new Date().getFullYear()} OpenRemoteHub — Đồng hành cùng Freelancers & Creators Việt Nam & Quốc tế.</p>
           <div className="flex items-center gap-4">
+            <Link href="/privacy" className="hover:text-white transition-colors">Chính sách bảo mật</Link>
+            <span className="w-1 h-1 rounded-full bg-slate-600"></span>
+            <Link href="/terms" className="hover:text-white transition-colors">Điều khoản sử dụng</Link>
+            <span className="w-1 h-1 rounded-full bg-slate-600"></span>
             <span className="text-slate-400">Kiến trúc kế thừa WeKnora Framework</span>
             <span className="w-1 h-1 rounded-full bg-slate-600"></span>
             <span className="text-brand-emerald font-mono">v1.0.0-PRO</span>

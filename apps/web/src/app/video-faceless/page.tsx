@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import {
   Plus, ArrowLeft, Clapperboard, AlertTriangle, Trash2, Send, ShieldCheck,
   Bot, ClipboardCheck, Gauge, Save, CheckCircle2, XCircle, Link2, Sparkles,
-  FileText, Scale, BrainCircuit,
+  FileText, Scale, BrainCircuit, Zap,
 } from 'lucide-react'
 import {
   useVideoProjects,
@@ -29,6 +29,7 @@ import {
   createVideoProjectFromPreset,
   type VideoPresetSummary,
 } from '../../lib/hooks'
+import { VideoGenStudio } from './studio'
 import {
   VIDEO_STAGES,
   VIDEO_STAGE_LABELS,
@@ -47,6 +48,7 @@ const TABS = [
   { id: 'claims', label: 'Kiểm chứng', icon: ShieldCheck },
   { id: 'ai', label: 'AI Register', icon: BrainCircuit },
   { id: 'qa', label: 'QA & Risk', icon: Gauge },
+  { id: 'build', label: 'Dựng video', icon: Zap },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -97,16 +99,43 @@ export default function VideoFacelessPage() {
 function VideoFacelessInner() {
   const searchParams = useSearchParams()
   const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('project'))
-  return selectedId ? (
-    <ProjectDetail id={selectedId} onBack={() => setSelectedId(null)} />
-  ) : (
-    <ProjectList onSelect={setSelectedId} />
+  // Mở thẳng Studio (từ AI Copilot "Tạo Video Faceless"): ?studio=1&provider=...
+  const [studio, setStudio] = useState(() => searchParams.get('studio') === '1')
+  const [studioProvider, setStudioProvider] = useState<string | null>(() =>
+    searchParams.get('provider'),
+  )
+  if (selectedId && !studio)
+    return <ProjectDetail id={selectedId} onBack={() => setSelectedId(null)} />
+  if (studio)
+    return (
+      <VideoGenStudio
+        initialProvider={studioProvider}
+        projectId={selectedId}
+        onBack={() => {
+          setStudio(false)
+          setStudioProvider(null)
+        }}
+        onCreatedProject={(id) => {
+          setStudio(false)
+          setStudioProvider(null)
+          setSelectedId(id)
+        }}
+      />
+    )
+  return (
+    <ProjectList
+      onSelect={setSelectedId}
+      onStudio={() => {
+        setStudioProvider(null)
+        setStudio(true)
+      }}
+    />
   )
 }
 
 /* ─── Danh sách dự án ─── */
 
-function ProjectList({ onSelect }: { onSelect: (id: string) => void }) {
+function ProjectList({ onSelect, onStudio }: { onSelect: (id: string) => void; onStudio: () => void }) {
   const { projects, loading, error, create, remove, refresh } = useVideoProjects()
   const [showNew, setShowNew] = useState(false)
   const [title, setTitle] = useState('')
@@ -199,9 +228,14 @@ function ProjectList({ onSelect }: { onSelect: (id: string) => void }) {
             rồi gửi sang Content Studio để xuất bản.
           </p>
         </div>
-        <button onClick={openNew} className={btnPrimary}>
-          <Plus className="w-4 h-4" /> Dự án mới
-        </button>
+        <div className="flex gap-2 shrink-0">
+          <button onClick={onStudio} className={btnGhost}>
+            <Zap className="w-4 h-4" /> Studio tạo video
+          </button>
+          <button onClick={openNew} className={btnPrimary}>
+            <Plus className="w-4 h-4" /> Dự án mới
+          </button>
+        </div>
       </div>
 
       <div className="p-4 rounded-xl bg-brand-cyan/5 border border-brand-cyan/20 flex items-start gap-3">
@@ -466,6 +500,19 @@ function ProjectDetail({ id, onBack }: { id: string; onBack: () => void }) {
       {tab === 'claims' && <ClaimsTab project={project} onChanged={refresh} />}
       {tab === 'ai' && <AiRegisterTab project={project} onChanged={refresh} />}
       {tab === 'qa' && <QaRiskTab project={project} onChanged={refresh} />}
+      {tab === 'build' && (
+        <VideoGenStudio
+          projectId={project.id}
+          initialTopic={project.title}
+          initialTitle={project.title}
+          backLabel="Về tổng quan dự án"
+          onBack={() => setTab('overview')}
+          onCreatedProject={() => {
+            setStage('edit')
+            refresh()
+          }}
+        />
+      )}
     </div>
   )
 }

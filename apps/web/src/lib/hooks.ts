@@ -717,3 +717,78 @@ export async function listWooProducts(id: string, params: { search?: string; pag
   const suffix = qs.toString() ? `?${qs}` : ''
   return api.get<WooProductList>(`/woocommerce/${id}/products${suffix}`)
 }
+
+/* ─── Ngách đã dùng + thuật toán trộn ─────────────────────────────── */
+
+export interface UsedNiche {
+  slug: string
+  label: string
+  category?: string
+  status?: string
+}
+
+export interface MixedNiche {
+  id?: string
+  label: string
+  score?: number
+  category?: string
+  rationale?: string
+  roi?: string
+  commission?: string
+  trafficStrategy?: string
+  recommendedModel?: string
+  tosCaution?: string
+  suggestedLinks?: string[]
+  mixScore: number
+  mixDetail: { base: number; novelty: number; exploration: number; feedbackBoost: number }
+}
+
+export interface MixResult {
+  picked: MixedNiche[]
+  rejected: Array<{ candidate: unknown; reason: string; reasonDetail: string }>
+}
+
+/** Danh sách ngách đã dùng — để loại trừ khi quét. */
+export async function fetchUsedNiches(): Promise<UsedNiche[]> {
+  return api.get<UsedNiche[]>('/niches/used')
+}
+
+/** Đánh dấu ngách đã chọn/dùng — từ đó không bao giờ đề xuất lại. */
+export async function markNicheUsed(body: {
+  slug: string
+  label: string
+  category?: string
+  score?: number
+  rationale?: string
+  source?: string
+}): Promise<UsedNiche> {
+  return api.post<UsedNiche>('/niches/used', body)
+}
+
+/** Bỏ đánh dấu — cho phép đề xuất lại nếu đổi ý. */
+export async function unmarkNicheUsed(slug: string): Promise<{ ok: boolean }> {
+  return api.del<{ ok: boolean }>(`/niches/used/${encodeURIComponent(slug)}`)
+}
+
+/** Ghi nhận kết quả dùng ngách (kaizen). */
+export async function recordNicheFeedback(
+  slug: string,
+  body: { status?: string; feedback?: string; outcome?: number },
+): Promise<UsedNiche> {
+  return api.patch<UsedNiche>(`/niches/used/${encodeURIComponent(slug)}`, body)
+}
+
+/** Trộn + lọc danh sách AI đề xuất theo ngữ cảnh đã dùng (server-side). */
+export async function mixNiches(candidates: unknown[], k = 5): Promise<MixResult> {
+  return api.post<MixResult>('/niches/mix', { candidates, k })
+}
+
+/** Chuẩn hóa slug ngách phía client — khớp logic backend normalizeSlug. */
+export function slugifyNiche(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}

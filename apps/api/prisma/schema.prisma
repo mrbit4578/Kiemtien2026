@@ -47,6 +47,7 @@ model Workspace {
   renderJobs  RenderJob[]
   auditLogs   AuditLog[]
   wooStores   WooStore[]
+  nichePicks  NichePick[]
 
   @@map("workspaces")
 }
@@ -454,4 +455,28 @@ model WooStore {
   @@unique([workspaceId, storeUrl])
   @@index([workspaceId])
   @@map("woo_stores")
+}
+
+// Ngách đã được workspace chọn/dùng — nguyên tắc: đã dùng thì KHÔNG bao giờ
+// đề xuất lặp lại. Dùng cho thuật toán trộn (mixer) + vòng kaizen liên tục.
+model NichePick {
+  id          String   @id @default(cuid())
+  workspaceId String
+  slug        String   // slug_ngach_viet_khong_dau — khóa chống lặp theo workspace
+  label       String   // tên hiển thị, vd "Ngách: Công Cụ AI & SaaS"
+  category    String   @default("niche")
+  score       Int?     // điểm cơ hội lúc được chọn
+  rationale   String?  @db.Text
+  source      String   @default("scan") // scan | manual | ai
+  status      String   @default("picked") // picked | in_progress | done | dropped
+  feedback    String?  @db.Text // kaizen: ghi nhận kết quả sau khi dùng
+  outcome     Int?     // kaizen: -1 (kém) | 0 (trung bình) | 1 (hiệu quả)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId, status])
+  @@map("niche_picks")
 }
