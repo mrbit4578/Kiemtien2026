@@ -66,6 +66,9 @@ export function VideoGenStudio({
   onCreatedProject,
   initialProvider,
   projectId,
+  backLabel,
+  initialTopic,
+  initialTitle,
 }: {
   onBack: () => void
   onCreatedProject?: (id: string) => void
@@ -73,9 +76,30 @@ export function VideoGenStudio({
   initialProvider?: string | null
   /** Dự án đã tạo bởi auto-build (từ Copilot) — nút pipeline sẽ mở nó thay vì tạo mới */
   projectId?: string | null
+  /** Nhãn nút quay lại (mặc định "Về danh sách dự án") */
+  backLabel?: string
+  /** Prefill chủ đề / tiêu đề từ dự án Video Faceless */
+  initialTopic?: string
+  initialTitle?: string
 }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
-  const [providerSel, setProviderSel] = useState(initialProvider || 'auto')
+  // Ưu tiên: provider từ URL (Knowledge Graph) → key đã chọn lần trước → auto
+  const [providerSel, setProviderSel] = useState(() => {
+    if (initialProvider) return initialProvider
+    try {
+      return localStorage.getItem('videogen-provider') || 'auto'
+    } catch {
+      return 'auto'
+    }
+  })
+  // Nhớ key đã chọn cho lần sau
+  useEffect(() => {
+    try {
+      localStorage.setItem('videogen-provider', providerSel)
+    } catch {
+      /* bỏ qua */
+    }
+  }, [providerSel])
 
   // Provider từ URL không còn kết nối → rớt về auto
   useEffect(() => {
@@ -86,10 +110,10 @@ export function VideoGenStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providers])
 
-  const [topic, setTopic] = useState('')
+  const [topic, setTopic] = useState(initialTopic || '')
   const [duration, setDuration] = useState(45)
   const [scriptLoading, setScriptLoading] = useState(false)
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState(initialTitle || '')
   const [scenes, setScenes] = useState<GenScene[]>([])
 
   const [voiceName, setVoiceName] = useState('')
@@ -365,7 +389,7 @@ export function VideoGenStudio({
       <div className="flex items-start justify-between gap-4">
         <div>
           <button onClick={onBack} className={btnGhost + ' mb-3'}>
-            <ArrowLeft className="w-4 h-4" /> Về danh sách dự án
+            <ArrowLeft className="w-4 h-4" /> {backLabel || 'Về danh sách dự án'}
           </button>
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Zap className="w-5 h-5 text-brand-amber" />

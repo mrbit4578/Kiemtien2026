@@ -45,6 +45,7 @@ const TABS = [
   { id: 'claims', label: 'Kiểm chứng', icon: ShieldCheck },
   { id: 'ai', label: 'AI Register', icon: BrainCircuit },
   { id: 'qa', label: 'QA & Risk', icon: Gauge },
+  { id: 'build', label: 'Dựng video', icon: Zap },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -401,6 +402,19 @@ function ProjectDetail({ id, onBack }: { id: string; onBack: () => void }) {
       {tab === 'claims' && <ClaimsTab project={project} onChanged={refresh} />}
       {tab === 'ai' && <AiRegisterTab project={project} onChanged={refresh} />}
       {tab === 'qa' && <QaRiskTab project={project} onChanged={refresh} />}
+      {tab === 'build' && (
+        <VideoGenStudio
+          projectId={project.id}
+          initialTopic={project.title}
+          initialTitle={project.title}
+          backLabel="Về tổng quan dự án"
+          onBack={() => setTab('overview')}
+          onCreatedProject={() => {
+            setStage('edit')
+            refresh()
+          }}
+        />
+      )}
     </div>
   )
 }
