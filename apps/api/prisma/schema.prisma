@@ -48,6 +48,9 @@ model Workspace {
   auditLogs   AuditLog[]
   wooStores   WooStore[]
   nichePicks  NichePick[]
+  nicheEvidence NicheEvidence[]
+  monetizationOffers MonetizationOffer[]
+  videoEconomics VideoEconomics[]
 
   @@map("workspaces")
 }
