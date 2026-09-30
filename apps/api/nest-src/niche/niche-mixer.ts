@@ -147,7 +147,7 @@ export function scoreCandidate(
   candidate: NicheCandidate,
   ctx: Pick<MixContext, 'used' | 'signals'>,
   weights: Required<MixWeights> = DEFAULT_WEIGHTS,
-): ScoredCandidate['mixDetail'] & { mixScore: number } {
+): { mixScore: number; mixDetail: ScoredCandidate['mixDetail'] } {
   const base = typeof candidate.score === 'number' ? Math.max(0, Math.min(100, candidate.score)) : 70
 
   const tokens = viTokens(candidate.label)
