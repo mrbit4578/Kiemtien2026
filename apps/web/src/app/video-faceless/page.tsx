@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback, Suspense } from 'react'
+import { useState, useEffect, useCallback, Suspense, type ChangeEvent } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import {
   Plus, ArrowLeft, Clapperboard, AlertTriangle, Trash2, Send, ShieldCheck,
   Bot, ClipboardCheck, Gauge, Save, CheckCircle2, XCircle, Link2, Sparkles,
-  FileText, Scale, BrainCircuit, Zap,
+  FileText, Scale, BrainCircuit, Zap, Coins, BadgeCheck,
 } from 'lucide-react'
 import {
   useVideoProjects,
@@ -22,6 +22,16 @@ import {
   addVideoClaim,
   setVideoClaimStatus,
   deleteVideoClaim,
+  getVideoClaimCheck,
+  getVideoCompliance,
+  setVideoCompliance,
+  getMmoModels,
+  listMmoOffers,
+  createMmoOffer,
+  updateMmoOffer,
+  deleteMmoOffer,
+  upsertVideoEconomics,
+  getEconomicsSummary,
   addVideoAiEntry,
   setVideoAiLabel,
   deleteVideoAiEntry,
@@ -39,6 +49,11 @@ import {
   type GateState,
   type RiskResult,
   type PublishReadiness,
+  type ClaimCheckResult,
+  type ComplianceState,
+  type MonetizationOffer,
+  type MonetizationModel,
+  type EconomicsSummary,
 } from '../../lib/types'
 
 const TABS = [
@@ -46,6 +61,7 @@ const TABS = [
   { id: 'script', label: 'Kịch bản', icon: Clapperboard },
   { id: 'assets', label: 'Quyền', icon: Scale },
   { id: 'claims', label: 'Kiểm chứng', icon: ShieldCheck },
+  { id: 'economics', label: 'Kinh tế', icon: Coins },
   { id: 'ai', label: 'AI Register', icon: BrainCircuit },
   { id: 'qa', label: 'QA & Risk', icon: Gauge },
   { id: 'build', label: 'Dựng video', icon: Zap },
@@ -498,6 +514,7 @@ function ProjectDetail({ id, onBack }: { id: string; onBack: () => void }) {
       {tab === 'script' && <ScriptTab project={project} onSaved={refresh} />}
       {tab === 'assets' && <AssetsTab project={project} onChanged={refresh} />}
       {tab === 'claims' && <ClaimsTab project={project} onChanged={refresh} />}
+      {tab === 'economics' && <EconomicsTab project={project} />}
       {tab === 'ai' && <AiRegisterTab project={project} onChanged={refresh} />}
       {tab === 'qa' && <QaRiskTab project={project} onChanged={refresh} />}
       {tab === 'build' && (
@@ -782,7 +799,12 @@ function ClaimsTab({ project, onChanged }: { project: VideoProjectDetail; onChan
   const [riskLevel, setRiskLevel] = useState('low')
   const [confidence, setConfidence] = useState('unverified')
   const [primarySource, setPrimarySource] = useState('')
+  const [evidenceExcerpt, setEvidenceExcerpt] = useState('')
+  const [sceneRef, setSceneRef] = useState('')
+  const [scriptCode, setScriptCode] = useState('')
   const [adding, setAdding] = useState(false)
+  const [check, setCheck] = useState<ClaimCheckResult | null>(null)
+  const [checking, setChecking] = useState(false)
 
   const add = async () => {
     if (!claimText.trim()) return
@@ -791,11 +813,25 @@ function ClaimsTab({ project, onChanged }: { project: VideoProjectDetail; onChan
       await addVideoClaim(project.id, {
         claimText: claimText.trim(), claimType, riskLevel, confidence,
         primarySource: primarySource.trim() || undefined,
+        evidenceExcerpt: evidenceExcerpt.trim() || undefined,
+        sceneRef: sceneRef.trim() || undefined,
+        scriptCode: scriptCode.trim() || undefined,
       })
-      setClaimText(''); setPrimarySource(''); setConfidence('unverified')
+      setClaimText(''); setPrimarySource(''); setEvidenceExcerpt('')
+      setSceneRef(''); setScriptCode(''); setConfidence('unverified')
+      setCheck(null)
       onChanged()
     } finally {
       setAdding(false)
+    }
+  }
+
+  const doCheck = async () => {
+    setChecking(true)
+    try {
+      setCheck(await getVideoClaimCheck(project.id))
+    } finally {
+      setChecking(false)
     }
   }
 
@@ -811,6 +847,31 @@ function ClaimsTab({ project, onChanged }: { project: VideoProjectDetail; onChan
           {riskyOpen.length} claim rủi ro cao/nghiêm trọng chưa xác minh — phải xác minh hoặc gỡ/hạ wording trước khi xuất bản.
         </div>
       )}
+
+      <div className="p-4 rounded-xl bg-dark-900/60 border border-dark-700 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-bold text-white">Quét quy tắc ghi nhãn (playbook chương 06/07)</p>
+          <button onClick={doCheck} disabled={checking} className={btnGhost}>
+            <BadgeCheck className="w-3.5 h-3.5" /> {checking ? 'Đang quét…' : 'Quét claim-check'}
+          </button>
+        </div>
+        {check && (
+          <div className="space-y-2 text-xs">
+            {check.ok ? (
+              <p className="text-brand-emerald flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> Đạt — không còn claim vi phạm quy tắc ghi nhãn ({check.total} claim đang mở).</p>
+            ) : (
+              <>
+                {check.mustMarkUnverified.map((i) => (
+                  <p key={i.id} className="p-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200">⚠ {i.reason}</p>
+                ))}
+                {check.missingEvidence.map((i) => (
+                  <p key={i.id} className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200">⚠ {i.reason}</p>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="p-4 rounded-xl bg-dark-900/60 border border-dark-700 space-y-3">
         <p className="text-xs font-bold text-white">Thêm claim vào claim ledger</p>
@@ -842,6 +903,20 @@ function ClaimsTab({ project, onChanged }: { project: VideoProjectDetail; onChan
             <input className={inputCls} value={primarySource} onChange={(e) => setPrimarySource(e.target.value)} placeholder="URL / tên tài liệu" />
           </div>
         </div>
+        <div>
+          <label className={labelCls}>Đoạn căn cứ (trích dẫn từ nguồn hỗ trợ phát biểu)</label>
+          <textarea className={inputCls} rows={2} value={evidenceExcerpt} onChange={(e) => setEvidenceExcerpt(e.target.value)} placeholder="VD: Trọng số được học từ dữ liệu — MLCC Backpropagation" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>Mã nguồn trong kịch bản</label>
+            <input className={inputCls} value={scriptCode} onChange={(e) => setScriptCode(e.target.value)} placeholder="VD: [C1]" />
+          </div>
+          <div>
+            <label className={labelCls}>Cảnh minh họa</label>
+            <input className={inputCls} value={sceneRef} onChange={(e) => setSceneRef(e.target.value)} placeholder="VD: 00:14–00:23" />
+          </div>
+        </div>
         <button onClick={add} disabled={!claimText.trim() || adding} className={btnPrimary}>
           <Plus className="w-4 h-4" /> {adding ? 'Đang thêm…' : 'Thêm claim'}
         </button>
@@ -851,13 +926,20 @@ function ClaimsTab({ project, onChanged }: { project: VideoProjectDetail; onChan
         {project.claims.map((c) => (
           <div key={c.id} className="p-3 rounded-xl bg-dark-900/60 border border-dark-700 flex items-start gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-sm text-slate-200">{c.claimText}</p>
+              <p className="text-sm text-slate-200">
+                {c.scriptCode && <span className="mr-2 px-1.5 py-0.5 rounded bg-brand-emerald/15 text-brand-emerald text-[11px] font-mono">{c.scriptCode}</span>}
+                {c.claimText}
+              </p>
               <p className="text-[11px] text-slate-500 mt-1">
                 {CLAIM_TYPES[c.claimType] ?? c.claimType} ·{' '}
                 <span className={RISK_LEVELS[c.riskLevel]?.cls}>{RISK_LEVELS[c.riskLevel]?.label}</span> ·{' '}
                 {CONFIDENCE[c.confidence] ?? c.confidence} · {c.status === 'open' ? 'đang mở' : c.status === 'corrected' ? 'đã sửa' : 'đã gỡ'}
                 {c.primarySource ? ` · Nguồn: ${c.primarySource}` : ''}
+                {c.sceneRef ? ` · Cảnh: ${c.sceneRef}` : ''}
               </p>
+              {c.evidenceExcerpt && (
+                <p className="text-[11px] text-slate-400 mt-1 italic border-l-2 border-dark-600 pl-2">“{c.evidenceExcerpt}”</p>
+              )}
             </div>
             <select
               value={c.status}
@@ -1001,6 +1083,339 @@ function AiRegisterTab({ project, onChanged }: { project: VideoProjectDetail; on
         {project.aiEntries.length === 0 && (
           <p className="text-xs text-slate-500 text-center py-6">Chưa có mục AI nào.</p>
         )}
+      </div>
+    </div>
+  )
+}
+
+/* ─── Checklist tuân thủ xuất bản (playbook chương 09) ─── */
+
+const MUSIC_RIGHTS_LABELS: Record<string, string> = {
+  cml: 'Nhạc trong Commercial Music Library (khuyến nghị cho nội dung thương mại)',
+  licensed: 'Đã có license / mua bản quyền',
+  original: 'Nhạc tự làm / beat của mình',
+  unknown: 'Chưa xác định — CẦN XÁC MINH',
+}
+
+function ComplianceSection({ projectId, onChanged }: { projectId: string; onChanged: () => void }) {
+  const [state, setState] = useState<ComplianceState | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [aiLabelRequired, setAiLabelRequired] = useState(false)
+  const [aiLabelApplied, setAiLabelApplied] = useState(false)
+  const [commercialRequired, setCommercialRequired] = useState(false)
+  const [commercialApplied, setCommercialApplied] = useState(false)
+  const [musicRights, setMusicRights] = useState('unknown')
+  const [musicNote, setMusicNote] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    getVideoCompliance(projectId).then((s) => {
+      setState(s)
+      if (s) {
+        setAiLabelRequired(s.aiLabelRequired)
+        setAiLabelApplied(s.aiLabelApplied)
+        setCommercialRequired(s.commercialDisclosureRequired)
+        setCommercialApplied(s.commercialDisclosureApplied)
+        setMusicRights(s.musicRights)
+        setMusicNote(s.musicNote ?? '')
+      }
+      setLoaded(true)
+    })
+  }, [projectId])
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const s = await setVideoCompliance(projectId, {
+        aiLabelRequired, aiLabelApplied,
+        commercialDisclosureRequired: commercialRequired,
+        commercialDisclosureApplied: commercialApplied,
+        musicRights, musicNote: musicNote.trim() || undefined,
+      })
+      setState(s)
+      onChanged()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!loaded) return null
+
+  return (
+    <div className="p-4 rounded-xl bg-dark-900/60 border border-dark-700 space-y-3">
+      <p className="text-xs font-bold text-white flex items-center gap-2">
+        <ShieldCheck className="w-4 h-4 text-brand-amber" />
+        Checklist tuân thủ xuất bản
+        {state && <span className="text-[10px] font-normal text-slate-500">(đã khai báo)</span>}
+      </p>
+      <div className="space-y-2 text-xs">
+        <label className="flex items-center gap-2 text-slate-300">
+          <input type="checkbox" checked={aiLabelRequired} onChange={(e) => setAiLabelRequired(e.target.checked)} className="accent-brand-amber" />
+          Video có hình/âm thanh AI chân thực → <b>bắt buộc gắn nhãn AI</b> khi đăng
+        </label>
+        {aiLabelRequired && (
+          <label className="flex items-center gap-2 text-slate-400 ml-6">
+            <input type="checkbox" checked={aiLabelApplied} onChange={(e) => setAiLabelApplied(e.target.checked)} className="accent-brand-emerald" />
+            Đã bật nhãn "nội dung do AI tạo" khi đăng
+          </label>
+        )}
+        <label className="flex items-center gap-2 text-slate-300">
+          <input type="checkbox" checked={commercialRequired} onChange={(e) => setCommercialRequired(e.target.checked)} className="accent-brand-amber" />
+          Nội dung quảng bá thương hiệu/sản phẩm/dịch vụ → <b>khai báo thương mại</b>
+        </label>
+        {commercialRequired && (
+          <label className="flex items-center gap-2 text-slate-400 ml-6">
+            <input type="checkbox" checked={commercialApplied} onChange={(e) => setCommercialApplied(e.target.checked)} className="accent-brand-emerald" />
+            Đã khai báo nội dung thương mại
+          </label>
+        )}
+        <div>
+          <label className={labelCls}>Quyền sử dụng nhạc</label>
+          <select className={inputCls} value={musicRights} onChange={(e) => setMusicRights(e.target.value)}>
+            {Object.entries(MUSIC_RIGHTS_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>Ghi chú nhạc (tên beat, nguồn license…)</label>
+          <input className={inputCls} value={musicNote} onChange={(e) => setMusicNote(e.target.value)} placeholder="VD: beat mariage-damour (tự upload), nhạc CML TikTok" />
+        </div>
+      </div>
+      <button onClick={save} disabled={saving} className={btnPrimary}>
+        <Save className="w-4 h-4" /> {saving ? 'Đang lưu…' : 'Lưu checklist'}
+      </button>
+      {!state && (
+        <p className="text-[11px] text-amber-200/80">Chưa khai báo — hệ thống sẽ chặn gửi sang Content Studio cho đến khi checklist được điền.</p>
+      )}
+    </div>
+  )
+}
+
+/* ─── Tab: Kinh tế video (playbook chương 04/05) ─── */
+
+const fmtVND = (n: number | null | undefined) =>
+  n === null || n === undefined ? '—' : n.toLocaleString('vi-VN') + ' đ'
+const fmtNum = (n: number | null | undefined, digits = 2) =>
+  n === null || n === undefined ? '—' : n.toLocaleString('vi-VN', { maximumFractionDigits: digits })
+
+function EconomicsTab({ project }: { project: VideoProjectDetail }) {
+  const [models, setModels] = useState<MonetizationModel[]>([])
+  const [offers, setOffers] = useState<MonetizationOffer[]>([])
+  const [summary, setSummary] = useState<EconomicsSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  // Form đề nghị mua
+  const [offerModel, setOfferModel] = useState('tiktok_shop_affiliate')
+  const [offerTitle, setOfferTitle] = useState('')
+  const [offerCommission, setOfferCommission] = useState('')
+  const [offerVerified, setOfferVerified] = useState(false)
+  const [addingOffer, setAddingOffer] = useState(false)
+
+  // Form số liệu
+  const [f, setF] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [m, o, s] = await Promise.all([
+        getMmoModels(),
+        listMmoOffers(project.id),
+        getEconomicsSummary(project.id),
+      ])
+      setModels(m); setOffers(o); setSummary(s)
+      const e = s.economics
+      if (e) {
+        setF({
+          costCash: String(e.costCash), hoursWorked: String(e.hoursWorked),
+          views: String(e.views), clicks: String(e.clicks), orders: String(e.orders),
+          eligibleOrders: String(e.eligibleOrders), commissionReceived: String(e.commissionReceived),
+          saves: String(e.saves), shares: String(e.shares),
+          completionRate: e.completionRate !== null ? String(e.completionRate) : '',
+          utm: e.utm ?? '', note: e.note ?? '',
+        })
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [project.id])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  const addOffer = async () => {
+    if (!offerTitle.trim()) return
+    setAddingOffer(true)
+    try {
+      await createMmoOffer({
+        projectId: project.id,
+        model: offerModel,
+        title: offerTitle.trim(),
+        commissionAmount: offerCommission ? parseInt(offerCommission, 10) : undefined,
+        verified: offerVerified,
+      })
+      setOfferTitle(''); setOfferCommission(''); setOfferVerified(false)
+      refresh()
+    } finally {
+      setAddingOffer(false)
+    }
+  }
+
+  const saveEconomics = async () => {
+    setSaving(true)
+    try {
+      const num = (k: string) => (f[k] === '' || f[k] === undefined ? undefined : parseFloat(f[k]))
+      const int = (k: string) => {
+        const v = num(k)
+        return v === undefined || Number.isNaN(v) ? undefined : Math.round(v)
+      }
+      await upsertVideoEconomics(project.id, {
+        costCash: int('costCash'), hoursWorked: num('hoursWorked'),
+        views: int('views'), clicks: int('clicks'), orders: int('orders'),
+        eligibleOrders: int('eligibleOrders'), commissionReceived: int('commissionReceived'),
+        saves: int('saves'), shares: int('shares'),
+        completionRate: f.completionRate === '' ? null : num('completionRate'),
+        utm: f.utm?.trim() || null, note: f.note?.trim() || null,
+      })
+      refresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const set = (k: string) => (e: ChangeEvent<HTMLInputElement>) =>
+    setF({ ...f, [k]: e.target.value })
+
+  if (loading) return <p className="text-xs text-slate-500">Đang tải số liệu…</p>
+
+  const s = summary?.summary
+
+  return (
+    <div className="space-y-4 max-w-4xl">
+      {/* KPI gắn với tiền */}
+      <div className="p-4 rounded-xl bg-dark-900/60 border border-dark-700">
+        <p className="text-xs font-bold text-white flex items-center gap-2 mb-3">
+          <Coins className="w-4 h-4 text-brand-emerald" /> Hiệu quả — tiền thật từ sổ quyết toán
+        </p>
+        {!summary?.hasData ? (
+          <p className="text-xs text-slate-500">Chưa có số liệu. Nhập chi phí và kết quả bên dưới — lượt view/follow chỉ là chỉ số phân phối, không dùng để suy ra tiền.</p>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div className="p-3 rounded-lg bg-dark-950/60 border border-dark-800">
+              <p className="text-slate-500">Phần dư (sau chi phí)</p>
+              <p className={`text-base font-bold mt-1 ${(s?.profit ?? 0) >= 0 ? 'text-brand-emerald' : 'text-red-300'}`}>{fmtVND(s?.profit)}</p>
+            </div>
+            <div className="p-3 rounded-lg bg-dark-950/60 border border-dark-800">
+              <p className="text-slate-500">Tiền / 1.000 view</p>
+              <p className="text-base font-bold mt-1 text-slate-200">{fmtVND(s?.revenuePer1kViews)}</p>
+            </div>
+            <div className="p-3 rounded-lg bg-dark-950/60 border border-dark-800">
+              <p className="text-slate-500">Chi phí / đơn hợp lệ</p>
+              <p className="text-base font-bold mt-1 text-slate-200">{fmtVND(s?.costPerEligibleOrder)}</p>
+            </div>
+            <div className="p-3 rounded-lg bg-dark-950/60 border border-dark-800">
+              <p className="text-slate-500">Giờ vận hành / đơn</p>
+              <p className="text-base font-bold mt-1 text-slate-200">{fmtNum(s?.hoursPerOrder)} giờ</p>
+            </div>
+            <div className="p-3 rounded-lg bg-dark-950/60 border border-dark-800">
+              <p className="text-slate-500">Điểm hòa vốn</p>
+              <p className="text-base font-bold mt-1 text-slate-200">
+                {summary?.breakevenOrders !== null && summary?.breakevenOrders !== undefined
+                  ? `${summary.breakevenOrders} đơn hợp lệ` : '—'}
+              </p>
+              {summary?.offer && <p className="text-[10px] text-slate-500 mt-0.5">{summary.offer.title} · {fmtVND(summary.offer.commissionAmount)}/đơn{summary.offer.verified ? ' · đã xác minh' : ''}</p>}
+            </div>
+            <div className="p-3 rounded-lg bg-dark-950/60 border border-dark-800">
+              <p className="text-slate-500">CTR / Đặt đơn / Đủ ĐK</p>
+              <p className="text-base font-bold mt-1 text-slate-200">
+                {fmtNum(s?.clickThroughRate !== null && s?.clickThroughRate !== undefined ? s.clickThroughRate * 100 : null, 1)}%
+                {' / '}{fmtNum(s?.orderRateAfterClick !== null && s?.orderRateAfterClick !== undefined ? s.orderRateAfterClick * 100 : null, 1)}%
+                {' / '}{fmtNum(s?.eligibleRate !== null && s?.eligibleRate !== undefined ? s.eligibleRate * 100 : null, 1)}%
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Đề nghị mua */}
+      <div className="p-4 rounded-xl bg-dark-900/60 border border-dark-700 space-y-3">
+        <p className="text-xs font-bold text-white">Đề nghị mua — chọn cơ chế thu nhập TRƯỚC khi sản xuất</p>
+        <div className="space-y-2">
+          {offers.map((o) => (
+            <div key={o.id} className="p-2.5 rounded-lg bg-dark-950/60 border border-dark-800 flex items-start gap-3 text-xs">
+              <div className="flex-1">
+                <p className="text-slate-200 font-semibold">{o.title}</p>
+                <p className="text-slate-500 mt-0.5">
+                  {models.find((m) => m.id === o.model)?.label ?? o.model}
+                  {o.commissionAmount ? ` · ${fmtVND(o.commissionAmount)}/đơn` : ''}
+                  {o.verified ? ' · ✓ đã xác minh' : ' · chưa xác minh'}
+                  {' · '}{o.status}
+                </p>
+              </div>
+              <button
+                onClick={async () => { await updateMmoOffer(o.id, { verified: !o.verified }); refresh() }}
+                className="shrink-0 text-[11px] px-2 py-1 rounded-lg bg-dark-800 border border-dark-700 text-slate-300 hover:border-brand-emerald/50"
+              >
+                {o.verified ? 'Bỏ xác minh' : 'Xác minh'}
+              </button>
+              <button onClick={async () => { await deleteMmoOffer(o.id); refresh() }} className="shrink-0 text-slate-500 hover:text-red-300">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+          {offers.length === 0 && <p className="text-xs text-slate-500">Chưa có đề nghị mua nào.</p>}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="md:col-span-2">
+            <label className={labelCls}>Cơ chế thu nhập</label>
+            <select className={inputCls} value={offerModel} onChange={(e) => setOfferModel(e.target.value)}>
+              {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>Tên đề nghị mua *</label>
+            <input className={inputCls} value={offerTitle} onChange={(e) => setOfferTitle(e.target.value)} placeholder="VD: Bộ mẫu kiểm kho Excel" />
+          </div>
+          <div>
+            <label className={labelCls}>Hoa hồng/đơn (đ)</label>
+            <input className={inputCls} inputMode="numeric" value={offerCommission} onChange={(e) => setOfferCommission(e.target.value)} placeholder="VD: 40000" />
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-xs text-slate-300">
+          <input type="checkbox" checked={offerVerified} onChange={(e) => setOfferVerified(e.target.checked)} className="accent-brand-emerald" />
+          Đã xác minh: chương trình đang mở, quốc gia nhận tiền, kỳ quyết toán
+        </label>
+        <button onClick={addOffer} disabled={!offerTitle.trim() || addingOffer} className={btnPrimary}>
+          <Plus className="w-4 h-4" /> {addingOffer ? 'Đang thêm…' : 'Thêm đề nghị mua'}
+        </button>
+      </div>
+
+      {/* Số liệu */}
+      <div className="p-4 rounded-xl bg-dark-900/60 border border-dark-700 space-y-3">
+        <p className="text-xs font-bold text-white">Số liệu video — nhập từ dashboard & sổ quyết toán</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            ['costCash', 'Chi phí tiền mặt (đ)'], ['hoursWorked', 'Giờ vận hành'],
+            ['views', 'Lượt xem'], ['clicks', 'Nhấp liên kết'],
+            ['orders', 'Đơn đặt'], ['eligibleOrders', 'Đơn đủ điều kiện'],
+            ['commissionReceived', 'Hoa hồng thực nhận (đ)'], ['saves', 'Lượt lưu'],
+            ['shares', 'Lượt chia sẻ'], ['completionRate', 'Tỷ lệ xem hết (0–1)'],
+          ].map(([k, label]) => (
+            <div key={k}>
+              <label className={labelCls}>{label}</label>
+              <input className={inputCls} inputMode="decimal" value={f[k] ?? ''} onChange={set(k)} />
+            </div>
+          ))}
+          <div className="md:col-span-2">
+            <label className={labelCls}>UTM campaign</label>
+            <input className={inputCls} value={f.utm ?? ''} onChange={set('utm')} placeholder="VD: excel-kho-t11" />
+          </div>
+          <div className="md:col-span-2">
+            <label className={labelCls}>Ghi chú</label>
+            <input className={inputCls} value={f.note ?? ''} onChange={set('note')} />
+          </div>
+        </div>
+        <button onClick={saveEconomics} disabled={saving} className={btnPrimary}>
+          <Save className="w-4 h-4" /> {saving ? 'Đang lưu…' : 'Lưu số liệu'}
+        </button>
       </div>
     </div>
   )
@@ -1190,6 +1605,9 @@ function QaRiskTab({ project, onChanged }: { project: VideoProjectDetail; onChan
         )}
       </div>
 
+      {/* Checklist tuân thủ xuất bản (playbook chương 09) */}
+      <ComplianceSection projectId={project.id} onChanged={onChanged} />
+
       {/* Xuất bản */}
       <div className="p-4 rounded-xl bg-dark-900/60 border border-dark-700 space-y-3">
         <p className="text-xs font-bold text-white flex items-center gap-2">
@@ -1197,7 +1615,7 @@ function QaRiskTab({ project, onChanged }: { project: VideoProjectDetail; onChan
           Xuất bản — gửi sang Content Studio
         </p>
         <p className="text-[11px] text-slate-500">
-          Hệ thống chặn nếu còn asset chưa cleared hoặc claim rủi ro cao chưa xác minh.
+          Hệ thống chặn nếu còn asset chưa cleared, claim rủi ro cao chưa xác minh, hoặc chưa khai báo checklist tuân thủ (nhãn AI, khai báo thương mại, quyền nhạc).
         </p>
         <div className="flex gap-2 flex-wrap">
           <button onClick={doCheck} disabled={checking} className={btnGhost}>
@@ -1224,6 +1642,9 @@ function QaRiskTab({ project, onChanged }: { project: VideoProjectDetail; onChan
                 ))}
                 {readiness.riskyClaims.map((c) => (
                   <p key={c.id}>• Claim chưa xác minh: "{c.claimText}…"</p>
+                ))}
+                {(readiness.complianceBlockers ?? []).map((b, i) => (
+                  <p key={`cb-${i}`}>• Tuân thủ: {b}</p>
                 ))}
               </div>
             )}

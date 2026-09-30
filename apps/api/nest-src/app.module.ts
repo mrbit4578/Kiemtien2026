@@ -18,6 +18,7 @@ import { VideoModule } from './video/video.module'
 import { VideogenModule } from './videogen/videogen.module'
 import { WooCommerceModule } from './woocommerce/woocommerce.module'
 import { NicheModule } from './niche/niche.module'
+import { MmoModule } from './mmo/mmo.module'
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { NicheModule } from './niche/niche.module'
     VideogenModule,
     WooCommerceModule,
     NicheModule,
+    MmoModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

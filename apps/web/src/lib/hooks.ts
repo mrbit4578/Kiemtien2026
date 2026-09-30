@@ -27,6 +27,12 @@ import type {
   GateState,
   RiskResult,
   PublishReadiness,
+  ComplianceState,
+  ClaimCheckResult,
+  MonetizationOffer,
+  MonetizationModel,
+  VideoEconomics,
+  EconomicsSummary,
   WooStore,
   WooProductList,
 } from './types'
@@ -570,9 +576,68 @@ export async function deleteVideoAsset(projectId: string, assetId: string): Prom
 
 export async function addVideoClaim(
   projectId: string,
-  input: { claimText: string; claimType: string; riskLevel: string; primarySource?: string; secondarySource?: string; confidence: string },
+  input: { claimText: string; claimType: string; riskLevel: string; primarySource?: string; secondarySource?: string; confidence: string; evidenceExcerpt?: string; sceneRef?: string; scriptCode?: string },
 ): Promise<VideoClaim> {
   return api.post<VideoClaim>(`/video/projects/${projectId}/claims`, input)
+}
+
+/** Quét claim ledger theo quy tắc ghi nhãn (playbook chương 06/07). */
+export async function getVideoClaimCheck(projectId: string): Promise<ClaimCheckResult> {
+  return api.get<ClaimCheckResult>(`/video/projects/${projectId}/claim-check`)
+}
+
+/** Checklist tuân thủ xuất bản (playbook chương 09). */
+export async function getVideoCompliance(projectId: string): Promise<ComplianceState | null> {
+  return api.get<ComplianceState | null>(`/video/projects/${projectId}/compliance`)
+}
+
+export async function setVideoCompliance(
+  projectId: string,
+  input: { aiLabelRequired: boolean; aiLabelApplied: boolean; commercialDisclosureRequired: boolean; commercialDisclosureApplied: boolean; musicRights: string; musicNote?: string },
+): Promise<ComplianceState> {
+  return api.post<ComplianceState>(`/video/projects/${projectId}/compliance`, input)
+}
+
+/* ─── MMO: cơ chế thu nhập + kinh tế video (playbook chương 04/05) ─── */
+
+export async function getMmoModels(): Promise<MonetizationModel[]> {
+  return api.get<MonetizationModel[]>('/mmo/models')
+}
+
+export async function listMmoOffers(projectId?: string): Promise<MonetizationOffer[]> {
+  return api.get<MonetizationOffer[]>(`/mmo/offers${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`)
+}
+
+export async function createMmoOffer(
+  input: { projectId?: string; nicheSlug?: string; model: string; title: string; commissionAmount?: number; payoutTerms?: string; verified?: boolean; note?: string },
+): Promise<MonetizationOffer> {
+  return api.post<MonetizationOffer>('/mmo/offers', input)
+}
+
+export async function updateMmoOffer(
+  id: string,
+  input: Partial<{ title: string; commissionAmount: number; payoutTerms: string; verified: boolean; status: string; note: string }>,
+): Promise<MonetizationOffer> {
+  return api.patch<MonetizationOffer>(`/mmo/offers/${id}`, input)
+}
+
+export async function deleteMmoOffer(id: string): Promise<{ ok: boolean }> {
+  return api.del(`/mmo/offers/${id}`)
+}
+
+export async function getVideoEconomics(projectId: string): Promise<VideoEconomics | null> {
+  return api.get<VideoEconomics | null>(`/mmo/economics/${projectId}`)
+}
+
+export async function upsertVideoEconomics(
+  projectId: string,
+  input: Record<string, number | boolean | string | null | undefined>,
+): Promise<VideoEconomics> {
+  return api.put<VideoEconomics>(`/mmo/economics/${projectId}`, input)
+}
+
+export async function getEconomicsSummary(projectId: string): Promise<EconomicsSummary> {
+  return api.get<EconomicsSummary>(`/mmo/economics/${projectId}/summary`)
 }
 
 export async function setVideoClaimStatus(

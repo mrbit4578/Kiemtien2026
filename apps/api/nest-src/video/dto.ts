@@ -224,6 +224,23 @@ export class CreateVideoClaimDto {
   @IsOptional()
   @IsIn(['open', 'corrected', 'withdrawn'])
   status?: string
+
+  /** Đoạn căn cứ: trích dẫn cụ thể từ nguồn hỗ trợ phát biểu (playbook chương 06). */
+  @IsOptional()
+  @IsString()
+  evidenceExcerpt?: string
+
+  /** Cảnh minh họa liên quan, VD "00:14–00:23". */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  sceneRef?: string
+
+  /** Mã nguồn trong kịch bản, VD "[C1]" — để đối chiếu câu ↔ nguồn. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  scriptCode?: string
 }
 
 /** POST /video/projects/:id/ai-entries — thêm mục AI register. */
@@ -311,4 +328,31 @@ export class CreateProjectFromPresetDto {
   @IsOptional()
   @IsIn(['short', 'long'])
   duration?: 'short' | 'long'
+}
+
+/**
+ * Checklist tuân thủ trước xuất bản (playbook chương 09):
+ * nhãn AI cho nội dung chân thực, khai báo thương mại khi quảng bá,
+ * quyền nhạc (khuyến nghị Commercial Music Library cho nội dung thương mại).
+ */
+export class SetComplianceDto {
+  @IsBoolean()
+  aiLabelRequired!: boolean
+
+  @IsBoolean()
+  aiLabelApplied!: boolean
+
+  @IsBoolean()
+  commercialDisclosureRequired!: boolean
+
+  @IsBoolean()
+  commercialDisclosureApplied!: boolean
+
+  @IsIn(['cml', 'licensed', 'original', 'unknown'])
+  musicRights!: string
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  musicNote?: string
 }

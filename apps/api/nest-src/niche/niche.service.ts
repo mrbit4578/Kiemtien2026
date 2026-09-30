@@ -3,11 +3,14 @@ import { PrismaService } from '../prisma/prisma.service'
 import {
   mixNiches,
   inferTopic,
+  normalizeSlug,
   type MixResult,
   type UsedNiche,
   type CategorySignal,
+  type MixWeights,
 } from './niche-mixer'
-import type { MarkNicheUsedDto, NicheFeedbackDto } from './dto'
+import { scoreEvidenceCoverage, evidenceScoreTo100, type EvidenceSignals } from './niche-evidence'
+import type { MarkNicheUsedDto, NicheFeedbackDto, CreateNicheEvidenceDto } from './dto'
 
 /**
  * NicheService — kho "ngách đã dùng" của workspace + thuật toán trộn.
@@ -108,6 +111,9 @@ export class NicheService {
    * Trộn + lọc danh sách ngách AI đề xuất:
    * loại cứng ngách đã dùng, loại mềm paraphrase, chấm điểm đa tiêu chí,
    * MMR chọn top K đa dạng + topicCap ép phủ nhiều nhóm chủ đề.
+   * Playbook chương 01: ngách có bằng chứng thực tế được cộng điểm
+   * (trọng số evidence 0.10, lấy từ phần base) — không có bằng chứng thì
+   * giữ nguyên trọng số cũ.
    */
   async mix(
     workspaceId: string,
@@ -118,15 +124,145 @@ export class NicheService {
       this.listUsed(workspaceId),
       this.categorySignals(workspaceId),
     ])
+    const slugs = candidates.map((c) =>
+      normalizeSlug(typeof c.id === 'string' && c.id.trim() ? c.id : c.label),
+    )
+    const { evidenceScores, weights } = await this.evidenceMixContext(workspaceId, slugs)
     return mixNiches(candidates, {
       used,
       signals,
+      evidenceScores,
       options: {
         k: opts.k ?? 5,
         lambda: opts.lambda ?? 0.7,
         topicCap: opts.topicCap ?? 2,
+        weights,
       },
     })
+  }
+
+  // ─── Bảng ghi bằng chứng ngách (playbook chương 01/02) ───
+
+  /** Liệt kê bằng chứng của workspace (lọc theo slug nếu có). */
+  async listEvidence(workspaceId: string, nicheSlug?: string) {
+    return this.prisma.nicheEvidence.findMany({
+      where: { workspaceId, ...(nicheSlug ? { nicheSlug: normalizeSlug(nicheSlug) } : {}) },
+      orderBy: { collectedAt: 'desc' },
+      take: 500,
+    })
+  }
+
+  /** Thêm một dòng bằng chứng — câu hỏi thật + URL/ngày thu thập. */
+  async addEvidence(workspaceId: string, dto: CreateNicheEvidenceDto) {
+    let collectedAt: Date | undefined
+    if (dto.collectedAt) {
+      const d = new Date(dto.collectedAt)
+      if (Number.isNaN(d.getTime())) throw new Error('collectedAt không phải ngày hợp lệ.')
+      collectedAt = d
+    }
+    return this.prisma.nicheEvidence.create({
+      data: {
+        workspaceId,
+        nicheSlug: normalizeSlug(dto.nicheSlug),
+        questionText: dto.questionText.trim(),
+        market: dto.market?.trim() || null,
+        audience: dto.audience?.trim() || null,
+        url: dto.url?.trim() || null,
+        metricSeen: dto.metricSeen?.trim() || null,
+        metricNotProven: dto.metricNotProven || null,
+        contentIdea: dto.contentIdea || null,
+        relatedOffer: dto.relatedOffer?.trim() || null,
+        checkResult: dto.checkResult || null,
+        ...(collectedAt ? { collectedAt } : {}),
+      },
+    })
+  }
+
+  /** Xóa một dòng bằng chứng. */
+  async deleteEvidence(workspaceId: string, id: string) {
+    const row = await this.prisma.nicheEvidence.findFirst({ where: { id, workspaceId } })
+    if (!row) throw new Error('Không tìm thấy dòng bằng chứng.')
+    await this.prisma.nicheEvidence.delete({ where: { id } })
+    return { ok: true }
+  }
+
+  /**
+   * Gom tín hiệu bằng chứng theo từng slug: câu hỏi thật (có URL), nguồn
+   * kiểm chứng được, ý tưởng nội dung, đề nghị mua đã xác minh, số ngày.
+   */
+  async evidenceSignals(workspaceId: string, slugs: string[]): Promise<Record<string, EvidenceSignals>> {
+    const normed = [...new Set(slugs.map((s) => normalizeSlug(s)))]
+    const [rows, offers] = await Promise.all([
+      this.prisma.nicheEvidence.findMany({ where: { workspaceId, nicheSlug: { in: normed } }, take: 2000 }),
+      this.prisma.monetizationOffer.findMany({
+        where: { workspaceId, nicheSlug: { in: normed }, verified: true },
+        select: { nicheSlug: true },
+        take: 500,
+      }),
+    ])
+    const out: Record<string, EvidenceSignals> = {}
+    for (const s of normed) {
+      out[s] = { realQuestions: 0, verifiedOffers: 0, verifiableSources: 0, contentIdeas: 0, distinctDays: 0 }
+    }
+    const days = new Map<string, Set<string>>()
+    for (const r of rows) {
+      const e = out[r.nicheSlug]
+      if (!e) continue
+      if (r.url) e.realQuestions++
+      if (r.url || r.checkResult) e.verifiableSources++
+      if (r.contentIdea) e.contentIdeas++
+      const d = r.collectedAt.toISOString().slice(0, 10)
+      let set = days.get(r.nicheSlug)
+      if (!set) {
+        set = new Set()
+        days.set(r.nicheSlug, set)
+      }
+      set.add(d)
+    }
+    for (const [slug, set] of days) {
+      const e = out[slug]
+      if (e) e.distinctDays = set.size
+    }
+    for (const o of offers) {
+      const key = o.nicheSlug ? normalizeSlug(o.nicheSlug) : null
+      if (key && out[key]) out[key].verifiedOffers++
+    }
+    return out
+  }
+
+  /**
+   * Điểm phủ bằng chứng 0–100 cho từng slug + trọng số mixer.
+   * Không có bằng chứng nào → trả weights undefined (giữ nguyên hành vi cũ).
+   */
+  async evidenceMixContext(
+    workspaceId: string,
+    slugs: string[],
+  ): Promise<{ evidenceScores: Record<string, number>; weights?: MixWeights }> {
+    const signals = await this.evidenceSignals(workspaceId, slugs)
+    const evidenceScores: Record<string, number> = {}
+    let anyEvidence = false
+    for (const [slug, sig] of Object.entries(signals)) {
+      const s = scoreEvidenceCoverage(sig)
+      evidenceScores[slug] = evidenceScoreTo100(s)
+      if (!s.noEvidence) anyEvidence = true
+    }
+    if (!anyEvidence) return { evidenceScores: {} }
+    // Phân bổ lại: evidence 0.10 lấy từ base (0.55 → 0.45), tổng vẫn = 1.
+    return {
+      evidenceScores,
+      weights: { base: 0.45, novelty: 0.25, exploration: 0.15, feedback: 0.05, evidence: 0.1 },
+    }
+  }
+
+  /** Điểm bằng chứng chi tiết cho 1..n slug (để UI hiển thị). */
+  async evidenceScoreDetail(workspaceId: string, slugs: string[]) {
+    const signals = await this.evidenceSignals(workspaceId, slugs)
+    const out: Record<string, { score100: number; total: number; noEvidence: boolean; criteria: unknown }> = {}
+    for (const [slug, sig] of Object.entries(signals)) {
+      const s = scoreEvidenceCoverage(sig)
+      out[slug] = { score100: evidenceScoreTo100(s), total: s.total, noEvidence: s.noEvidence, criteria: s.criteria }
+    }
+    return out
   }
 
   /**
@@ -153,10 +289,15 @@ export class NicheService {
       this.listUsed(workspaceId),
       this.categorySignals(workspaceId),
     ])
+    const backfillSlugs = pool.map((c) =>
+      normalizeSlug(typeof c.id === 'string' && c.id.trim() ? c.id : c.label),
+    )
+    const { evidenceScores, weights } = await this.evidenceMixContext(workspaceId, backfillSlugs)
     const { picked: backfills, rejected } = mixNiches(pool, {
       used,
       signals,
-      options: { k: 1, lambda: 0.55, topicCap: 2, excludeSlugs: visibleSlugs },
+      evidenceScores,
+      options: { k: 1, lambda: 0.55, topicCap: 2, excludeSlugs: visibleSlugs, weights },
     })
     return { backfill: backfills[0] ?? null, rejectedCount: rejected.length }
   }

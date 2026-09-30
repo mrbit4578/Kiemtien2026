@@ -9,7 +9,9 @@
  *        với candidate đã nhận ⇒ loại (chống paraphrase)
  *     → 3. CHẤM ĐIỂM: điểm AI + novelty (mới so với đã dùng) +
  *        exploration (ưu tiên nhóm chủ đề ít được khai thác) +
- *        feedback (kaizen: nhóm nào hiệu quả thì cộng điểm)
+ *        feedback (kaizen: nhóm nào hiệu quả thì cộng điểm) +
+ *        evidence (playbook chương 01: ngách có bằng chứng thực tế được cộng
+ *        điểm — chỉ khi workspace đã có dữ liệu bằng chứng)
  *     → 4. MMR rerank: chọn top K sao cho vừa điểm cao vừa đa dạng lẫn nhau
  *        (tránh 5 ngách cùng một kiểu) + topicCap ép phủ nhiều nhóm chủ đề
  *        (mỗi nhóm tối đa N ngách trong picked)
@@ -44,6 +46,7 @@ export interface MixWeights {
   novelty?: number // trọng số độ mới so với ngách đã dùng
   exploration?: number // trọng số ưu tiên nhóm chủ đề ít khai thác
   feedback?: number // trọng số kaizen theo outcome đã ghi nhận
+  evidence?: number // trọng số bằng chứng thực tế (playbook chương 01: 30/25/20/15/10)
 }
 
 export interface MixOptions {
@@ -58,12 +61,14 @@ export interface MixOptions {
 export interface MixContext {
   used: UsedNiche[]
   signals?: Record<string, CategorySignal> // key = topic đã chuẩn hóa
+  /** key = slug đã normalize, value = điểm phủ bằng chứng 0–100. */
+  evidenceScores?: Record<string, number>
   options?: MixOptions
 }
 
 export interface ScoredCandidate extends NicheCandidate {
   mixScore: number
-  mixDetail: { base: number; novelty: number; exploration: number; feedbackBoost: number }
+  mixDetail: { base: number; novelty: number; exploration: number; feedbackBoost: number; evidenceBoost: number }
 }
 
 export interface RejectedCandidate {
@@ -143,6 +148,7 @@ const DEFAULT_WEIGHTS: Required<MixWeights> = {
   novelty: 0.25,
   exploration: 0.15,
   feedback: 0.05,
+  evidence: 0, // mặc định tắt để tương thích ngược; service bật khi có dữ liệu bằng chứng
 }
 
 function clamp01(x: number): number {
@@ -151,7 +157,7 @@ function clamp01(x: number): number {
 
 export function scoreCandidate(
   candidate: NicheCandidate,
-  ctx: Pick<MixContext, 'used' | 'signals'>,
+  ctx: Pick<MixContext, 'used' | 'signals' | 'evidenceScores'>,
   weights: Required<MixWeights> = DEFAULT_WEIGHTS,
 ): { mixScore: number; mixDetail: ScoredCandidate['mixDetail'] } {
   const base = typeof candidate.score === 'number' ? Math.max(0, Math.min(100, candidate.score)) : 70
@@ -169,11 +175,18 @@ export function scoreCandidate(
   const exploration = 1 / (1 + (signal?.picks ?? 0))
   const feedbackBoost = clamp01(((signal?.avgOutcome ?? 0) + 1) / 2) // -1..1 → 0..1
 
+  // Bằng chứng thực tế (playbook chương 01): slug đã normalize → điểm phủ 0–100.
+  // Không có dữ liệu bằng chứng thì boost = 0 — không suy diễn.
+  const slug = normalizeSlug(typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : candidate.label)
+  const evidenceCover = Math.max(0, Math.min(100, ctx.evidenceScores?.[slug] ?? 0))
+  const evidenceBoost = weights.evidence * evidenceCover
+
   const mixScore =
     weights.base * base +
     weights.novelty * novelty * 100 +
     weights.exploration * exploration * 100 +
-    weights.feedback * feedbackBoost * 100
+    weights.feedback * feedbackBoost * 100 +
+    evidenceBoost
 
   return {
     mixScore: Math.round(mixScore * 10) / 10,
@@ -182,6 +195,7 @@ export function scoreCandidate(
       novelty: Math.round(novelty * 100),
       exploration: Math.round(exploration * 100),
       feedbackBoost: Math.round(feedbackBoost * 100),
+      evidenceBoost: Math.round(evidenceBoost * 10) / 10,
     },
   }
 }

@@ -658,5 +658,245 @@
   "year": "",
   "url": "Anthropic",
   "note": "https://www.anthropic.com"
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[01]",
+  "name": "TensorFlow — Basic classification: Classify images of clothing",
+  "section": "Học thuật, nghiên cứu ngách và phân phối",
+  "author": "TensorFlow",
+  "year": "",
+  "url": "https://www.tensorflow.org/tutorials/keras/classification",
+  "note": "Dữ liệu ảnh, nhãn, mô hình và đánh giá; nguồn kiến thức video mẫu 54s."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[02]",
+  "name": "Google ML Crash Course — Neural Networks: Training using backpropagation",
+  "section": "Học thuật, nghiên cứu ngách và phân phối",
+  "author": "Google",
+  "year": "",
+  "url": "https://developers.google.com/machine-learning/crash-course/neural-networks/backpropagation",
+  "note": "Cơ chế điều chỉnh trọng số khi huấn luyện."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[03]",
+  "name": "Google ML Crash Course — Datasets: Dividing the original dataset",
+  "section": "Học thuật, nghiên cứu ngách và phân phối",
+  "author": "Google",
+  "year": "",
+  "url": "https://developers.google.com/machine-learning/crash-course/overfitting/dividing-datasets",
+  "note": "Phân chia dữ liệu học và đánh giá."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[04]",
+  "name": "TikTok Newsroom — Get inspired with Creator Search Insights",
+  "section": "Học thuật, nghiên cứu ngách và phân phối",
+  "author": "TikTok",
+  "year": "2024-03-13",
+  "url": "https://newsroom.tiktok.com/creator-search-insights?lang=en",
+  "note": "Ý tưởng từ nhu cầu tìm kiếm và khoảng trống nội dung; tính năng tùy khu vực."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[05]",
+  "name": "TikTok Creative Center — Top Ads",
+  "section": "Học thuật, nghiên cứu ngách và phân phối",
+  "author": "TikTok",
+  "year": "",
+  "url": "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en",
+  "note": "Tham khảo quảng cáo; phân biệt dữ liệu quảng cáo với hiệu quả organic."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[06]",
+  "name": "Google Trends Help — FAQ about Google Trends data",
+  "section": "Học thuật, nghiên cứu ngách và phân phối",
+  "author": "Google",
+  "year": "",
+  "url": "https://support.google.com/trends/answer/4365533?hl=vi",
+  "note": "Cách đọc chỉ số tương đối 0–100."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[07]",
+  "name": "TikTok Help Center — Cách nội dung được đề xuất trên TikTok",
+  "section": "Học thuật, nghiên cứu ngách và phân phối",
+  "author": "TikTok",
+  "year": "",
+  "url": "https://support.tiktok.com/vi/using-tiktok/exploring-videos/how-tiktok-recommends-content",
+  "note": "Các nhóm tín hiệu đề xuất, gồm tương tác và thời gian xem."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[08]",
+  "name": "TikTok Shop Academy Việt Nam — Hoa Hồng Tiếp Thị Liên Kết cho Nhà Sáng Tạo",
+  "section": "Học thuật, nghiên cứu ngách và phân phối",
+  "author": "TikTok Shop Academy VN",
+  "year": "2026-02-19",
+  "url": "https://seller-vn.tiktok.com/university/essay?default_language=en&knowledge_id=6837840205842177",
+  "note": "Cách tính hoa hồng và quyết toán."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[09]",
+  "name": "TikTok Shop Academy Việt Nam — Hướng dẫn về Link Tiếp Thị Liên Kết dành cho Nhà Sáng Tạo",
+  "section": "Kiếm tiền, khai báo nội dung và xuất bản",
+  "author": "TikTok Shop Academy VN",
+  "year": "2026-06-23",
+  "url": "https://seller-vn.tiktok.com/university/essay?course_type=1&knowledge_id=1679024774448913",
+  "note": "Link affiliate và ghi công."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[10]",
+  "name": "TikTok Help Center — Creator Rewards và Creator Fund khác nhau thế nào",
+  "section": "Kiếm tiền, khai báo nội dung và xuất bản",
+  "author": "TikTok",
+  "year": "",
+  "url": "https://support.tiktok.com/en/business-and-creator/creator-rewards-program/how-is-the-creator-rewards-program-different-from-the-tiktok-creator-fund?invalid_lang=hi",
+  "note": "Điều kiện nội dung và thời lượng của Creator Rewards."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[11]",
+  "name": "TikTok Help Center — Quảng bá thương hiệu, sản phẩm hoặc dịch vụ",
+  "section": "Kiếm tiền, khai báo nội dung và xuất bản",
+  "author": "TikTok",
+  "year": "",
+  "url": "https://support.tiktok.com/vi/business-and-creator/creator-and-business-accounts/promoting-a-brand-product-or-service",
+  "note": "Khai báo nội dung thương mại khi quảng bá."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[12]",
+  "name": "TikTok Help Center — AI-generated content",
+  "section": "Kiếm tiền, khai báo nội dung và xuất bản",
+  "author": "TikTok",
+  "year": "",
+  "url": "https://support.tiktok.com/en/using-tiktok/creating-videos/ai-generated-content?ref_type=adv",
+  "note": "Nhãn AI cho nội dung có hình, âm thanh hoặc video chân thực."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[13]",
+  "name": "TikTok Help Center — Commercial use of music on TikTok",
+  "section": "Kiếm tiền, khai báo nội dung và xuất bản",
+  "author": "TikTok",
+  "year": "",
+  "url": "https://support.tiktok.com/en/business-and-creator/creator-and-business-accounts/commercial-use-of-music-on-tiktok?lang=en",
+  "note": "Phạm vi nhạc thương mại và Commercial Music Library."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[14]",
+  "name": "TikTok for Developers — Get Started-Direct Post",
+  "section": "Kiếm tiền, khai báo nội dung và xuất bản",
+  "author": "TikTok Developers",
+  "year": "2026-08-04",
+  "url": "https://developers.tiktok.com/docs/en/content-posting-api-get-started",
+  "note": "Quyền video.publish, ủy quyền và giới hạn tài khoản ứng dụng chưa được audit."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[15]",
+  "name": "TikTok for Developers — Content Sharing Guidelines",
+  "section": "Kiếm tiền, khai báo nội dung và xuất bản",
+  "author": "TikTok Developers",
+  "year": "2026-08-04",
+  "url": "https://developers.tiktok.com/docs/en/content-sharing-guidelines",
+  "note": "Use case, giao diện xem trước, đồng ý đăng, trạng thái bài."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[16]",
+  "name": "Runway Help Center — Image to Video Prompting Guide",
+  "section": "Kiếm tiền, khai báo nội dung và xuất bản",
+  "author": "Runway",
+  "year": "",
+  "url": "https://help.runwayml.com/hc/en-us/articles/48324313115155-Image-to-Video-Prompting-Guide",
+  "note": "Ảnh làm điểm xuất phát; prompt tập trung vào chuyển động và máy quay."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[17]",
+  "name": "ElevenLabs Docs — Text to Speech",
+  "section": "Công cụ sản xuất, truy xuất và tự động hóa",
+  "author": "ElevenLabs",
+  "year": "",
+  "url": "https://elevenlabs.io/docs/overview/capabilities/text-to-speech",
+  "note": "Chuyển lời viết thành giọng đọc; tài liệu có liệt kê tiếng Việt."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[18]",
+  "name": "CapCut Help — Làm cách nào để nhận dạng phụ đề?",
+  "section": "Công cụ sản xuất, truy xuất và tự động hóa",
+  "author": "CapCut",
+  "year": "",
+  "url": "https://www.capcut.com/vi-vn/help/how-to-recognise-subtitles",
+  "note": "Tạo phụ đề bằng nhận dạng lời nói, sau đó chỉnh lại."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[19]",
+  "name": "Sentence Transformers — Retrieve & Re-Rank",
+  "section": "Công cụ sản xuất, truy xuất và tự động hóa",
+  "author": "Sentence Transformers",
+  "year": "",
+  "url": "https://sbert.net/examples/sentence_transformer/applications/retrieve_rerank/README.html",
+  "note": "Embedding để truy xuất và reranker để xếp mức liên quan."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[20]",
+  "name": "Anthropic Engineering — Building effective agents",
+  "section": "Công cụ sản xuất, truy xuất và tự động hóa",
+  "author": "Anthropic",
+  "year": "2024-12-19",
+  "url": "https://www.anthropic.com/engineering/building-effective-agents",
+  "note": "Phân biệt workflow cố định và agent chọn bước."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[21]",
+  "name": "n8n Docs — Human-in-the-loop for tools",
+  "section": "Công cụ sản xuất, truy xuất và tự động hóa",
+  "author": "n8n",
+  "year": "",
+  "url": "https://docs.n8n.io/build/integrate-ai/ai-examples/human-in-the-loop-for-tools",
+  "note": "Cấu hình người duyệt trước một số công cụ của AI Agent."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[22]",
+  "name": "TikTok Shop Academy Việt Nam — Đơn Hàng Tiếp Thị Liên Kết",
+  "section": "Công cụ sản xuất, truy xuất và tự động hóa",
+  "author": "TikTok Shop Academy VN",
+  "year": "",
+  "url": "https://seller-vn.tiktok.com/university/essay?knowledge_id=2162928711796482",
+  "note": "Trạng thái đơn, hoàn tiền và hoa hồng sau quyết toán."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[23]",
+  "name": "Zalando Research — Fashion-MNIST",
+  "section": "Công cụ sản xuất, truy xuất và tự động hóa",
+  "author": "Zalando Research",
+  "year": "",
+  "url": "https://github.com/zalandoresearch/fashion-mnist",
+  "note": "Dữ liệu gốc phân loại ảnh thời trang."
+ },
+ {
+  "doc_id": "mmo-ai-tiktok-roadmap-v1",
+  "code": "[24]",
+  "name": "TikTok Help Center — Series on TikTok",
+  "section": "Công cụ sản xuất, truy xuất và tự động hóa",
+  "author": "TikTok",
+  "year": "",
+  "url": "https://support.tiktok.com/vi/business-and-creator/tiktok-series/about-tiktok-series",
+  "note": "Nội dung trả phí cho nhà sáng tạo đủ điều kiện."
  }
 ]

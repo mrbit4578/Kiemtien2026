@@ -21,6 +21,7 @@ import {
   CreateVideoAiEntryDto,
   AutoBuildVideoDto,
   CreateProjectFromPresetDto,
+  SetComplianceDto,
 } from './dto'
 import { requireWorkspaceId } from '../common/session'
 import type { Request } from 'express'
@@ -191,6 +192,40 @@ export class VideoController {
     @Session() session: any,
   ) {
     return this.video.deleteClaim(requireWorkspaceId(session), id, claimId)
+  }
+
+  /**
+   * GET /video/projects/:id/claim-check — quét claim ledger theo quy tắc
+   * ghi nhãn (playbook chương 06/07): claim unverified → bắt buộc
+   * "CHƯA XÁC MINH" trong kịch bản.
+   */
+  @Get('projects/:id/claim-check')
+  async claimCheck(@Param('id') id: string, @Session() session: any) {
+    return this.video.claimCheck(requireWorkspaceId(session), id)
+  }
+
+  // ─── Checklist tuân thủ xuất bản (playbook chương 09) ───
+
+  @Get('projects/:id/compliance')
+  async getCompliance(@Param('id') id: string, @Session() session: any) {
+    return this.video.getCompliance(requireWorkspaceId(session), id)
+  }
+
+  @Post('projects/:id/compliance')
+  @HttpCode(200)
+  async setCompliance(
+    @Param('id') id: string,
+    @Body() dto: SetComplianceDto,
+    @Session() session: any,
+  ) {
+    return this.video.setCompliance(requireWorkspaceId(session), id, dto)
+  }
+
+  // ─── Prompt biên kịch dùng lại (playbook chương 07) ───
+
+  @Get('scriptwriter-prompt')
+  scriptwriterPrompt() {
+    return this.video.getScriptwriterPrompt({})
   }
 
   // ─── AI register ───

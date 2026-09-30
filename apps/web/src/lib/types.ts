@@ -293,6 +293,12 @@ export interface VideoClaim {
   riskLevel: string
   primarySource: string | null
   secondarySource: string | null
+  /** Đoạn căn cứ từ nguồn hỗ trợ phát biểu (playbook chương 06). */
+  evidenceExcerpt: string | null
+  /** Cảnh minh họa liên quan, VD "00:14–00:23". */
+  sceneRef: string | null
+  /** Mã nguồn trong kịch bản, VD "[C1]". */
+  scriptCode: string | null
   confidence: string
   status: 'open' | 'corrected' | 'withdrawn'
   createdAt: string
@@ -340,10 +346,96 @@ export interface GateState {
   note?: string
 }
 
+export interface ComplianceState {
+  aiLabelRequired: boolean
+  aiLabelApplied: boolean
+  commercialDisclosureRequired: boolean
+  commercialDisclosureApplied: boolean
+  musicRights: 'cml' | 'licensed' | 'original' | 'unknown'
+  musicNote?: string
+}
+
 export interface PublishReadiness {
   ready: boolean
   blockingAssets: Array<{ id: string; name: string; status: string }>
   riskyClaims: Array<{ id: string; claimText: string }>
+  /** Checklist tuân thủ (playbook chương 09) — chặn publish khi còn mục chưa đạt. */
+  complianceBlockers: string[]
+  compliance: ComplianceState | null
+}
+
+export interface ClaimCheckIssue {
+  id: string
+  scriptCode: string | null
+  claimText: string
+  reason: string
+}
+
+export interface ClaimCheckResult {
+  ok: boolean
+  mustMarkUnverified: ClaimCheckIssue[]
+  missingEvidence: ClaimCheckIssue[]
+  total: number
+}
+
+/** Đề nghị mua — chọn cơ chế thu nhập TRƯỚC khi sản xuất (playbook chương 04). */
+export interface MonetizationOffer {
+  id: string
+  projectId: string | null
+  nicheSlug: string | null
+  model: string
+  title: string
+  commissionAmount: number | null
+  commissionCurrency: string
+  payoutTerms: string | null
+  verified: boolean
+  status: 'candidate' | 'active' | 'paused' | 'dropped'
+  note: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MonetizationModel {
+  id: string
+  label: string
+  note: string
+}
+
+/** Số liệu hiệu quả 1 video (playbook chương 05/09). Tiền từ sổ quyết toán. */
+export interface VideoEconomics {
+  id: string
+  projectId: string
+  costCash: number
+  hoursWorked: number
+  views: number
+  watchTimeSec: number | null
+  completionRate: number | null
+  saves: number
+  shares: number
+  clicks: number
+  orders: number
+  eligibleOrders: number
+  commissionReceived: number
+  organic: boolean
+  postedAt: string | null
+  utm: string | null
+  note: string | null
+}
+
+export interface EconomicsSummary {
+  economics: VideoEconomics | null
+  summary: {
+    profit: number
+    revenuePer1kViews: number | null
+    costPerEligibleOrder: number | null
+    hoursPerOrder: number | null
+    eligibleRate: number | null
+    clickThroughRate: number | null
+    orderRateAfterClick: number | null
+  } | null
+  offer: { id: string; model: string; title: string; commissionAmount: number | null; verified: boolean } | null
+  breakevenOrders: number | null
+  hasData: boolean
 }
 
 export interface WooStore {
