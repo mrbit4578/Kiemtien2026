@@ -35,8 +35,10 @@ interface GenScene {
   seconds: number
   imageDataUrl: string | null
   imageLoading: boolean
+  imageProvider: string | null
   audioUrl: string | null
   voiceLoading: boolean
+  voiceProvider: string | null
   clipUrl: string | null
   clipJobId: string | null
   clipStatus: string | null
@@ -190,8 +192,10 @@ export function VideoGenStudio({
           seconds: s.seconds,
           imageDataUrl: null,
           imageLoading: false,
+          imageProvider: null,
           audioUrl: null,
           voiceLoading: false,
+          voiceProvider: null,
           clipUrl: null,
           clipJobId: null,
           clipStatus: null,
@@ -223,7 +227,7 @@ export function VideoGenStudio({
           provider: providerSel === 'auto' ? undefined : providerSel,
         },
       )
-      updateScene(i, { imageDataUrl: res.url, imageLoading: false })
+      updateScene(i, { imageDataUrl: res.url, imageLoading: false, imageProvider: res.provider })
     } catch (err) {
       updateScene(i, { imageLoading: false })
       say('err', `Scene ${i + 1}: ${toMessage(err)}`)
@@ -258,7 +262,7 @@ export function VideoGenStudio({
         voice: voiceName.trim() || undefined,
         provider: providerSel === 'auto' ? undefined : providerSel,
       })
-      updateScene(i, { audioUrl: dataUrl(res.mime, res.audioBase64), voiceLoading: false })
+      updateScene(i, { audioUrl: dataUrl(res.mime, res.audioBase64), voiceLoading: false, voiceProvider: res.provider })
       return true
     } catch (err) {
       updateScene(i, { voiceLoading: false })
@@ -384,6 +388,8 @@ export function VideoGenStudio({
 
   const connectedCaps = providers.filter((p) => p.connected)
   const canImage = providers.some((p) => p.connected && p.capabilities.includes('image'))
+  /** Tên hiển thị của provider (để báo key nào thực sự đã chạy khi có fallback) */
+  const provName = (id: string | null) => providers.find((p) => p.id === id)?.name ?? id ?? ''
   const canVoice = providers.some((p) => p.connected && p.capabilities.includes('voice'))
   const canVideo = providers.some((p) => p.connected && p.capabilities.includes('video'))
 
@@ -459,7 +465,8 @@ export function VideoGenStudio({
           </div>
           <div className="text-[11px] text-slate-500 self-end leading-relaxed">
             🖼️🎙️🎬 Ảnh / giọng / clip AI cần <b className="text-slate-300">Gemini</b> hoặc{' '}
-            <b className="text-slate-300">OpenAI</b>. Viết kịch bản dùng được mọi key đã kết nối.
+            <b className="text-slate-300">OpenAI</b> — nếu key đang chọn không hỗ trợ, hệ thống tự
+            fallback sang key Gemini/OpenAI đã kết nối. Viết kịch bản dùng được mọi key đã kết nối.
             {!canVideo && (
               <span className="block mt-1 text-brand-amber">
                 ⚠️ Chưa có key sinh clip AI (cần Gemini billing hoặc OpenAI credits) — vẫn dựng được video từ ảnh + Ken Burns.
@@ -595,6 +602,9 @@ export function VideoGenStudio({
                 >
                   {s.imageDataUrl ? 'Sinh lại' : 'Sinh ảnh'}
                 </button>
+                {s.imageProvider && (
+                  <p className="text-center text-[10px] text-slate-500 pb-1">via {provName(s.imageProvider)}</p>
+                )}
               </div>
             ))}
           </div>
@@ -647,6 +657,9 @@ export function VideoGenStudio({
                   <>
                     <audio src={s.audioUrl} controls className="h-8 flex-1 min-w-0" />
                     <CheckCircle2 className="w-4 h-4 text-brand-emerald shrink-0" />
+                    {s.voiceProvider && (
+                      <span className="text-[10px] text-slate-500 shrink-0">via {provName(s.voiceProvider)}</span>
+                    )}
                   </>
                 ) : (
                   <>
