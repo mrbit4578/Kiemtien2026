@@ -11,6 +11,7 @@ export type AiProviderId =
   | 'deepseek'
   | 'experientiallabs'
   | 'apmix'
+  | 'muse'
 
 type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic'
 
@@ -101,6 +102,17 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     description:
       'Miễn phí — model DeepSeek free + GPT free qua Apmix (ID dạng hãng/tên-model), nhập key là chạy ngay.',
     baseUrl: 'https://api.apmix.ai/v1',
+    kind: 'openai-compatible',
+  },
+  {
+    id: 'muse',
+    name: 'Muse (Meta)',
+    keyUrl: 'https://dev.meta.ai',
+    models: ['muse-spark-1.3', 'muse-spark-1.2', 'muse-spark-1.1'],
+    defaultModel: 'muse-spark-1.3',
+    description:
+      'Model dòng Muse của Meta qua Model API (chuẩn OpenAI). Tạo key tại dev.meta.ai → API keys.',
+    baseUrl: 'https://api.meta.ai/v1',
     kind: 'openai-compatible',
   },
 ]

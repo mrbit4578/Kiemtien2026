@@ -45,6 +45,7 @@ const CAPABILITIES: Record<string, Capability[]> = {
   deepseek: ['chat'],
   experientiallabs: ['chat'],
   apmix: ['chat'],
+  muse: ['chat'],
 }
 
 /** Thứ tự ưu tiên khi user để provider='auto' */
@@ -97,6 +98,7 @@ export class VideogenService {
       'deepseek',
       'experientiallabs',
       'apmix',
+      'muse',
     ]
     return all.map((id) => {
       const meta = getProviderMeta(id)

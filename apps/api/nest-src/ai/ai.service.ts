@@ -24,6 +24,7 @@ const CHAT_TIMEOUT_MS = 90_000
 export const FALLBACK_PRIORITY: AiProviderId[] = [
   'openai',
   'gemini',
+  'muse',
   'experientiallabs',
   'apmix',
   'deepseek',
