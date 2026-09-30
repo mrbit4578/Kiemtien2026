@@ -11,7 +11,11 @@
  *        exploration (ưu tiên nhóm chủ đề ít được khai thác) +
  *        feedback (kaizen: nhóm nào hiệu quả thì cộng điểm)
  *     → 4. MMR rerank: chọn top K sao cho vừa điểm cao vừa đa dạng lẫn nhau
- *        (tránh 5 ngách cùng một kiểu)
+ *        (tránh 5 ngách cùng một kiểu) + topicCap ép phủ nhiều nhóm chủ đề
+ *        (mỗi nhóm tối đa N ngách trong picked)
+ *     → 5. BACKFILL: khi một ngách được chọn (đánh dấu đã dùng), chạy lại
+ *        mixer trên pool dự phòng với excludeSlugs = ngách đang hiển thị
+ *        để bổ sung 1 ngách mới tốt nhất thay thế — graph luôn đầy.
  */
 
 export interface NicheCandidate {
@@ -43,9 +47,11 @@ export interface MixWeights {
 }
 
 export interface MixOptions {
-  k?: number // số ngách lấy ra, mặc định 5
+  k?: number // số ngách lấy ra, mặc định 5 (tối đa 24)
   lambda?: number // cân bằng MMR: 1 = chỉ điểm cao, 0 = chỉ đa dạng. Mặc định 0.7
   nearDupThreshold?: number // Jaccard ≥ ngưỡng ⇒ coi như trùng. Mặc định 0.8
+  topicCap?: number // số ngách tối đa mỗi nhóm chủ đề trong picked. Mặc định 2 (ép phủ nhiều nhóm)
+  excludeSlugs?: string[] // slug đang hiển thị trên graph — loại để backfill không trùng
   weights?: MixWeights
 }
 
@@ -62,7 +68,7 @@ export interface ScoredCandidate extends NicheCandidate {
 
 export interface RejectedCandidate {
   candidate: NicheCandidate
-  reason: 'already_used' | 'near_duplicate' | 'empty_label'
+  reason: 'already_used' | 'near_duplicate' | 'empty_label' | 'excluded'
   reasonDetail: string
 }
 
@@ -147,7 +153,7 @@ export function scoreCandidate(
   candidate: NicheCandidate,
   ctx: Pick<MixContext, 'used' | 'signals'>,
   weights: Required<MixWeights> = DEFAULT_WEIGHTS,
-): ScoredCandidate['mixDetail'] & { mixScore: number } {
+): { mixScore: number; mixDetail: ScoredCandidate['mixDetail'] } {
   const base = typeof candidate.score === 'number' ? Math.max(0, Math.min(100, candidate.score)) : 70
 
   const tokens = viTokens(candidate.label)
@@ -183,10 +189,18 @@ export function scoreCandidate(
 /**
  * Maximal Marginal Relevance: chọn lần lượt K candidate sao cho mỗi lần chọn
  * cân bằng giữa điểm cao (relevance) và khác biệt với những cái đã chọn (diversity).
+ * topicCap giới hạn số ngách mỗi nhóm chủ đề — ép phủ nhiều nhóm thay vì
+ * dồn vào 1-2 nhóm "ngon ăn".
  */
-export function mmrSelect(scored: ScoredCandidate[], k: number, lambda = 0.7): ScoredCandidate[] {
+export function mmrSelect(
+  scored: ScoredCandidate[],
+  k: number,
+  lambda = 0.7,
+  topicCap = 2,
+): ScoredCandidate[] {
   const remaining = [...scored]
   const selected: ScoredCandidate[] = []
+  const topicCount = new Map<string, number>()
   const tokenCache = new Map<ScoredCandidate, Set<string>>()
   const toks = (c: ScoredCandidate) => {
     let t = tokenCache.get(c)
@@ -197,10 +211,12 @@ export function mmrSelect(scored: ScoredCandidate[], k: number, lambda = 0.7): S
     return t
   }
   while (selected.length < Math.min(k, scored.length) && remaining.length > 0) {
-    let bestIdx = 0
+    let bestIdx = -1
     let bestVal = -Infinity
     for (let i = 0; i < remaining.length; i++) {
       const c = remaining[i]
+      // Ép đa dạng nhóm chủ đề: nhóm nào đã đủ quota thì bỏ qua ở vòng này
+      if ((topicCount.get(inferTopic(c.label)) ?? 0) >= topicCap) continue
       let maxSim = 0
       for (const s of selected) {
         const sim = jaccard(toks(c), toks(s))
@@ -212,7 +228,23 @@ export function mmrSelect(scored: ScoredCandidate[], k: number, lambda = 0.7): S
         bestIdx = i
       }
     }
-    selected.push(remaining.splice(bestIdx, 1)[0])
+    // Mọi ứng viên còn lại đều vướng topicCap → nới lỏng để vẫn đủ K
+    if (bestIdx === -1) {
+      let bi = 0
+      let bv = -Infinity
+      for (let i = 0; i < remaining.length; i++) {
+        const v = lambda * remaining[i].mixScore / 100
+        if (v > bv) {
+          bv = v
+          bi = i
+        }
+      }
+      bestIdx = bi
+    }
+    const [chosen] = remaining.splice(bestIdx, 1)
+    selected.push(chosen)
+    const t = inferTopic(chosen.label)
+    topicCount.set(t, (topicCount.get(t) ?? 0) + 1)
   }
   return selected
 }
@@ -225,12 +257,14 @@ export function mmrSelect(scored: ScoredCandidate[], k: number, lambda = 0.7): S
  */
 export function mixNiches(candidates: NicheCandidate[], ctx: MixContext): MixResult {
   const opts = ctx.options ?? {}
-  const k = Math.max(1, opts.k ?? 5)
+  const k = Math.max(1, Math.min(opts.k ?? 5, 24))
   const lambda = opts.lambda ?? 0.7
   const nearDupThreshold = opts.nearDupThreshold ?? 0.8
+  const topicCap = Math.max(1, opts.topicCap ?? 2)
   const weights: Required<MixWeights> = { ...DEFAULT_WEIGHTS, ...(opts.weights ?? {}) }
 
   const usedSlugs = new Set(ctx.used.map((u) => normalizeSlug(u.slug)))
+  const excludedSlugs = new Set((opts.excludeSlugs ?? []).map((s) => normalizeSlug(s)))
   const usedTokenSets = ctx.used.map((u) => viTokens(u.label))
 
   const rejected: RejectedCandidate[] = []
@@ -247,6 +281,11 @@ export function mixNiches(candidates: NicheCandidate[], ctx: MixContext): MixRes
     // 1. Loại cứng: đã dùng
     if (usedSlugs.has(slug)) {
       rejected.push({ candidate: c, reason: 'already_used', reasonDetail: `Slug "${slug}" đã được dùng — không lặp lại.` })
+      continue
+    }
+    // 1b. Loại cứng: đang hiển thị trên graph (dành cho backfill)
+    if (excludedSlugs.has(slug)) {
+      rejected.push({ candidate: c, reason: 'excluded', reasonDetail: `Slug "${slug}" đang hiển thị — không chọn trùng.` })
       continue
     }
     const tokens = viTokens(label)
@@ -275,7 +314,7 @@ export function mixNiches(candidates: NicheCandidate[], ctx: MixContext): MixRes
     acceptedTokenSets.push(tokens)
   }
 
-  // 3+4. Chấm điểm đã xong ở trên → MMR chọn top K đa dạng
-  const picked = mmrSelect(survivors, k, lambda)
+  // 3+4. Chấm điểm đã xong ở trên → MMR chọn top K đa dạng (có topicCap)
+  const picked = mmrSelect(survivors, k, lambda, topicCap)
   return { picked, rejected }
 }

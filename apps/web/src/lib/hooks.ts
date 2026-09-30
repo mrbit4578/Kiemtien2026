@@ -752,8 +752,33 @@ export async function recordNicheFeedback(
 }
 
 /** Trộn + lọc danh sách AI đề xuất theo ngữ cảnh đã dùng (server-side). */
-export async function mixNiches(candidates: unknown[], k = 5): Promise<MixResult> {
-  return api.post<MixResult>('/niches/mix', { candidates, k })
+export async function mixNiches(
+  candidates: unknown[],
+  k = 10,
+  opts: { lambda?: number; topicCap?: number } = {},
+): Promise<MixResult> {
+  return api.post<MixResult>('/niches/mix', {
+    candidates,
+    k,
+    lambda: opts.lambda ?? 0.55,
+    topicCap: opts.topicCap ?? 2,
+  })
+}
+
+/**
+ * Thay thế ngách vừa chọn: backend đánh dấu đã dùng (không còn là ưu tiên)
+ * và trả về 1 ngách backfill tốt nhất từ pool dự phòng.
+ */
+export async function replaceNiche(body: {
+  pickedSlug: string
+  pickedLabel: string
+  pickedCategory?: string
+  pickedScore?: number
+  pickedRationale?: string
+  pool: unknown[]
+  visibleSlugs: string[]
+}): Promise<{ backfill: MixedNiche | null; rejectedCount: number }> {
+  return api.post<{ backfill: MixedNiche | null; rejectedCount: number }>('/niches/replace', body)
 }
 
 /** Chuẩn hóa slug ngách phía client — khớp logic backend normalizeSlug. */

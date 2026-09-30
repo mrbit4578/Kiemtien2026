@@ -28,6 +28,7 @@ import {
   unmarkNicheUsed,
   recordNicheFeedback,
   mixNiches,
+  replaceNiche,
   slugifyNiche,
   type UsedNiche,
   type MixedNiche,
@@ -47,6 +48,8 @@ export interface GraphNode {
   vy?: number
   /** Node do AI quét và đề xuất (không có trong dữ liệu gốc). */
   aiGenerated?: boolean
+  /** Node backfill: được bổ sung thay thế ngách vừa được chọn. */
+  isBackfill?: boolean
   /** Điểm cơ hội 0–100 do AI chấm (chỉ cho node AI). */
   score?: number
   /** Lý do 1 câu vì sao đây là vùng tối ưu (chỉ cho node AI). */
@@ -181,13 +184,14 @@ function buildNicheScanPrompt(existingLabels: string[], linkableIds: string[], u
   return [
     'Bạn là chuyên gia nghiên cứu thị trường MMO/affiliate Việt Nam.',
     'Nhiệm vụ: dùng web_search để tìm các xu hướng kiếm tiền online / tiếp thị liên kết ĐANG LÊN tại Việt Nam trong năm 2026,',
-    'rồi đề xuất 3–5 NGÁCH MỚI tiềm năng nhất mà chưa có trong danh sách sau:',
+    'rồi đề xuất 10–12 NGÁCH MỚI tiềm năng nhất mà chưa có trong danh sách sau:',
     existingLabels.map((l) => `- ${l}`).join('\n'),
     ...banList,
     '',
     'YÊU CẦU ĐA DẠNG (bắt buộc):',
-    '- Mỗi ngách phải thuộc một góc tiếp cận khác nhau (đừng đưa 5 biến thể của cùng một chủ đề).',
-    '- Ít nhất 1 ngách là "wild-card": mới nổi, ít người làm, chưa phổ biến đại trà.',
+    '- Phủ ít nhất 6 nhóm chủ đề khác nhau: tài chính, sức khỏe/làm đẹp, công nghệ/AI, giáo dục/khóa học, thương mại/tiêu dùng, giải trí/thú cưng/du lịch...',
+    '- Mỗi ngách phải thuộc một góc tiếp cận khác nhau (đừng đưa nhiều biến thể của cùng một chủ đề).',
+    '- Ít nhất 2 ngách là "wild-card": mới nổi, ít người làm, chưa phổ biến đại trà.',
     '- Ưu tiên ngách con (sub-niche) cụ thể thay vì ngách lớn chung chung.',
     '',
     'QUY TẮC OUTPUT (bắt buộc): chỉ trả về DUY NHẤT một khối JSON trong ```json ... ```, không thêm chữ nào ngoài khối JSON.',
@@ -250,11 +254,11 @@ interface AiNicheSuggestion {
 }
 
 /** Validate + chuẩn hóa một suggestion thành GraphNode. Trả null nếu thiếu trường bắt buộc. */
-function toAiNode(s: AiNicheSuggestion, index: number): GraphNode | null {
+function toAiNode(s: AiNicheSuggestion, index: number, total: number): GraphNode | null {
   if (typeof s.label !== 'string' || !s.label.trim()) return null
   const str = (v: unknown, fb: string) => (typeof v === 'string' && v.trim() ? v.trim() : fb)
   const score = typeof s.score === 'number' ? Math.max(0, Math.min(100, Math.round(s.score))) : 70
-  const angle = (index / 5) * 2 * Math.PI - Math.PI / 2
+  const angle = (index / Math.max(total, 1)) * 2 * Math.PI - Math.PI / 2
   return {
     id: `ai_niche_${typeof s.id === 'string' && s.id.trim() ? s.id.trim().replace(/[^a-z0-9_]/gi, '').toLowerCase() : `scan${Date.now() % 100000}_${index}`}`,
     label: s.label.trim(),
@@ -360,6 +364,29 @@ export function InteractiveKnowledgeGraph() {
     return providerId
   }
 
+  // ── Giao thức Agent cho quét ngách ──────────────────────────────────
+  // Áp dụng từ tài liệu nn-llm-agent-v1: vòng lặp agent gồm các bước hiển thị
+  // được (perceive → propose → score → diversify), guard bắt buộc
+  // (timeout, giới hạn ứng viên) và human-in-the-loop (người duyệt cuối).
+  const SCAN_TIMEOUT_MS = 3 * 60 * 1000
+  const SCAN_MAX_CANDIDATES = 24
+  const SCAN_TOP_K = 10
+
+  interface ScanStep {
+    id: string
+    label: string
+    hint: string
+    status: 'pending' | 'running' | 'done' | 'error'
+    detail?: string
+  }
+  const [scanSteps, setScanSteps] = useState<ScanStep[] | null>(null)
+  /** Pool ứng viên dự phòng của lần quét gần nhất — dùng để backfill khi chọn ngách. */
+  const poolRef = useRef<unknown[]>([])
+  const [backfilling, setBackfilling] = useState(false)
+
+  const setStep = (id: string, patch: Partial<ScanStep>) =>
+    setScanSteps((prev) => (prev ? prev.map((s) => (s.id === id ? { ...s, ...patch } : s)) : prev))
+
   /** Agent research trend MMO 2026 → đề xuất ngách mới → trộn server-side → vẽ lên graph. */
   const handleScan = async () => {
     if (scanning) return
@@ -367,8 +394,21 @@ export function InteractiveKnowledgeGraph() {
     if (!provider) return
     setScanning(true)
     setScanError(null)
+    setScanSteps([
+      { id: 'context', label: 'Thu thập ngữ cảnh', hint: 'ngách đã dùng + tín hiệu kaizen + graph hiện tại', status: 'running' },
+      { id: 'propose', label: 'AI đề xuất ngách', hint: 'agent + web_search, đa dạng ≥6 nhóm chủ đề', status: 'pending' },
+      { id: 'score', label: 'Chấm điểm đa tiêu chí', hint: 'AI score + novelty + exploration + feedback', status: 'pending' },
+      { id: 'diversify', label: 'Đa dạng hóa MMR', hint: `top ${SCAN_TOP_K}, topicCap=2, λ=0.55`, status: 'pending' },
+      { id: 'human', label: 'Chờ bạn duyệt', hint: 'human-in-the-loop: chọn ngách để dùng', status: 'pending' },
+    ])
+    // Guard: timeout toàn bộ vòng quét (race — request nền không abort được qua api.post)
+    const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+      Promise.race([
+        p,
+        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} quá ${ms / 60000} phút (guard timeout) — hãy bấm quét lại.`)), ms)),
+      ])
     try {
-      // Lấy danh sách đã dùng MỚI NHẤT để loại trừ cứng trong prompt
+      // B1 — PERCEIVE (tool đọc, luôn cho phép): lấy danh sách đã dùng MỚI NHẤT
       let used: UsedNiche[] = usedNiches
       try {
         used = await fetchUsedNiches()
@@ -376,35 +416,49 @@ export function InteractiveKnowledgeGraph() {
       } catch {
         /* bỏ qua — vẫn quét được, chỉ thiếu chống lặp */
       }
-      const res = await sendAgentRun(
-        provider,
-        [
-          {
-            role: 'user' as const,
-            content: buildNicheScanPrompt(
-              nodes.map((n) => n.label),
-              nodes.map((n) => n.id),
-              used.map((u) => u.label),
-            ),
-          },
-        ],
-        model || undefined,
-        { maxTurns: 10, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 4096 },
+      setStep('context', { status: 'done', detail: `${used.length} ngách đã dùng · ${nodes.length} node trên graph` })
+      // B2 — PROPOSE: agent research trend MMO 2026
+      setStep('propose', { status: 'running' })
+      const res = await withTimeout(
+        sendAgentRun(
+          provider,
+          [
+            {
+              role: 'user' as const,
+              content: buildNicheScanPrompt(
+                nodes.map((n) => n.label),
+                nodes.map((n) => n.id),
+                used.map((u) => u.label),
+              ),
+            },
+          ],
+          model || undefined,
+          { maxTurns: 10, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 4096 },
+        ),
+        SCAN_TIMEOUT_MS,
+        'Vòng quét',
       )
       const parsed = extractJsonArray(res.content)
       if (!parsed || parsed.length === 0) {
         throw new Error('AI không trả về danh sách ngách hợp lệ. Hãy bấm quét lại.')
       }
-      // Trộn tối ưu server-side: loại cứng đã dùng + loại mềm paraphrase +
-      // chấm điểm đa tiêu chí + MMR đa dạng hóa → top 5
+      // Guard: giới hạn ứng viên mỗi lần quét
+      const pool = parsed.slice(0, SCAN_MAX_CANDIDATES)
+      poolRef.current = pool
+      setStep('propose', { status: 'done', detail: `${pool.length} ứng viên` })
+      // B3+B4 — SCORE + DIVERSIFY (tool local qua API): loại cứng đã dùng +
+      // loại mềm paraphrase + chấm điểm đa tiêu chí + MMR → top K đa dạng
+      setStep('score', { status: 'running' })
       let suggestions: MixedNiche[]
       try {
-        const mixed = await mixNiches(parsed.slice(0, 12), 5)
+        const mixed = await mixNiches(pool, SCAN_TOP_K, { lambda: 0.55, topicCap: 2 })
         suggestions = mixed.picked
       } catch {
         // Backend cũ chưa có /niches/mix — fallback: dùng trực tiếp kết quả AI
-        suggestions = (parsed.slice(0, 5) as MixedNiche[]).map((s) => ({ ...s, mixScore: s.score ?? 70 }))
+        suggestions = (pool.slice(0, 5) as MixedNiche[]).map((s) => ({ ...s, mixScore: s.score ?? 70 }))
       }
+      setStep('score', { status: 'done', detail: `${suggestions.length} ngách đạt` })
+      setStep('diversify', { status: 'done', detail: `MMR λ=0.55 · topicCap=2` })
       if (suggestions.length === 0) {
         throw new Error('Tất cả ngách AI đề xuất đều đã dùng hoặc trùng lặp. Hãy bấm quét lại để AI tìm hướng mới.')
       }
@@ -413,7 +467,7 @@ export function InteractiveKnowledgeGraph() {
       const newLinks: GraphLink[] = []
       suggestions.forEach((raw) => {
         const s = raw as AiNicheSuggestion
-        const node = toAiNode(s, newNodes.length)
+        const node = toAiNode(s, newNodes.length, suggestions.length)
         if (!node || knownIds.has(node.id)) return
         knownIds.add(node.id)
         // Điểm hiển thị: ưu tiên mixScore từ thuật toán trộn
@@ -430,7 +484,14 @@ export function InteractiveKnowledgeGraph() {
       setNodes((prev) => [...prev, ...newNodes])
       setLinks((prev) => [...prev, ...newLinks])
       setSelectedNode(newNodes[0])
+      // B5 — HUMAN-IN-THE-LOOP: ngách là đề xuất, chờ người duyệt/chọn
+      setStep('human', { status: 'running', detail: `${newNodes.length} ngách chờ duyệt` })
     } catch (err) {
+      setScanSteps((prev) =>
+        prev
+          ? prev.map((s) => (s.status === 'running' ? { ...s, status: 'error' as const } : s))
+          : prev,
+      )
       setScanError(
         err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Quét ngách thất bại. Hãy thử lại.',
       )
@@ -447,26 +508,70 @@ export function InteractiveKnowledgeGraph() {
   }
   const isNodeUsed = (n: GraphNode | null): boolean => !!n && usedSlugs.has(nodeSlug(n))
 
-  /** Đánh dấu ngách đã dùng — từ đó thuật toán trộn không bao giờ đề xuất lại. */
-  const handleMarkUsed = async (n: GraphNode) => {
-    if (markingUsed) return
+  /**
+   * Chọn ngách = đánh dấu đã dùng (không còn là ưu tiên, không đề xuất lại)
+   * + bổ sung ngay 1 ngách mới tốt nhất từ pool dự phòng (backfill).
+   * Áp dụng giao thức agent: hành động "ghi" (đánh dấu) luôn đi kèm người duyệt
+   * (chính thao tác bấm nút của user) và có trace rõ ràng.
+   */
+  const handlePickNiche = async (n: GraphNode) => {
+    if (markingUsed || backfilling) return
     setMarkingUsed(true)
     try {
-      await markNicheUsed({
-        slug: nodeSlug(n),
-        label: n.label,
-        category: n.category,
-        score: n.score,
-        rationale: n.rationale,
-        source: 'scan',
-      })
+      const visibleSlugs = nodes.filter((x) => x.aiGenerated).map((x) => nodeSlug(x))
+      let backfill: MixedNiche | null = null
+      setBackfilling(true)
+      try {
+        const res = await replaceNiche({
+          pickedSlug: nodeSlug(n),
+          pickedLabel: n.label,
+          pickedCategory: n.category,
+          pickedScore: n.score,
+          pickedRationale: n.rationale,
+          pool: poolRef.current,
+          visibleSlugs,
+        })
+        backfill = res.backfill
+      } catch {
+        // Backend cũ chưa có /niches/replace — fallback: chỉ đánh dấu đã dùng
+        await markNicheUsed({
+          slug: nodeSlug(n),
+          label: n.label,
+          category: n.category,
+          score: n.score,
+          rationale: n.rationale,
+          source: 'scan',
+        })
+      } finally {
+        setBackfilling(false)
+      }
       setUsedNiches(await fetchUsedNiches())
+      setStep('human', { status: 'done', detail: `Đã chọn: ${n.label}` })
+      if (backfill) {
+        const node = toAiNode(backfill as AiNicheSuggestion, 0, 1)
+        if (node) {
+          if (typeof backfill.mixScore === 'number')
+            node.score = Math.max(0, Math.min(100, Math.round(backfill.mixScore)))
+          node.isBackfill = true
+          // Đặt cạnh ngách vừa chọn để thấy rõ sự thay thế
+          node.x = (n.x ?? 400) + 130
+          node.y = (n.y ?? 260) - 90
+          setNodes((prev) => [...prev, node])
+          setLinks((prev) => [...prev, { source: node.id, target: n.id, label: 'Thay thế' }])
+          setSelectedNode(node)
+        }
+      } else if (poolRef.current.length > 0) {
+        setScanError('Đã chọn ngách nhưng pool dự phòng đã cạn — hãy bấm "AI Quét Ngách Tối Ưu" để bổ sung.')
+      }
     } catch {
       setScanError('Không lưu được trạng thái đã dùng. Hãy thử lại.')
     } finally {
       setMarkingUsed(false)
     }
   }
+
+  /** Giữ tên cũ cho các chỗ gọi hiện tại — thực chất là chọn + backfill. */
+  const handleMarkUsed = handlePickNiche
 
   const handleUnmarkUsed = async (n: GraphNode) => {
     try {
@@ -477,19 +582,11 @@ export function InteractiveKnowledgeGraph() {
     }
   }
 
-  /** Click "Dùng Copilot tạo kịch bản" = chọn ngách → tự động đánh dấu đã dùng. */
+  /** Click "Dùng Copilot tạo kịch bản" = chọn ngách → đánh dấu đã dùng + backfill ngách mới. */
   const handleCopilotClick = (n: GraphNode | null) => {
     if (!n || isNodeUsed(n)) return
-    markNicheUsed({
-      slug: nodeSlug(n),
-      label: n.label,
-      category: n.category,
-      score: n.score,
-      rationale: n.rationale,
-      source: 'scan',
-    })
-      .then(() => fetchUsedNiches().then(setUsedNiches).catch(() => {}))
-      .catch(() => {})
+    // Không chặn điều hướng sang Copilot: chạy chọn + backfill nền
+    handlePickNiche(n).catch(() => {})
   }
 
   /** Ghi nhận kết quả dùng ngách — vòng kaizen cho lần trộn sau. */
@@ -603,6 +700,9 @@ export function InteractiveKnowledgeGraph() {
 
         const isFilteredOut = selectedCategory !== 'all' && node.category !== selectedCategory
         const isSelected = selectedNode?.id === node.id
+        // Ngách đã dùng: làm mờ — không còn là ưu tiên
+        const nodeUsed = usedSlugs.has(nodeSlug(node))
+        ctx.globalAlpha = nodeUsed ? 0.4 : 1
 
         // Node circle glow
         if (isSelected) {
@@ -627,6 +727,19 @@ export function InteractiveKnowledgeGraph() {
           ctx.fillText('✦ AI', node.x, node.y - node.val - 9)
         }
 
+        // Vòng tím cho node backfill — ngách mới thay thế ngách vừa chọn
+        if (node.isBackfill) {
+          ctx.beginPath()
+          ctx.arc(node.x, node.y, node.val + 9, 0, Math.PI * 2)
+          ctx.lineWidth = 2
+          ctx.strokeStyle = '#A78BFA'
+          ctx.stroke()
+          ctx.font = 'bold 9px Plus Jakarta Sans'
+          ctx.fillStyle = '#A78BFA'
+          ctx.textAlign = 'center'
+          ctx.fillText('MỚI', node.x, node.y - node.val - 22)
+        }
+
         ctx.beginPath()
         ctx.arc(node.x, node.y, node.val, 0, Math.PI * 2)
         ctx.fillStyle = isFilteredOut ? 'rgba(50, 60, 80, 0.4)' : node.color
@@ -640,6 +753,7 @@ export function InteractiveKnowledgeGraph() {
         ctx.fillStyle = isFilteredOut ? 'rgba(148, 163, 184, 0.4)' : '#FFFFFF'
         ctx.textAlign = 'center'
         ctx.fillText(node.label, node.x, node.y + node.val + 14)
+        ctx.globalAlpha = 1
       })
 
       ctx.restore()
@@ -777,6 +891,45 @@ export function InteractiveKnowledgeGraph() {
         </div>
       )}
 
+      {/* Trace vòng lặp Agent — giao thức nn-llm-agent-v1: bước + guard + human-in-the-loop */}
+      {scanSteps && (
+        <div className="mt-3 p-4 rounded-xl bg-dark-900/60 border border-brand-violet/25">
+          <p className="text-xs font-bold text-brand-violet mb-1 flex items-center gap-1.5">
+            <BrainCircuit className="w-3.5 h-3.5" /> VÒNG LẶP AGENT — QUÉT NGÁCH
+          </p>
+          <p className="text-[10px] text-slate-500 mb-3">
+            Guard: ≤{SCAN_MAX_CANDIDATES} ứng viên/lần quét · timeout {SCAN_TIMEOUT_MS / 60000} phút ·
+            hành động "ghi" (đánh dấu đã dùng) luôn cần bạn bấm nút duyệt
+          </p>
+          <ol className="space-y-1.5">
+            {scanSteps.map((s, i) => (
+              <li key={s.id} className="flex items-start gap-2.5 text-xs">
+                <span
+                  className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                    s.status === 'done'
+                      ? 'bg-brand-emerald/20 text-brand-emerald'
+                      : s.status === 'running'
+                        ? 'bg-brand-violet/20 text-brand-violet'
+                        : s.status === 'error'
+                          ? 'bg-red-500/20 text-red-400'
+                          : 'bg-white/5 text-slate-500'
+                  }`}
+                >
+                  {s.status === 'done' ? '✓' : s.status === 'running' ? <Loader2 className="w-3 h-3 animate-spin" /> : s.status === 'error' ? '!' : i + 1}
+                </span>
+                <div className="min-w-0">
+                  <p className={`font-semibold ${s.status === 'pending' ? 'text-slate-500' : 'text-slate-200'}`}>
+                    {s.label}
+                    {s.detail && <span className="ml-2 font-normal text-slate-400">— {s.detail}</span>}
+                  </p>
+                  <p className="text-[10px] text-slate-500">{s.hint}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
       {/* Bảng xếp hạng ngách AI đề xuất */}
       {aiNodes.length > 0 && (
         <div className="mt-4 p-4 rounded-xl bg-dark-900/60 border border-brand-emerald/20">
@@ -794,7 +947,19 @@ export function InteractiveKnowledgeGraph() {
                   <span className="text-xs font-bold text-white truncate">
                     #{i + 1} {n.label}
                   </span>
-                  <span className="text-xs font-extrabold text-brand-emerald shrink-0">{n.score}/100</span>
+                  <span className="flex items-center gap-1.5 shrink-0">
+                    {n.isBackfill && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-brand-violet/20 text-brand-violet border border-brand-violet/40">
+                        MỚI
+                      </span>
+                    )}
+                    {isNodeUsed(n) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-slate-500/20 text-slate-400 border border-slate-500/40">
+                        ĐÃ DÙNG
+                      </span>
+                    )}
+                    <span className="text-xs font-extrabold text-brand-emerald">{n.score}/100</span>
+                  </span>
                 </div>
                 <div className="h-1.5 mt-2 rounded-full bg-white/10 overflow-hidden">
                   <div
