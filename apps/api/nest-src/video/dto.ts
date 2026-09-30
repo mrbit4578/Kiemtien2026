@@ -265,3 +265,50 @@ export class CreateVideoAiEntryDto {
   @IsIn(['none', 'obtained', 'na'])
   consentStatus?: string
 }
+
+/** POST /video/projects/from-preset — tạo project từ preset shot-list có sẵn. */
+export class CreateProjectFromPresetDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(60)
+  presetId!: string
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(160)
+  title?: string
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  series?: string
+
+  /** Bối cảnh lô đất (tiếng Anh, dùng trong prompt). */
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  boiCanh!: string
+
+  /** Vật neo — nghịch lý không gian, giữ nguyên suốt video. */
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  vatNeo!: string
+
+  /** Phong cách công trình hoàn chỉnh. */
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  kienTruc!: string
+
+  /** 1–2 từ cảm xúc overlay. Mặc định "Nể phục". */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  chu?: string
+
+  @IsOptional()
+  @IsIn(['short', 'long'])
+  duration?: 'short' | 'long'
+}

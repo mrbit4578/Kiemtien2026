@@ -159,3 +159,31 @@ tạo project trống. Một lần bấm sẽ chạy **auto-build** server-side
 
 Frontend hiển thị tiến trình theo từng chặng trong lúc chờ. G0 FAIL hoặc claim
 bị chặn sẽ báo rõ lý do để user điều chỉnh nội dung nguồn rồi bấm lại.
+
+## Phần 5 — Preset shot-list: Timelapse công trình (2026-09-28)
+
+Từ phân tích video viral 1.3M views (@constructionandrestaura), hệ thống có thêm
+**preset dựng sẵn**: 30 keyframe timelapse xây dựng (before → after, 1 góc camera
+khóa cứng, 0 cú cắt), chia 8 pha theo tỉ lệ % thời lượng.
+
+**Cách dùng (người dùng cuối):** Video Faceless → Dự án mới → chọn preset
+"Timelapse công trình (Nể phục)" → điền 4 ô (Bối cảnh / Vật neo / Kiến trúc /
+Chữ overlay) + chọn thời lượng (45–60s hoặc 5 phút) → Tạo dự án.
+
+**Server tự động** (`POST /video/projects/from-preset`):
+1. Render shot-list theo 4 biến bối cảnh → nạp vào **kịch bản** (mỗi shot: pha,
+   mô tả thay đổi, prompt đầy đủ đã khóa camera).
+2. Điền **brief JSON** (preset, thời lượng, biến bối cảnh).
+3. Điền **publish notes**: âm thanh (−35~−45 dBFS, không voice-over), overlay,
+   vùng an toàn TikTok, 5 luật sắt.
+4. Ghi **AI register A3** — toàn bộ keyframe là hình ảnh AI chân thực →
+   `labelRequired: true`, bắt buộc gắn nhãn AI khi đăng (TikTok 2026).
+
+**Endpoints:** `GET /video/presets`, `GET /video/presets/:presetId`,
+`POST /video/projects/from-preset`.
+
+**Mã nguồn:** `apps/api/nest-src/video/presets/timelapse-construction.ts`
+(preset + hàm render), `apps/api/nest-src/video/presets/index.ts` (registry —
+thêm preset mới chỉ cần import + push vào mảng).
+
+Hướng dẫn dựng chi tiết: `docs/timelapse-construction-shotlist.md`.
