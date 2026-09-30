@@ -64,12 +64,27 @@ function dataUrl(mime: string, b64: string): string {
 export function VideoGenStudio({
   onBack,
   onCreatedProject,
+  initialProvider,
+  projectId,
 }: {
   onBack: () => void
   onCreatedProject?: (id: string) => void
+  /** Provider được mapping từ Knowledge Graph → Copilot (qua URL ?provider=) */
+  initialProvider?: string | null
+  /** Dự án đã tạo bởi auto-build (từ Copilot) — nút pipeline sẽ mở nó thay vì tạo mới */
+  projectId?: string | null
 }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
-  const [providerSel, setProviderSel] = useState('auto')
+  const [providerSel, setProviderSel] = useState(initialProvider || 'auto')
+
+  // Provider từ URL không còn kết nối → rớt về auto
+  useEffect(() => {
+    if (providers.length === 0 || providerSel === 'auto') return
+    if (!providers.some((p) => p.connected && p.id === providerSel)) {
+      setProviderSel('auto')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providers])
 
   const [topic, setTopic] = useState('')
   const [duration, setDuration] = useState(45)
@@ -322,6 +337,11 @@ export function VideoGenStudio({
 
   const createProjectFromResult = async () => {
     if (!resultUrl) return
+    // Đã có dự án từ auto-build (luồng Copilot) → mở nó, không tạo trùng
+    if (projectId) {
+      onCreatedProject?.(projectId)
+      return
+    }
     try {
       const p = await api.post<{ id: string }>('/video/projects', {
         title: title || topic || 'Video từ Studio',
@@ -405,6 +425,9 @@ export function VideoGenStudio({
                   </option>
                 ))}
             </select>
+            {initialProvider && providerSel === initialProvider && (
+              <p className="text-[11px] text-brand-emerald mt-1">↳ Key được mapping từ Knowledge Graph</p>
+            )}
           </div>
           <div className="text-[11px] text-slate-500 self-end leading-relaxed">
             🖼️🎙️🎬 Ảnh / giọng / clip AI cần <b className="text-slate-300">Gemini</b> hoặc{' '}
@@ -697,7 +720,7 @@ export function VideoGenStudio({
                     <Download className="w-4 h-4" /> Tải video
                   </a>
                   <button onClick={createProjectFromResult} className={btnGhost}>
-                    Đưa vào pipeline Video Faceless
+                    {projectId ? 'Mở pipeline dự án' : 'Đưa vào pipeline Video Faceless'}
                   </button>
                 </div>
                 <p className="text-[11px] text-slate-500">

@@ -274,7 +274,12 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
         providerId: providerId || undefined,
         model: model || undefined,
       })
-      router.push(`/video-faceless?project=${res.projectId}`)
+      // Mapping sang Video Faceless: tạo dự án mới + mở thẳng Studio tạo video,
+      // mang theo provider đang chọn (từ Knowledge Graph → Copilot) để Studio
+      // dùng đúng key đó chạy tạo video.
+      const qs = new URLSearchParams({ project: res.projectId, studio: '1' })
+      if (providerId) qs.set('provider', providerId)
+      router.push(`/video-faceless?${qs.toString()}`)
     } catch (err) {
       setMapError(err instanceof ApiError ? err.message : 'Tạo dự án video thất bại.')
       setMapping(false)

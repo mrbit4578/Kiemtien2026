@@ -95,19 +95,38 @@ export default function VideoFacelessPage() {
 function VideoFacelessInner() {
   const searchParams = useSearchParams()
   const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('project'))
-  const [studio, setStudio] = useState(false)
-  if (selectedId) return <ProjectDetail id={selectedId} onBack={() => setSelectedId(null)} />
+  // Mở thẳng Studio (từ AI Copilot "Tạo Video Faceless"): ?studio=1&provider=...
+  const [studio, setStudio] = useState(() => searchParams.get('studio') === '1')
+  const [studioProvider, setStudioProvider] = useState<string | null>(() =>
+    searchParams.get('provider'),
+  )
+  if (selectedId && !studio)
+    return <ProjectDetail id={selectedId} onBack={() => setSelectedId(null)} />
   if (studio)
     return (
       <VideoGenStudio
-        onBack={() => setStudio(false)}
+        initialProvider={studioProvider}
+        projectId={selectedId}
+        onBack={() => {
+          setStudio(false)
+          setStudioProvider(null)
+        }}
         onCreatedProject={(id) => {
           setStudio(false)
+          setStudioProvider(null)
           setSelectedId(id)
         }}
       />
     )
-  return <ProjectList onSelect={setSelectedId} onStudio={() => setStudio(true)} />
+  return (
+    <ProjectList
+      onSelect={setSelectedId}
+      onStudio={() => {
+        setStudioProvider(null)
+        setStudio(true)
+      }}
+    />
+  )
 }
 
 /* ─── Danh sách dự án ─── */
