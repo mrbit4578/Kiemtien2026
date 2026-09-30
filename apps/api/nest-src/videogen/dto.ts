@@ -1,6 +1,6 @@
 import { IsString, IsOptional, IsInt, Min, Max, IsIn, MaxLength } from 'class-validator'
 
-const PROVIDERS = ['gemini', 'openai', 'xai', 'anthropic', 'deepseek', 'experientiallabs', 'apmix'] as const
+const PROVIDERS = ['gemini', 'openai', 'xai', 'anthropic', 'deepseek', 'experientiallabs', 'apmix', 'muse'] as const
 
 export class ScriptDto {
   /** Chủ đề video */
