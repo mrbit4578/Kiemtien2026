@@ -107,17 +107,57 @@ export class NicheService {
   /**
    * Trộn + lọc danh sách ngách AI đề xuất:
    * loại cứng ngách đã dùng, loại mềm paraphrase, chấm điểm đa tiêu chí,
-   * MMR chọn top K đa dạng.
+   * MMR chọn top K đa dạng + topicCap ép phủ nhiều nhóm chủ đề.
    */
   async mix(
     workspaceId: string,
     candidates: Array<{ id?: string; label: string; score?: number; category?: string; rationale?: string }>,
-    k = 5,
+    opts: { k?: number; lambda?: number; topicCap?: number } = {},
   ): Promise<MixResult> {
     const [used, signals] = await Promise.all([
       this.listUsed(workspaceId),
       this.categorySignals(workspaceId),
     ])
-    return mixNiches(candidates, { used, signals, options: { k } })
+    return mixNiches(candidates, {
+      used,
+      signals,
+      options: {
+        k: opts.k ?? 5,
+        lambda: opts.lambda ?? 0.7,
+        topicCap: opts.topicCap ?? 2,
+      },
+    })
+  }
+
+  /**
+   * Thay thế ngách vừa được chọn: đánh dấu đã dùng (không bao giờ đề xuất lại),
+   * rồi chọn 1 ngách backfill tốt nhất từ pool dự phòng — loại trừ ngách đã dùng
+   * và các ngách đang hiển thị trên graph. Graph luôn được bổ sung đầy.
+   * Trả về null khi pool đã cạn (frontend sẽ gợi ý quét bổ sung).
+   */
+  async replace(
+    workspaceId: string,
+    picked: { slug: string; label: string; category?: string; score?: number; rationale?: string },
+    pool: Array<{ id?: string; label: string; score?: number; category?: string; rationale?: string }>,
+    visibleSlugs: string[],
+  ): Promise<{ backfill: MixResult['picked'][number] | null; rejectedCount: number }> {
+    await this.markUsed(workspaceId, {
+      slug: picked.slug,
+      label: picked.label,
+      category: picked.category ?? 'niche',
+      score: picked.score,
+      rationale: picked.rationale,
+      source: 'scan',
+    })
+    const [used, signals] = await Promise.all([
+      this.listUsed(workspaceId),
+      this.categorySignals(workspaceId),
+    ])
+    const { picked: backfills, rejected } = mixNiches(pool, {
+      used,
+      signals,
+      options: { k: 1, lambda: 0.55, topicCap: 2, excludeSlugs: visibleSlugs },
+    })
+    return { backfill: backfills[0] ?? null, rejectedCount: rejected.length }
   }
 }

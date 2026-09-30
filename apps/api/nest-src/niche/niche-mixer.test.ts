@@ -151,3 +151,61 @@ describe('mmrSelect', () => {
     assert.equal(new Set(picked.map((p) => p.id)).size, 2)
   })
 })
+
+describe('topicCap — ép phủ nhiều nhóm chủ đề', () => {
+  it('mỗi nhóm chủ đề tối đa topicCap ngách trong picked', () => {
+    const candidates: NicheCandidate[] = [
+      { id: 'a1', label: 'Ngách: Tool AI Viết Content', score: 95 },
+      { id: 'a2', label: 'Ngách: Phần Mềm Quản Lý Kho', score: 94 },
+      { id: 'a3', label: 'Ngách: Template Notion Bán Hàng', score: 93 },
+      { id: 'b1', label: 'Ngách: Khóa Học Nấu Ăn', score: 70 },
+      { id: 'b2', label: 'Ngách: Ebook Dạy Tiếng Anh', score: 69 },
+    ]
+    const { picked } = mixNiches(candidates, { used: [], options: { k: 4, lambda: 1, topicCap: 2 } })
+    const counts: Record<string, number> = {}
+    for (const p of picked) {
+      const t = inferTopic(p.label)
+      counts[t] = (counts[t] ?? 0) + 1
+    }
+    for (const n of Object.values(counts)) assert.ok(n <= 2, `vượt cap: ${JSON.stringify(counts)}`)
+    // nhóm cong-nghe có 3 ứng viên điểm cao nhưng chỉ được lấy tối đa 2
+    assert.ok((counts['cong-nghe'] ?? 0) <= 2)
+    assert.equal(picked.length, 4)
+  })
+
+  it('nới lỏng cap khi không đủ ứng viên để đạt k', () => {
+    const candidates: NicheCandidate[] = [
+      { id: 'a1', label: 'Ngách: Tool AI Viết Content', score: 90 },
+      { id: 'a2', label: 'Ngách: Phần Mềm Quản Lý Kho', score: 89 },
+      { id: 'a3', label: 'Ngách: Template Notion Bán Hàng', score: 88 },
+    ]
+    const { picked } = mixNiches(candidates, { used: [], options: { k: 3, lambda: 1, topicCap: 1 } })
+    assert.equal(picked.length, 3, 'vẫn đủ k nhờ nới lỏng')
+  })
+})
+
+describe('excludeSlugs — backfill không trùng ngách đang hiển thị', () => {
+  it('loại slug đang hiển thị với reason excluded', () => {
+    const candidates: NicheCandidate[] = [
+      { id: 'v1', label: 'Ngách: Tool AI Viết Content', score: 95 },
+      { id: 'n1', label: 'Ngách: Trồng Rau Thủy Canh', score: 80 },
+    ]
+    const { picked, rejected } = mixNiches(candidates, {
+      used: [],
+      options: { k: 1, excludeSlugs: ['v1'] },
+    })
+    assert.equal(picked.length, 1)
+    assert.equal(picked[0].id, 'n1')
+    assert.ok(rejected.some((r) => r.reason === 'excluded'), 'phải có rejected reason=excluded')
+  })
+
+  it('ngách đã dùng vẫn bị loại cứng ngay cả khi backfill', () => {
+    const used = [{ slug: 'cu_lam_dep', label: 'Ngách: Cụ Làm Đẹp' }]
+    const candidates: NicheCandidate[] = [
+      { id: 'cu_lam_dep', label: 'Ngách: Cụ Làm Đẹp', score: 99 },
+      { id: 'n1', label: 'Ngách: Trồng Rau Thủy Canh', score: 80 },
+    ]
+    const { picked } = mixNiches(candidates, { used, options: { k: 1, excludeSlugs: [] } })
+    assert.equal(picked[0].id, 'n1')
+  })
+})

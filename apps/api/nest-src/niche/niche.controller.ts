@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, Session, HttpCode } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import { NicheService } from './niche.service'
-import { MarkNicheUsedDto, NicheFeedbackDto, MixNichesDto } from './dto'
+import { MarkNicheUsedDto, NicheFeedbackDto, MixNichesDto, ReplaceNicheDto } from './dto'
 import { requireWorkspaceId } from '../common/session'
 
 /**
@@ -12,6 +12,7 @@ import { requireWorkspaceId } from '../common/session'
  * PATCH  /niches/used/:slug → ghi nhận kết quả (kaizen)
  * DELETE /niches/used/:slug → bỏ đánh dấu
  * POST   /niches/mix         → trộn + lọc danh sách AI đề xuất
+ * POST   /niches/replace     → đánh dấu đã dùng + bổ sung 1 ngách mới tốt nhất
  */
 @Controller('niches')
 export class NicheController {
@@ -51,6 +52,33 @@ export class NicheController {
   @HttpCode(200)
   mix(@Body() dto: MixNichesDto, @Session() session: any) {
     const workspaceId = requireWorkspaceId(session)
-    return this.nicheService.mix(workspaceId, dto.candidates, dto.k ?? 5)
+    return this.nicheService.mix(workspaceId, dto.candidates, {
+      k: dto.k ?? 5,
+      lambda: dto.lambda ?? 0.7,
+      topicCap: dto.topicCap ?? 2,
+    })
+  }
+
+  /**
+   * POST /niches/replace — ngách được chọn thì đánh dấu đã dùng (không còn
+   * là ưu tiên) và bổ sung ngay 1 ngách mới tốt nhất từ pool dự phòng.
+   */
+  @Post('replace')
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @HttpCode(200)
+  replace(@Body() dto: ReplaceNicheDto, @Session() session: any) {
+    const workspaceId = requireWorkspaceId(session)
+    return this.nicheService.replace(
+      workspaceId,
+      {
+        slug: dto.pickedSlug,
+        label: dto.pickedLabel,
+        category: dto.pickedCategory,
+        score: dto.pickedScore,
+        rationale: dto.pickedRationale,
+      },
+      dto.pool,
+      dto.visibleSlugs,
+    )
   }
 }

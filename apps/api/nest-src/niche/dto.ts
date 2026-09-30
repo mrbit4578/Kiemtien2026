@@ -1,4 +1,4 @@
-import { IsString, IsInt, IsOptional, IsIn, Min, Max, IsArray, ValidateNested } from 'class-validator'
+import { IsString, IsInt, IsNumber, IsOptional, IsIn, Min, Max, IsArray, ValidateNested } from 'class-validator'
 import { Type } from 'class-transformer'
 
 /** Đánh dấu một ngách đã được chọn/dùng — từ đó không bao giờ đề xuất lại. */
@@ -100,7 +100,55 @@ export class MixNichesDto {
 
   @IsInt()
   @Min(1)
-  @Max(20)
+  @Max(24)
   @IsOptional()
   k?: number
+
+  /** Cân bằng MMR: 1 = chỉ điểm cao, 0 = chỉ đa dạng. Mặc định 0.7. */
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  @IsOptional()
+  lambda?: number
+
+  /** Số ngách tối đa mỗi nhóm chủ đề trong picked. Mặc định 2. */
+  @IsInt()
+  @Min(1)
+  @Max(6)
+  @IsOptional()
+  topicCap?: number
+}
+
+/** Thay thế ngách vừa chọn: đánh dấu đã dùng + lấy 1 ngách backfill tốt nhất. */
+export class ReplaceNicheDto {
+  @IsString()
+  pickedSlug!: string
+
+  @IsString()
+  pickedLabel!: string
+
+  @IsString()
+  @IsOptional()
+  pickedCategory?: string
+
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  pickedScore?: number
+
+  @IsString()
+  @IsOptional()
+  pickedRationale?: string
+
+  /** Pool ứng viên dự phòng (kết quả AI của lần quét gần nhất). */
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MixCandidateDto)
+  pool!: MixCandidateDto[]
+
+  /** Slug các ngách đang hiển thị trên graph — backfill không được trùng. */
+  @IsArray()
+  @IsString({ each: true })
+  visibleSlugs!: string[]
 }
