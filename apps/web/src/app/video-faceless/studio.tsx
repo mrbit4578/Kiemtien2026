@@ -69,6 +69,7 @@ export function VideoGenStudio({
   backLabel,
   initialTopic,
   initialTitle,
+  sourceScript,
 }: {
   onBack: () => void
   onCreatedProject?: (id: string) => void
