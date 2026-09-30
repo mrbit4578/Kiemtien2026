@@ -20,12 +20,14 @@ import { composeVideo } from '../../lib/video-compositor'
 
 /* ─── Types ─── */
 
+type Capability = 'chat' | 'image' | 'voice' | 'video'
+
 interface ProviderInfo {
   id: string
   name: string
   connected: boolean
   keyHint: string | null
-  capabilities: Array<'chat' | 'image' | 'voice' | 'video'>
+  capabilities: Array<Capability>
 }
 
 interface GenScene {
@@ -132,7 +134,7 @@ export function VideoGenStudio({
   }, [chatProvider, imageProvider, voiceProvider, clipProvider])
 
   // Provider đã chọn nhưng không còn kết nối / không đủ capability → rớt về auto
-  const capOk = (id: string, cap: string) =>
+  const capOk = (id: string, cap: Capability) =>
     id === 'auto' || providers.some((p) => p.connected && p.id === id && p.capabilities.includes(cap))
   useEffect(() => {
     if (providers.length === 0) return
