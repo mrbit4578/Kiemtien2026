@@ -235,6 +235,7 @@ model VideoProject {
   riskScore      Int?
   riskBreakdown  String?  @db.Text // JSON {c,p,l,a,m,h}
   gatesJson      String?  @db.Text // JSON {G1:{pass,note},...}
+  complianceJson String?  @db.Text // JSON checklist xuất bản: {aiLabel:{required,applied},commercialDisclosure:{required,applied},musicRights:{status,note}} — playbook chương 09
   contentItemId  String?  // link sang ContentItem khi gửi sang Content Studio
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -243,6 +244,7 @@ model VideoProject {
   assets    VideoAsset[]
   claims    VideoClaim[]
   aiEntries VideoAiEntry[]
+  economics VideoEconomics?
 
   @@index([workspaceId, updatedAt])
   @@map("video_projects")
@@ -269,6 +271,9 @@ model VideoAsset {
 }
 
 // Claim ledger: mỗi claim có thể kiểm chứng một dòng.
+// Playbook mmo-ai-tiktok-roadmap-v1 chương 06: bảng "phát biểu → nguồn →
+// đoạn căn cứ → hình minh họa". Claim thiếu căn cứ (unverified) bắt buộc
+// ghi "CHƯA XÁC MINH" trong kịch bản — kiểm tra bằng validateClaimMarkers().
 model VideoClaim {
   id              String   @id @default(cuid())
   projectId       String
@@ -277,6 +282,9 @@ model VideoClaim {
   riskLevel       String   // low|medium|high|critical
   primarySource   String?  @db.Text
   secondarySource String?  @db.Text
+  evidenceExcerpt String?  @db.Text // đoạn căn cứ: trích dẫn cụ thể từ nguồn hỗ trợ phát biểu
+  sceneRef        String?  // cảnh minh họa liên quan, VD "00:14–00:23"
+  scriptCode      String?  // mã nguồn trong kịch bản, VD "[C1]" — để đối chiếu câu ↔ nguồn
   confidence      String   // confirmed|probable|disputed|unverified
   status          String   @default("open") // open|corrected|withdrawn
   createdAt       DateTime @default(now())
@@ -479,4 +487,87 @@ model NichePick {
   @@unique([workspaceId, slug])
   @@index([workspaceId, status])
   @@map("niche_picks")
+}
+
+// ─── MMO playbook (mmo-ai-tiktok-roadmap-v1, chương 01/02) ──────────
+// Bảng ghi bằng chứng ngách: mỗi dòng là một câu hỏi/thông tin THẬT thu
+// thập được. Tách rõ "người xem hỏi" (questionText/url/metricSeen) và
+// "AI suy ra" (metricNotProven/contentIdea/checkResult).
+model NicheEvidence {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  nicheSlug       String   // slug ngách (normalizeSlug) — gom bằng chứng theo ngách
+  collectedAt     DateTime @default(now()) // ngày thu thập
+  market          String?  // thị trường: VN | quốc tế
+  audience        String?  // nhóm người xem
+  questionText    String   @db.Text // câu hỏi nguyên văn
+  url             String?  // URL nguồn công khai
+  metricSeen      String?  // chỉ số nhìn thấy (VD "120k view")
+  metricNotProven String?  @db.Text // điều chỉ số đó CHƯA chứng minh
+  contentIdea     String?  @db.Text // ý tưởng nội dung từ bằng chứng
+  relatedOffer    String?  // sản phẩm/đề nghị mua liên quan
+  checkResult     String?  @db.Text // kết quả kiểm tra (nhu cầu/sản phẩm)
+  createdAt       DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, nicheSlug])
+  @@map("niche_evidence")
+}
+
+// ─── MMO playbook (chương 04): chọn cơ chế thu nhập TRƯỚC khi sản xuất ─
+// Mỗi ngách/dự án gắn một đề nghị mua đã kiểm chứng (không giả định nhu cầu).
+model MonetizationOffer {
+  id                 String   @id @default(cuid())
+  workspaceId        String
+  projectId          String?  // gắn dự án video (nếu có)
+  nicheSlug          String?  // hoặc gắn ngách
+  model              String   // tiktok_shop_affiliate|software_affiliate|digital_product|paid_content|ugc_sponsorship|creator_rewards
+  title              String   // tên đề nghị mua
+  commissionAmount   Int?     // hoa hồng/đơn (đơn vị tiền tệ nhỏ nhất)
+  commissionCurrency String   @default("VND")
+  payoutTerms        String?  @db.Text // kỳ quyết toán, điều kiện ghi công
+  verified           Boolean  @default(false) // đã xác minh: chương trình mở, quốc gia nhận tiền, kỳ trả
+  status             String   @default("candidate") // candidate|active|paused|dropped
+  note               String?  @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@map("monetization_offers")
+}
+
+// ─── MMO playbook (chương 05/09): đo lường hiệu quả từng video ───────
+// Mỗi video một mã số liệu: chi phí → phân phối → chuyển đổi → tiền về.
+// "Thụ động" được đo bằng giờ vận hành/đơn và lợi nhuận sau chi phí.
+model VideoEconomics {
+  id                 String   @id @default(cuid())
+  projectId          String   @unique
+  workspaceId        String
+  costCash           Int      @default(0) // chi phí tiền mặt (VND) cho 1 video được duyệt
+  hoursWorked        Float    @default(0) // số giờ vận hành
+  views              Int      @default(0)
+  watchTimeSec       Int?     // tổng thời gian xem (giây)
+  completionRate     Float?   // tỷ lệ xem hết 0..1
+  saves              Int      @default(0)
+  shares             Int      @default(0)
+  clicks             Int      @default(0) // lượt nhấp liên kết
+  orders             Int      @default(0) // đơn đặt
+  eligibleOrders     Int      @default(0) // đơn đủ điều kiện quyết toán
+  commissionReceived Int      @default(0) // hoa hồng THỰC NHẬN (VND) — lấy từ sổ quyết toán, không suy từ view
+  organic            Boolean  @default(true)
+  postedAt           DateTime?
+  utm                String?  // UTM campaign — hỗ trợ theo dõi, không thay ghi công TikTok Shop
+  note               String?  @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  project   VideoProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@map("video_economics")
 }

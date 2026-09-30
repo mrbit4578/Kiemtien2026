@@ -144,7 +144,7 @@ describe('mmrSelect', () => {
       id: `m${i}`,
       label: `Ngách: Lĩnh vực ${['A', 'B', 'C', 'D'][i]} hoàn toàn khác`,
       mixScore: s,
-      mixDetail: { base: s, novelty: 50, exploration: 50, feedbackBoost: 50 },
+      mixDetail: { base: s, novelty: 50, exploration: 50, feedbackBoost: 50, evidenceBoost: 0 },
     }))
     const picked = mmrSelect(scored, 2)
     assert.equal(picked.length, 2)
@@ -207,5 +207,51 @@ describe('excludeSlugs — backfill không trùng ngách đang hiển thị', ()
     ]
     const { picked } = mixNiches(candidates, { used, options: { k: 1, excludeSlugs: [] } })
     assert.equal(picked[0].id, 'n1')
+  })
+})
+
+describe('evidence bonus — playbook chương 01', () => {
+  const W = { base: 0.45, novelty: 0.25, exploration: 0.15, feedback: 0.05, evidence: 0.1 }
+
+  it('ngách có bằng chứng được cộng điểm, ngách không có thì không', () => {
+    const withEv = scoreCandidate(
+      { id: 'ngach_co_bang_chung', label: 'Ngách: AI Excel cho kho', score: 70 },
+      { used: [], evidenceScores: { ngach_co_bang_chung: 80 } },
+      W,
+    )
+    const withoutEv = scoreCandidate(
+      { id: 'ngach_moi', label: 'Ngách: AI Excel cho kho bãi', score: 70 },
+      { used: [], evidenceScores: {} },
+      W,
+    )
+    assert.equal(withEv.mixDetail.evidenceBoost, 8)
+    assert.equal(withoutEv.mixDetail.evidenceBoost, 0)
+    assert.ok(withEv.mixScore > withoutEv.mixScore)
+  })
+
+  it('mặc định (không truyền weights) evidence tắt — tương thích ngược', () => {
+    const r = scoreCandidate(
+      { id: 'x', label: 'Ngách: X', score: 70 },
+      { used: [], evidenceScores: { x: 100 } },
+    )
+    assert.equal(r.mixDetail.evidenceBoost, 0)
+  })
+
+  it('mixNiches truyền evidenceScores qua context', () => {
+    const { picked } = mixNiches(
+      [
+        { id: 'co_bang_chung', label: 'Ngách: Tool kho hàng', score: 60 },
+        { id: 'chua_co', label: 'Ngách: Tool nhà hàng', score: 60 },
+      ],
+      {
+        used: [],
+        evidenceScores: { co_bang_chung: 100 },
+        options: { k: 2, weights: W },
+      },
+    )
+    const first = picked.find((p) => p.id === 'co_bang_chung')!
+    assert.equal(first.mixDetail.evidenceBoost, 10)
+    // ngách có bằng chứng phải xếp trước khi các yếu tố khác ngang nhau
+    assert.equal(picked[0].id, 'co_bang_chung')
   })
 })

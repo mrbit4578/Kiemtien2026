@@ -152,3 +152,52 @@ export class ReplaceNicheDto {
   @IsString({ each: true })
   visibleSlugs!: string[]
 }
+
+/**
+ * Một dòng bằng chứng ngách (playbook chương 01/02): câu hỏi thật + URL/ngày,
+ * tách rõ "người xem hỏi" và "AI suy ra".
+ */
+export class CreateNicheEvidenceDto {
+  @IsString()
+  nicheSlug!: string
+
+  @IsString()
+  questionText!: string
+
+  @IsString()
+  @IsOptional()
+  market?: string
+
+  @IsString()
+  @IsOptional()
+  audience?: string
+
+  @IsString()
+  @IsOptional()
+  url?: string
+
+  @IsString()
+  @IsOptional()
+  metricSeen?: string
+
+  @IsString()
+  @IsOptional()
+  metricNotProven?: string
+
+  @IsString()
+  @IsOptional()
+  contentIdea?: string
+
+  @IsString()
+  @IsOptional()
+  relatedOffer?: string
+
+  @IsString()
+  @IsOptional()
+  checkResult?: string
+
+  /** Ngày thu thập (ISO). Mặc định = hiện tại. */
+  @IsString()
+  @IsOptional()
+  collectedAt?: string
+}

@@ -1,11 +1,11 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Session, HttpCode } from '@nestjs/common'
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Session, HttpCode } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import { NicheService } from './niche.service'
-import { MarkNicheUsedDto, NicheFeedbackDto, MixNichesDto, ReplaceNicheDto } from './dto'
+import { MarkNicheUsedDto, NicheFeedbackDto, MixNichesDto, ReplaceNicheDto, CreateNicheEvidenceDto } from './dto'
 import { requireWorkspaceId } from '../common/session'
 
 /**
- * Ngách đã dùng + thuật toán trộn.
+ * Ngách đã dùng + thuật toán trộn + bảng ghi bằng chứng (playbook chương 01/02).
  *
  * GET    /niches/used        → slugs/labels đã dùng (để loại trừ khi quét)
  * POST   /niches/used        → đánh dấu đã dùng (không bao giờ đề xuất lại)
@@ -13,6 +13,10 @@ import { requireWorkspaceId } from '../common/session'
  * DELETE /niches/used/:slug → bỏ đánh dấu
  * POST   /niches/mix         → trộn + lọc danh sách AI đề xuất
  * POST   /niches/replace     → đánh dấu đã dùng + bổ sung 1 ngách mới tốt nhất
+ * GET    /niches/evidence            → bảng ghi bằng chứng (?slug=…)
+ * POST   /niches/evidence            → thêm dòng bằng chứng
+ * DELETE /niches/evidence/:id        → xóa dòng bằng chứng
+ * GET    /niches/evidence-score      → điểm bằng chứng 30/25/20/15/10 (?slugs=a,b)
  */
 @Controller('niches')
 export class NicheController {
@@ -45,6 +49,34 @@ export class NicheController {
   unmark(@Param('slug') slug: string, @Session() session: any) {
     const workspaceId = requireWorkspaceId(session)
     return this.nicheService.unmark(workspaceId, slug)
+  }
+
+  // ─── Bảng ghi bằng chứng (playbook chương 01/02) ───
+
+  @Get('evidence')
+  listEvidence(@Query('slug') slug: string | undefined, @Session() session: any) {
+    const workspaceId = requireWorkspaceId(session)
+    return this.nicheService.listEvidence(workspaceId, slug)
+  }
+
+  @Post('evidence')
+  @HttpCode(200)
+  addEvidence(@Body() dto: CreateNicheEvidenceDto, @Session() session: any) {
+    const workspaceId = requireWorkspaceId(session)
+    return this.nicheService.addEvidence(workspaceId, dto)
+  }
+
+  @Delete('evidence/:id')
+  deleteEvidence(@Param('id') id: string, @Session() session: any) {
+    const workspaceId = requireWorkspaceId(session)
+    return this.nicheService.deleteEvidence(workspaceId, id)
+  }
+
+  @Get('evidence-score')
+  evidenceScore(@Query('slugs') slugs: string | undefined, @Session() session: any) {
+    const workspaceId = requireWorkspaceId(session)
+    const list = (slugs ?? '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 50)
+    return this.nicheService.evidenceScoreDetail(workspaceId, list)
   }
 
   @Post('mix')

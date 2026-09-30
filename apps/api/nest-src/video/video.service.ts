@@ -7,6 +7,12 @@ import { videoBriefTool, videoScriptTool } from '../agent/video-tools'
 import { GATE_IDS, VIDEO_STAGES } from './dto'
 import { getPresetById, listPresetSummaries } from './presets'
 import { renderShotList } from './presets/timelapse-construction'
+import { validateClaimMarkers, type ClaimCheckResult } from './claim-evidence'
+import {
+  SCRIPTWRITER_PROMPT_TEMPLATE,
+  SCRIPTWRITER_CHECKLIST,
+  renderScriptwriterPrompt,
+} from './scriptwriter-prompt'
 import type {
   AutoBuildVideoDto,
   CreateVideoProjectDto,
@@ -16,7 +22,20 @@ import type {
   CreateVideoAiEntryDto,
   RiskScoreDto,
   CreateProjectFromPresetDto,
+  SetComplianceDto,
 } from './dto'
+
+/** Checklist tuân thủ trước xuất bản (playbook chương 09). */
+export interface ComplianceState {
+  aiLabelRequired: boolean
+  aiLabelApplied: boolean
+  commercialDisclosureRequired: boolean
+  commercialDisclosureApplied: boolean
+  musicRights: 'cml' | 'licensed' | 'original' | 'unknown'
+  musicNote?: string
+}
+
+const MUSIC_RIGHTS = ['cml', 'licensed', 'original', 'unknown'] as const
 
 export interface RiskResult {
   score: number
@@ -97,7 +116,7 @@ export class VideoService {
   "hook": "câu hook mở đầu video (tự viết, không copy nguồn)",
   "body": "kịch bản đầy đủ: phân cảnh, lời thoại/voice-over, text trên màn hình, thời lượng từng đoạn",
   "caption": "caption đăng bài: 1 HOOK + 2-3 câu ngắn + 1 CTA (ghi 'link trong bio', KHÔNG dán URL trần) + 5-8 hashtag",
-  "claims": [{"text": "nội dung claim", "claim_type": "fact|interpretation|forecast|allegation|opinion", "risk_level": "low|medium|high|critical", "confidence": "confirmed|probable|disputed|unverified"}],
+  "claims": [{"text": "nội dung claim", "claim_type": "fact|interpretation|forecast|allegation|opinion", "risk_level": "low|medium|high|critical", "confidence": "confirmed|probable|disputed|unverified", "evidence": "đoạn căn cứ từ nguồn hỗ trợ phát biểu (nếu có)"}],
   "disclosure": {"affiliate": false, "sponsored": false, "ai_voice": false, "ai_visual": false, "music_source": ""},
   "risk": {"c": 0, "p": 0, "l": 0, "a": 0, "m": 0, "h": 0},
   "ai_voice_used": false
@@ -244,6 +263,7 @@ Nguyên tắc ràng buộc (bắt buộc tuân thủ):
     })
 
     // 6. Claim ledger: mỗi claim một dòng để kiểm chứng.
+    //    Playbook chương 06: gán mã nguồn [Cn] + đoạn căn cứ cho từng claim.
     const claimTypes = ['fact', 'interpretation', 'forecast', 'allegation', 'opinion']
     const riskLevels = ['low', 'medium', 'high', 'critical']
     const confidences = ['confirmed', 'probable', 'disputed', 'unverified']
@@ -251,13 +271,15 @@ Nguyên tắc ràng buộc (bắt buộc tuân thủ):
     for (const c of claims.slice(0, 20)) {
       const text = String(c?.['text'] ?? '').trim()
       if (!text) continue
+      claimCount++
       await this.addClaim(workspaceId, project.id, {
         claimText: text.slice(0, 2000),
         claimType: claimTypes.includes(c?.['claim_type']) ? c['claim_type'] : 'opinion',
         riskLevel: riskLevels.includes(c?.['risk_level']) ? c['risk_level'] : 'low',
         confidence: confidences.includes(c?.['confidence']) ? c['confidence'] : 'unverified',
+        scriptCode: `[C${claimCount}]`,
+        evidenceExcerpt: String(c?.['evidence'] ?? '').trim().slice(0, 2000) || undefined,
       } as CreateVideoClaimDto)
-      claimCount++
     }
 
     // 7. AI register: ghi nhận AI đã tham gia dựng kịch bản/caption (A1).
@@ -447,10 +469,77 @@ Nguyên tắc ràng buộc (bắt buộc tuân thủ):
     const riskyClaims = claims.filter(
       (c) => c.confidence === 'unverified' && ['high', 'critical'].includes(c.riskLevel) && c.status === 'open',
     )
+    // Checklist tuân thủ (playbook chương 09): nhãn AI, khai báo thương mại, quyền nhạc.
+    const compliance = await this.getCompliance(workspaceId, id)
+    const complianceBlockers: string[] = []
+    if (!compliance) {
+      complianceBlockers.push('Chưa khai báo checklist tuân thủ xuất bản (nhãn AI, khai báo thương mại, quyền nhạc).')
+    } else {
+      if (compliance.aiLabelRequired && !compliance.aiLabelApplied) {
+        complianceBlockers.push('Nội dung AI chân thực nhưng chưa gắn nhãn AI.')
+      }
+      if (compliance.commercialDisclosureRequired && !compliance.commercialDisclosureApplied) {
+        complianceBlockers.push('Nội dung quảng bá nhưng chưa khai báo thương mại.')
+      }
+      if (compliance.musicRights === 'unknown') {
+        complianceBlockers.push('Chưa xác định quyền sử dụng nhạc (khuyến nghị nhạc trong Commercial Music Library).')
+      }
+    }
     return {
-      ready: blocking.length === 0 && riskyClaims.length === 0,
+      ready: blocking.length === 0 && riskyClaims.length === 0 && complianceBlockers.length === 0,
       blockingAssets: blocking.map((a) => ({ id: a.id, name: a.name, status: a.status })),
       riskyClaims: riskyClaims.map((c) => ({ id: c.id, claimText: c.claimText.slice(0, 120) })),
+      complianceBlockers,
+      compliance,
+    }
+  }
+
+  // ─── Checklist tuân thủ xuất bản (playbook chương 09) ───
+
+  async setCompliance(workspaceId: string, id: string, dto: SetComplianceDto): Promise<ComplianceState> {
+    await this.requireProject(workspaceId, id)
+    const state: ComplianceState = {
+      aiLabelRequired: dto.aiLabelRequired,
+      aiLabelApplied: dto.aiLabelApplied,
+      commercialDisclosureRequired: dto.commercialDisclosureRequired,
+      commercialDisclosureApplied: dto.commercialDisclosureApplied,
+      musicRights: dto.musicRights as ComplianceState['musicRights'],
+      ...(dto.musicNote?.trim() ? { musicNote: dto.musicNote.trim() } : {}),
+    }
+    await this.prisma.videoProject.update({
+      where: { id },
+      data: { complianceJson: JSON.stringify(state) },
+    })
+    return state
+  }
+
+  async getCompliance(workspaceId: string, id: string): Promise<ComplianceState | null> {
+    const project = await this.requireProject(workspaceId, id)
+    if (!project.complianceJson) return null
+    try {
+      const s = JSON.parse(project.complianceJson)
+      if (typeof s !== 'object' || s === null) return null
+      if (!MUSIC_RIGHTS.includes(s.musicRights)) return null
+      return {
+        aiLabelRequired: !!s.aiLabelRequired,
+        aiLabelApplied: !!s.aiLabelApplied,
+        commercialDisclosureRequired: !!s.commercialDisclosureRequired,
+        commercialDisclosureApplied: !!s.commercialDisclosureApplied,
+        musicRights: s.musicRights,
+        ...(typeof s.musicNote === 'string' && s.musicNote ? { musicNote: s.musicNote } : {}),
+      }
+    } catch {
+      return null
+    }
+  }
+
+  // ─── Prompt biên kịch dùng lại (playbook chương 07) ───
+
+  getScriptwriterPrompt(vars: { audience?: string; question?: string; duration?: string }) {
+    return {
+      template: SCRIPTWRITER_PROMPT_TEMPLATE,
+      rendered: renderScriptwriterPrompt(vars),
+      checklist: [...SCRIPTWRITER_CHECKLIST],
     }
   }
 
@@ -466,10 +555,27 @@ Nguyên tắc ràng buộc (bắt buộc tuân thủ):
         riskLevel: dto.riskLevel,
         primarySource: dto.primarySource || null,
         secondarySource: dto.secondarySource || null,
+        evidenceExcerpt: dto.evidenceExcerpt || null,
+        sceneRef: dto.sceneRef?.trim() || null,
+        scriptCode: dto.scriptCode?.trim() || null,
         confidence: dto.confidence,
         status: dto.status ?? 'open',
       },
     })
+  }
+
+  /**
+   * Quét claim ledger theo quy tắc ghi nhãn (playbook chương 06/07):
+   * claim unverified đang mở → bắt buộc "CHƯA XÁC MINH" trong kịch bản;
+   * claim fact/interpretation thiếu nguồn lẫn đoạn căn cứ → bổ sung.
+   */
+  async claimCheck(workspaceId: string, projectId: string): Promise<ClaimCheckResult> {
+    await this.requireProject(workspaceId, projectId)
+    const claims = await this.prisma.videoClaim.findMany({
+      where: { projectId },
+      orderBy: { createdAt: 'asc' },
+    })
+    return validateClaimMarkers(claims)
   }
 
   async deleteClaim(workspaceId: string, projectId: string, claimId: string) {
