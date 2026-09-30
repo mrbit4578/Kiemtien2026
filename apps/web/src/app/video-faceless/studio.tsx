@@ -81,6 +81,8 @@ export function VideoGenStudio({
   /** Prefill chủ đề / tiêu đề từ dự án Video Faceless */
   initialTopic?: string
   initialTitle?: string
+  /** Kịch bản nguồn từ pipeline (đã duyệt) — mapping qua để AI bám sát viết scene */
+  sourceScript?: string
 }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   // Ưu tiên: provider từ URL (Knowledge Graph) → key đã chọn lần trước → auto
@@ -176,6 +178,7 @@ export function VideoGenStudio({
         topic: topic.trim(),
         duration,
         provider: providerSel === 'auto' ? undefined : providerSel,
+        sourceScript: sourceScript?.trim() || undefined,
       })
       setTitle(res.title)
       setScenes(
@@ -516,6 +519,11 @@ export function VideoGenStudio({
             </button>
           </div>
         </div>
+        {sourceScript?.trim() && (
+          <p className="text-[11px] text-brand-emerald mt-2">
+            ↳ Kịch bản nguồn từ pipeline đã được mapping — AI sẽ bám sát nội dung/góc đã duyệt để viết scene.
+          </p>
+        )}
 
         {scenes.length > 0 && (
           <div className="mt-4 space-y-3">

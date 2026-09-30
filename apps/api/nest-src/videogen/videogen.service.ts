@@ -196,6 +196,9 @@ export class VideogenService {
     const user =
       `Chủ đề: ${dto.topic}\n` +
       (dto.niche ? `Niche: ${dto.niche}\n` : '') +
+      (dto.sourceScript?.trim()
+        ? `KỊCH BẢN NGUỒN (đã duyệt từ pipeline Video Faceless — BÁM SÁT nội dung, góc nhìn, cấu trúc và các điểm chính của kịch bản này; chỉ chuyển thành lời thoại TTS tự nhiên + image_prompt tương ứng từng scene, KHÔNG bịa thêm luận điểm mới):\n${dto.sourceScript.trim().slice(0, 8000)}\n`
+        : '') +
       `Thời lượng: ${duration}s, ${nScenes} scene.`
 
     const { meta } = await this.resolveProvider(
@@ -244,7 +247,7 @@ export class VideogenService {
       workspaceId,
       'videogen_script',
       meta.id,
-      { model: res.model, scenes: scenes.length, topicLen: dto.topic.length },
+      { model: res.model, scenes: scenes.length, topicLen: dto.topic.length, sourceLen: dto.sourceScript?.length ?? 0 },
       ip,
     )
     return { provider: meta.id, model: res.model, title: String(data.title ?? dto.topic), scenes }

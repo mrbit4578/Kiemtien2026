@@ -22,6 +22,12 @@ export class ScriptDto {
   @IsString()
   @MaxLength(200)
   niche?: string
+
+  /** Kịch bản nguồn từ pipeline Video Faceless (đã duyệt) — AI bám sát để viết lại thành scene */
+  @IsOptional()
+  @IsString()
+  @MaxLength(8000)
+  sourceScript?: string
 }
 
 export class ImageDto {

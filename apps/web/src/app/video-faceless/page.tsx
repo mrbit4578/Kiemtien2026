@@ -505,6 +505,7 @@ function ProjectDetail({ id, onBack }: { id: string; onBack: () => void }) {
           projectId={project.id}
           initialTopic={project.title}
           initialTitle={project.title}
+          sourceScript={project.script || undefined}
           backLabel="Về tổng quan dự án"
           onBack={() => setTab('overview')}
           onCreatedProject={() => {
