@@ -86,8 +86,9 @@ export function VideoGenStudio({
   sourceScript?: string
 }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
-  // Ưu tiên: provider từ URL (Knowledge Graph) → key đã chọn lần trước → auto
-  const [providerSel, setProviderSel] = useState(() => {
+  // Key cho từng bước — tick chọn riêng, không mặc định cứng Gemini nữa.
+  // chat: provider từ URL (Knowledge Graph) → key đã chọn lần trước → auto
+  const [chatProvider, setChatProvider] = useState(() => {
     if (initialProvider) return initialProvider
     try {
       return localStorage.getItem('videogen-provider') || 'auto'
@@ -95,23 +96,53 @@ export function VideoGenStudio({
       return 'auto'
     }
   })
+  const [imageProvider, setImageProvider] = useState(() => {
+    try {
+      return localStorage.getItem('videogen-provider-image') || 'auto'
+    } catch {
+      return 'auto'
+    }
+  })
+  const [voiceProvider, setVoiceProvider] = useState(() => {
+    try {
+      return localStorage.getItem('videogen-provider-voice') || 'auto'
+    } catch {
+      return 'auto'
+    }
+  })
+  const [clipProvider, setClipProvider] = useState(() => {
+    try {
+      return localStorage.getItem('videogen-provider-clip') || 'auto'
+    } catch {
+      return 'auto'
+    }
+  })
   // Nhớ key đã chọn cho lần sau
   useEffect(() => {
     try {
-      localStorage.setItem('videogen-provider', providerSel)
+      localStorage.setItem('videogen-provider', chatProvider)
+      localStorage.setItem('videogen-provider-image', imageProvider)
+      localStorage.setItem('videogen-provider-voice', voiceProvider)
+      localStorage.setItem('videogen-provider-clip', clipProvider)
     } catch {
       /* bỏ qua */
     }
-  }, [providerSel])
+  }, [chatProvider, imageProvider, voiceProvider, clipProvider])
 
-  // Provider từ URL không còn kết nối → rớt về auto
+  // Provider đã chọn nhưng không còn kết nối / không đủ capability → rớt về auto
+  const capOk = (id: string, cap: string) =>
+    id === 'auto' || providers.some((p) => p.connected && p.id === id && p.capabilities.includes(cap))
   useEffect(() => {
-    if (providers.length === 0 || providerSel === 'auto') return
-    if (!providers.some((p) => p.connected && p.id === providerSel)) {
-      setProviderSel('auto')
-    }
+    if (providers.length === 0) return
+    if (!capOk(chatProvider, 'chat')) setChatProvider('auto')
+    if (!capOk(imageProvider, 'image')) setImageProvider('auto')
+    if (!capOk(voiceProvider, 'voice')) setVoiceProvider('auto')
+    if (!capOk(clipProvider, 'video')) setClipProvider('auto')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providers])
+
+  /** Giá trị gửi lên API: 'auto' → undefined (backend tự chọn/fallback) */
+  const provParam = (id: string) => (id === 'auto' ? undefined : id)
 
   const [topic, setTopic] = useState(initialTopic || '')
   const [duration, setDuration] = useState(45)
@@ -178,7 +209,7 @@ export function VideoGenStudio({
       }>('/videogen/script', {
         topic: topic.trim(),
         duration,
-        provider: providerSel === 'auto' ? undefined : providerSel,
+        provider: provParam(chatProvider),
         sourceScript: sourceScript?.trim() || undefined,
       })
       setTitle(res.title)
@@ -220,7 +251,7 @@ export function VideoGenStudio({
         {
           prompt: sc.imagePrompt,
           aspectRatio: '9:16',
-          provider: providerSel === 'auto' ? undefined : providerSel,
+          provider: provParam(imageProvider),
         },
       )
       updateScene(i, { imageDataUrl: res.url, imageLoading: false })
@@ -256,7 +287,7 @@ export function VideoGenStudio({
         text: sc.text,
         language: voiceLang,
         voice: voiceName.trim() || undefined,
-        provider: providerSel === 'auto' ? undefined : providerSel,
+        provider: provParam(voiceProvider),
       })
       updateScene(i, { audioUrl: dataUrl(res.mime, res.audioBase64), voiceLoading: false })
       return true
@@ -291,7 +322,7 @@ export function VideoGenStudio({
           imageDataUrl: sc.imageDataUrl ?? undefined,
           seconds: Math.min(8, Math.max(4, sc.seconds)),
           aspectRatio: '9:16',
-          provider: providerSel === 'auto' ? undefined : providerSel,
+          provider: provParam(clipProvider),
         },
       )
       updateScene(i, { clipJobId: start.jobId })
@@ -440,26 +471,70 @@ export function VideoGenStudio({
             </span>
           ))}
         </div>
-        <div className="grid md:grid-cols-2 gap-3 mt-3">
-          <div>
-            <label className={labelCls}>Ưu tiên provider cho mọi bước</label>
-            <select value={providerSel} onChange={(e) => setProviderSel(e.target.value)} className={inputCls}>
-              <option value="auto">Tự động (Gemini → OpenAI)</option>
-              {providers
-                .filter((p) => p.connected)
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-            </select>
-            {initialProvider && providerSel === initialProvider && (
-              <p className="text-[11px] text-brand-emerald mt-1">↳ Key được mapping từ Knowledge Graph</p>
-            )}
+        <div className="mt-3">
+          <p className={labelCls}>Key chạy từng bước (tick chọn — không mặc định cứng Gemini nữa)</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div>
+              <label className={labelCls}>✍️ Viết kịch bản</label>
+              <select value={chatProvider} onChange={(e) => setChatProvider(e.target.value)} className={inputCls}>
+                <option value="auto">Tự động</option>
+                {providers
+                  .filter((p) => p.connected)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+              </select>
+              {initialProvider && chatProvider === initialProvider && (
+                <p className="text-[11px] text-brand-emerald mt-1">↳ Key được mapping từ Knowledge Graph</p>
+              )}
+            </div>
+            <div>
+              <label className={labelCls}>🖼️ Sinh ảnh</label>
+              <select value={imageProvider} onChange={(e) => setImageProvider(e.target.value)} className={inputCls}>
+                <option value="auto">Tự động (Gemini → OpenAI)</option>
+                {providers
+                  .filter((p) => p.connected && p.capabilities.includes('image'))
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>🎙️ Giọng đọc</label>
+              <select value={voiceProvider} onChange={(e) => setVoiceProvider(e.target.value)} className={inputCls}>
+                <option value="auto">Tự động (Gemini → OpenAI)</option>
+                {providers
+                  .filter((p) => p.connected && p.capabilities.includes('voice'))
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>🎬 Clip AI</label>
+              <select value={clipProvider} onChange={(e) => setClipProvider(e.target.value)} className={inputCls}>
+                <option value="auto">Tự động (Gemini → OpenAI)</option>
+                {providers
+                  .filter((p) => p.connected && p.capabilities.includes('video'))
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
           </div>
-          <div className="text-[11px] text-slate-500 self-end leading-relaxed">
+          <div className="text-[11px] text-slate-500 leading-relaxed mt-3">
             🖼️🎙️🎬 Ảnh / giọng / clip AI cần <b className="text-slate-300">Gemini</b> hoặc{' '}
-            <b className="text-slate-300">OpenAI</b>. Viết kịch bản dùng được mọi key đã kết nối.
+            <b className="text-slate-300">OpenAI</b> — tick chọn key cho từng bước ở trên; để "Tự động"
+            thì hệ thống tự fallback sang key Gemini/OpenAI đã kết nối. Viết kịch bản dùng được mọi
+            key đã kết nối.
             {!canVideo && (
               <span className="block mt-1 text-brand-amber">
                 ⚠️ Chưa có key sinh clip AI (cần Gemini billing hoặc OpenAI credits) — vẫn dựng được video từ ảnh + Ken Burns.
