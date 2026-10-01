@@ -18,6 +18,10 @@ import {
 import { AiService } from '../ai/ai.service'
 import { getProviderMeta, type AiProviderId } from '../ai/ai.providers'
 import {
+  assertValidEmbeddingVector,
+  isSameEmbeddingSpace,
+} from '../ai/embedding-provenance'
+import {
   RAG_STRATEGY_META,
   type IngestJsonDto,
   type QueryDto,
@@ -167,16 +171,28 @@ export class RagService {
       // Lưu chunks (raw SQL — Prisma không map được cột vector)
       const ids = await this.insertChunksRaw(doc.id, workspaceId, all)
 
-      // Embed theo batch
+      // Embed theo batch — MỌI batch phải cùng embedding space (kaizen A01).
+      // Nếu provider/model đổi giữa chừng (vd key OpenAI hỏng → rớt sang Gemini),
+      // fail-closed: dừng ingest, tài liệu KHÔNG chuyển sang ready, tránh trộn vector.
+      let ingestSpace: string | null = null
       for (let i = 0; i < all.length; i += EMBED_BATCH) {
         const batch = all.slice(i, i + EMBED_BATCH)
-        const vectors = await this.aiService.embed(
+        const { vectors, provenance } = await this.aiService.embed(
           workspaceId,
           batch.map((b) => b.content),
           ip,
         )
+        if (ingestSpace === null) {
+          ingestSpace = provenance.space
+        } else if (!isSameEmbeddingSpace(ingestSpace, provenance.space)) {
+          throw new BadRequestException(
+            'Provider/model embedding đã đổi giữa chừng khi nạp tài liệu ' +
+              `(${ingestSpace} → ${provenance.space}). Đã dừng để tránh trộn vector khác namespace; ` +
+              'hãy nạp lại tài liệu khi key embedding đã ổn định.',
+          )
+        }
         await Promise.all(
-          batch.map((_, j) => this.updateEmbedding(ids[i + j], vectors[j])),
+          batch.map((_, j) => this.updateEmbedding(ids[i + j], vectors[j], provenance.space)),
         )
       }
 
@@ -195,7 +211,7 @@ export class RagService {
         entityType: 'document',
         targetId: doc.id,
         result: 'success',
-        metadata: { sourceType, chunks: all.length, title: title.slice(0, 80) },
+        metadata: { sourceType, chunks: all.length, title: title.slice(0, 80), embeddingSpace: ingestSpace },
         ip,
       })
 
@@ -583,9 +599,10 @@ export class RagService {
         return `Kho tri thức: ${docs} tài liệu sẵn sàng, ${chunks} đoạn văn.`
       }
       const q = String(args.query ?? query)
+      const { vector: qVector, space: qSpace } = await this.embedQuery(workspaceId, q)
       const found =
         tool === 'vector_search'
-          ? await this.denseSearch(workspaceId, (await this.embedQuery(workspaceId, q)), 6)
+          ? await this.denseSearch(workspaceId, qVector, qSpace, 6)
           : await this.sparseSearch(workspaceId, q, 6)
       for (const c of found) collected.set(c.id, c)
       if (found.length === 0) return 'Không tìm thấy đoạn nào.'
@@ -781,17 +798,29 @@ export class RagService {
 
   // ─── Retrieval nền tảng ───────────────────────────────────────────────────
 
-  private async embedQuery(workspaceId: string, query: string): Promise<number[]> {
-    const vectors = await this.aiService.embed(workspaceId, [query])
-    return vectors[0]
+  private async embedQuery(
+    workspaceId: string,
+    query: string,
+  ): Promise<{ vector: number[]; space: string }> {
+    const { vectors, provenance } = await this.aiService.embed(workspaceId, [query])
+    return { vector: vectors[0], space: provenance.space }
   }
 
-  /** Dense retrieval: cosine similarity qua pgvector. */
+  /**
+   * Dense retrieval: cosine similarity qua pgvector, CHỈ trong cùng embedding space
+   * (kaizen A01). Vector legacy (embeddingSpace NULL) bị loại khỏi dense — nhưng
+   * vẫn tìm được bằng sparse full-text.
+   */
   private async denseSearch(
     workspaceId: string,
     vector: number[],
+    space: string,
     limit: number,
   ): Promise<RetrievedChunk[]> {
+    // Fail-closed: không có namespace thì không đoán — thà không trả dense còn hơn trộn vector
+    if (!space) {
+      throw new BadRequestException('Thiếu embedding namespace cho dense search.')
+    }
     const literal = `[${vector.map((v) => v.toFixed(6)).join(',')}]`
     const rows = await this.prisma.$queryRawUnsafe<
       Array<{
@@ -807,11 +836,13 @@ export class RagService {
               1 - (c."embedding" <=> $1::vector) AS "score"
        FROM "chunks" c
        JOIN "documents" d ON d."id" = c."documentId"
-       WHERE c."workspaceId" = $2 AND c."embedding" IS NOT NULL AND d."status" = 'ready'
+       WHERE c."workspaceId" = $2 AND c."embeddingSpace" = $3
+         AND c."embedding" IS NOT NULL AND d."status" = 'ready'
        ORDER BY c."embedding" <=> $1::vector
-       LIMIT $3`,
+       LIMIT $4`,
       literal,
       workspaceId,
+      space,
       limit,
     )
     return rows.map((r) => ({ ...r, modality: r.modality as RetrievedChunk['modality'] }))
@@ -870,9 +901,9 @@ export class RagService {
     query: string,
     topK: number,
   ): Promise<RetrievedChunk[]> {
-    const vector = await this.embedQuery(workspaceId, query)
+    const { vector, space } = await this.embedQuery(workspaceId, query)
     const [dense, sparse] = await Promise.all([
-      this.denseSearch(workspaceId, vector, Math.max(topK * 2, 12)),
+      this.denseSearch(workspaceId, vector, space, Math.max(topK * 2, 12)),
       this.sparseSearch(workspaceId, query, Math.max(topK * 2, 12)),
     ])
     return this.rrf([dense, sparse], topK)
@@ -961,11 +992,18 @@ export class RagService {
     return ids
   }
 
-  private async updateEmbedding(id: string, vector: number[]): Promise<void> {
+  private async updateEmbedding(id: string, vector: number[], space: string): Promise<void> {
+    // Gate vector trước khi ghi (kaizen A01): vector hỏng không bao giờ vào DB
+    assertValidEmbeddingVector(vector)
+    if (!space) {
+      throw new BadRequestException('Thiếu embedding namespace khi lưu vector.')
+    }
     const literal = `[${vector.map((v) => v.toFixed(6)).join(',')}]`
+    // Ghi vector và namespace CÙNG 1 câu lệnh — không bao giờ lệch nhau
     await this.prisma.$executeRawUnsafe(
-      'UPDATE "chunks" SET "embedding" = $1::vector WHERE "id" = $2',
+      'UPDATE "chunks" SET "embedding" = $1::vector, "embeddingSpace" = $2 WHERE "id" = $3',
       literal,
+      space,
       id,
     )
   }

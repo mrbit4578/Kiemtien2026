@@ -75,6 +75,72 @@ function checkType(value: unknown, type: JsonSchemaProperty['type']): boolean {
 }
 
 /**
+ * Validate một giá trị theo schema property — ĐỆ QUY cho object/array lồng nhau
+ * (kaizen A02). Kiểm tra ở mọi cấp: required, additionalProperties, enum, kiểu,
+ * giới hạn chuỗi/số và min/maxItems. `path` dạng "clips[0].source" để dễ debug.
+ */
+function validatePropValue(
+  prop: JsonSchemaProperty,
+  value: unknown,
+  path: string,
+  issues: string[],
+): void {
+  if (!checkType(value, prop.type)) {
+    issues.push(`"${path}" phải là ${prop.type}`)
+    return
+  }
+  if (prop.enum && !prop.enum.includes(value as string | number | boolean)) {
+    issues.push(`"${path}" phải là một trong: ${prop.enum.join(', ')}`)
+  }
+  if (typeof value === 'string') {
+    if (prop.minLength !== undefined && value.length < prop.minLength) {
+      issues.push(`"${path}" quá ngắn (tối thiểu ${prop.minLength} ký tự)`)
+    }
+    if (prop.maxLength !== undefined && value.length > prop.maxLength) {
+      issues.push(`"${path}" quá dài (tối đa ${prop.maxLength} ký tự)`)
+    }
+  }
+  if (typeof value === 'number') {
+    if (prop.minimum !== undefined && value < prop.minimum) {
+      issues.push(`"${path}" phải >= ${prop.minimum}`)
+    }
+    if (prop.maximum !== undefined && value > prop.maximum) {
+      issues.push(`"${path}" phải <= ${prop.maximum}`)
+    }
+  }
+  if (prop.type === 'array' && Array.isArray(value)) {
+    if (prop.minItems !== undefined && value.length < prop.minItems) {
+      issues.push(`"${path}" quá ít phần tử (tối thiểu ${prop.minItems})`)
+    }
+    if (prop.maxItems !== undefined && value.length > prop.maxItems) {
+      issues.push(`"${path}" quá nhiều phần tử (tối đa ${prop.maxItems})`)
+    }
+    if (prop.items) {
+      value.forEach((item, i) => validatePropValue(prop.items!, item, `${path}[${i}]`, issues))
+    }
+  }
+  if (prop.type === 'object' && typeof value === 'object' && value !== null) {
+    const obj = value as Record<string, unknown>
+    const props = prop.properties ?? {}
+    for (const key of prop.required ?? []) {
+      if (!(key in obj) || obj[key] === undefined) {
+        issues.push(`thiếu trường bắt buộc "${path}.${key}"`)
+      }
+    }
+    if (prop.additionalProperties === false) {
+      for (const key of Object.keys(obj)) {
+        if (!(key in props)) issues.push(`trường không được phép "${path}.${key}"`)
+      }
+    }
+    for (const [key, sub] of Object.entries(props)) {
+      const v = obj[key]
+      if (v === undefined) continue
+      validatePropValue(sub, v, `${path}.${key}`, issues)
+    }
+  }
+}
+
+/**
  * Validate args theo JSON Schema (subset). Trả về args đã chuẩn hóa
  * (giữ nguyên object) hoặc ném ToolArgError liệt kê mọi lỗi.
  */
@@ -105,33 +171,7 @@ export function validateToolArgs(
   for (const [key, prop] of Object.entries(props)) {
     const value = obj[key]
     if (value === undefined) continue
-    if (!checkType(value, prop.type)) {
-      issues.push(`"${key}" phải là ${prop.type}`)
-      continue
-    }
-    if (prop.enum && !prop.enum.includes(value as string | number | boolean)) {
-      issues.push(`"${key}" phải là một trong: ${prop.enum.join(', ')}`)
-    }
-    if (typeof value === 'string') {
-      if (prop.minLength !== undefined && value.length < prop.minLength) {
-        issues.push(`"${key}" quá ngắn (tối thiểu ${prop.minLength} ký tự)`)
-      }
-      if (prop.maxLength !== undefined && value.length > prop.maxLength) {
-        issues.push(`"${key}" quá dài (tối đa ${prop.maxLength} ký tự)`)
-      }
-    }
-    if (typeof value === 'number') {
-      if (prop.minimum !== undefined && value < prop.minimum) {
-        issues.push(`"${key}" phải >= ${prop.minimum}`)
-      }
-      if (prop.maximum !== undefined && value > prop.maximum) {
-        issues.push(`"${key}" phải <= ${prop.maximum}`)
-      }
-    }
-    if (prop.type === 'array' && prop.items && Array.isArray(value)) {
-      const bad = value.findIndex((v) => !checkType(v, prop.items!.type))
-      if (bad !== -1) issues.push(`"${key}[${bad}]" phải là ${prop.items.type}`)
-    }
+    validatePropValue(prop, value, key, issues)
   }
 
   if (issues.length > 0) throw new ToolArgError(toolName, issues)
