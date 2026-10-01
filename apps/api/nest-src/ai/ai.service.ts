@@ -11,10 +11,19 @@ import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
 import { fetchTimeout } from '../common/safe-fetch'
 import { getProviderMeta, publicProviderMeta, type AiProviderMeta, type AiProviderId } from './ai.providers'
+import {
+  EMBEDDING_DIMS,
+  makeProvenance,
+  type EmbeddingProvenance,
+} from './embedding-provenance'
 import type { ConnectAiDto, ChatDto, ChatMessageDto } from './dto'
 
 const VALIDATE_TIMEOUT_MS = 10_000
 const CHAT_TIMEOUT_MS = 90_000
+
+/** Model embedding cho từng provider — đồng bộ với EMBEDDING_MODEL_BY_PROVIDER. */
+const OPENAI_EMBED_MODEL = 'text-embedding-3-small'
+const GEMINI_EMBED_MODEL = 'gemini-embedding-001'
 
 /**
  * Thứ tự ưu tiên khi tự động chuyển provider (combo key).
@@ -473,13 +482,22 @@ export class AiService {
   }
 
   /**
-   * Tạo embedding cho danh sách text. Luôn trả về vector 1536 chiều.
+   * Tạo embedding cho danh sách text. Luôn trả về vector 1536 chiều KÈM provenance
+   * (kaizen A01/A03) để caller ghi đúng embedding namespace, tránh trộn vector
+   * khác provider/model trong cùng workspace.
    * embedGemini tự chuẩn hoá mọi số chiều trả về (cắt ngắn nếu dài hơn,
    * zero-pad nếu ngắn hơn) nên tương thích với chunks đã lưu trước đây.
    */
-  async embed(workspaceId: string, texts: string[], ip?: string): Promise<number[][]> {
-    if (texts.length === 0) return []
+  async embed(
+    workspaceId: string,
+    texts: string[],
+    ip?: string,
+  ): Promise<{ vectors: number[][]; provenance: EmbeddingProvenance }> {
     const { meta, apiKey, dims } = await this.getEmbeddingKey(workspaceId)
+    // Model quyết định namespace — lấy đúng model đã gọi, không đoán
+    const model = meta.id === 'openai' ? OPENAI_EMBED_MODEL : GEMINI_EMBED_MODEL
+    const provenance = makeProvenance(meta.id, model, EMBEDDING_DIMS)
+    if (texts.length === 0) return { vectors: [], provenance }
 
     try {
       const raw: number[][] =
@@ -499,11 +517,11 @@ export class AiService {
         provider: meta.id,
         entityType: 'ai_connection',
         result: 'success',
-        // Chỉ metadata — không log nội dung text
-        metadata: { texts: texts.length, dims: 1536 },
+        // Chỉ metadata — không log nội dung text; space không chứa secret
+        metadata: { texts: texts.length, dims: 1536, model, space: provenance.space },
         ip,
       })
-      return vectors
+      return { vectors, provenance }
     } catch (err) {
       if (err instanceof HttpException) throw err
       throw new HttpException(
@@ -526,7 +544,7 @@ export class AiService {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model: 'text-embedding-3-small', input: texts }),
+        body: JSON.stringify({ model: OPENAI_EMBED_MODEL, input: texts }),
       },
       CHAT_TIMEOUT_MS,
     )
@@ -554,10 +572,10 @@ export class AiService {
     texts: string[],
   ): Promise<number[][]> {
     const url =
-      `${meta.baseUrl}/v1beta/models/gemini-embedding-001:batchEmbedContents?key=${encodeURIComponent(apiKey)}`
+      `${meta.baseUrl}/v1beta/models/${GEMINI_EMBED_MODEL}:batchEmbedContents?key=${encodeURIComponent(apiKey)}`
     const body = JSON.stringify({
       requests: texts.map((t) => ({
-        model: 'models/gemini-embedding-001',
+        model: `models/${GEMINI_EMBED_MODEL}`,
         content: { parts: [{ text: t }] },
         // Xin đúng 1536 dim (model hỗ trợ Matryoshka 128–3072).
         // Nếu API bỏ qua field này, đoạn chuẩn hoá bên dưới vẫn xử lý được.

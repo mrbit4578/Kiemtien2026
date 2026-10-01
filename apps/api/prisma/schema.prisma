@@ -353,6 +353,9 @@ model Chunk {
   tokenCount  Int?
   // Kiểu vector của pgvector — chỉ đọc/ghi qua raw SQL, KHÔNG qua Prisma Client.
   embedding   Unsupported("vector(1536)")?
+  // Namespace provenance của vector (kaizen A01/A03): "embedding-v1:<provider>:<model>:1536".
+  // NULL = vector legacy (loại khỏi dense search, vẫn tìm bằng sparse full-text).
+  embeddingSpace String?
   metadata    Json?
   createdAt   DateTime @default(now())
 
@@ -361,6 +364,7 @@ model Chunk {
   @@map("chunks")
   @@index([workspaceId])
   @@index([documentId])
+  @@index([workspaceId, embeddingSpace])
 }
 
 // Đồ thị tri thức (GraphRAG) — trích xuất best-effort lúc ingest
