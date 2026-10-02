@@ -400,7 +400,20 @@ async function runToolWithTimeout(
 /**
  * Chạy vòng lặp agent cho đến khi model trả lời thẳng (không gọi tool nữa)
  * hoặc chạm trần maxTurns.
+ *
+ * Tối ưu (kaizen 2026-10-02):
+ * - Turn cuối: chèn nudge yêu cầu model tổng hợp và trả lời ngay, không gọi
+ *   thêm tool — tránh kết thúc max_turns với câu trả lời rỗng/yếu.
+ * - Dedupe: cùng một turn mà model gọi trùng tool+args thì chỉ chạy một lần,
+ *   lần sau tái dùng kết quả (đỡ tốn thời gian và quota).
  */
+const FINAL_TURN_NUDGE: AgentMessage = {
+  role: 'user',
+  content:
+    'Đây là lượt cuối cùng của bạn. Hãy tổng hợp mọi thông tin đã thu thập ' +
+    'và trả lời final answer NGAY theo đúng định dạng yêu cầu — không gọi thêm tool nào nữa.',
+}
+
 export async function runAgent(
   opts: AgentRunOptions & { workspaceId: string },
 ): Promise<AgentRunResult> {
@@ -413,6 +426,7 @@ export async function runAgent(
   let lastText = ''
   for (let turn = 1; turn <= maxTurns; turn++) {
     opts.onEvent?.({ type: 'turn', turn })
+    if (turn === maxTurns && maxTurns > 1) history.push({ ...FINAL_TURN_NUDGE })
     const assistant = await opts.backend.send(history, opts.tools)
     lastText = assistant.text
 
@@ -422,8 +436,18 @@ export async function runAgent(
 
     history.push({ role: 'assistant', content: assistant.text, toolCalls: assistant.toolCalls })
 
+    const seenInTurn = new Map<string, ToolCallTrace>()
     for (const tc of assistant.toolCalls) {
       opts.onEvent?.({ type: 'tool_call', name: tc.name, args: tc.args })
+      const dedupeKey = `${tc.name}|${JSON.stringify(tc.args ?? {})}`
+      const dup = seenInTurn.get(dedupeKey)
+      if (dup) {
+        // Model gọi trùng — tái dùng kết quả, không chạy lại tool.
+        trace.push({ ...dup })
+        opts.onEvent?.({ type: 'tool_result', name: tc.name, ok: dup.ok, ms: 0 })
+        history.push({ role: 'tool', content: dup.output, toolCallId: tc.id, toolName: tc.name })
+        continue
+      }
       let ok = true
       let rawOutput: string
       let ms = 0
@@ -448,6 +472,7 @@ export async function runAgent(
       }
       const { output, truncated } = truncateOutput(rawOutput)
       trace.push({ name: tc.name, args: tc.args, ok, output, truncated, ms })
+      seenInTurn.set(dedupeKey, trace[trace.length - 1])
       opts.onEvent?.({ type: 'tool_result', name: tc.name, ok, ms })
       history.push({
         role: 'tool',
@@ -502,12 +527,21 @@ export function buildAgentSystemPrompt(toolNames: string[]): string {
     '',
     '## Cách dùng tools',
     '- Chỉ gọi tool khi thật sự cần thông tin mà bạn không có; gọi với args đúng định dạng; đọc kỹ kết quả rồi mới trả lời.',
-    '- web_search: trend mới, số liệu, giá cả, tin tức sau thời điểm training của bạn.',
-    '- fetch_url: đọc bài viết/bài viral mẫu để PHÂN TÍCH CẤU TRÚC (hook, nhịp, CTA) — học cấu trúc, không copy nội dung.',
+    '- web_search: trend mới, số liệu, giá cả, tin tức sau thời điểm training của bạn. Truy vấn bằng tiếng Việt khi chủ đề liên quan Việt Nam.',
+    '- fetch_url: đọc bài viết/bài viral mẫu để PHÂN TÍCH CẤU TRÚC (hook, nhịp, CTA) — học cấu trúc, không copy nội dung. Chỉ đọc URL lấy từ kết quả web_search hoặc user đưa — KHÔNG đoán URL.',
     '- knowledge_search: khi câu hỏi liên quan đến tài liệu, ghi chú nội bộ của người dùng.',
-    '- get_current_time: khi cần giờ vàng đăng bài, trend theo thời gian, hoặc nội dung gắn với "hôm nay".',
+    '- get_current_time: khi cần giờ vàng đăng bài, trend theo thời gian, hoặc nội dung gắn với "hôm nay". Tool này rẻ — cứ gọi khi cần.',
     '- list_connected_ai: khi người dùng hỏi về AI provider đã kết nối.',
     `- Các tool khả dụng: ${toolNames.join(', ') || '(không có)'}.`,
+    '',
+    '## Kỷ luật vòng lặp ReAct — chạy nhanh, ít tốn token',
+    '- Thought ngắn (1–2 dòng) rồi hành động ngay; không diễn giải dài dòng trước khi gọi tool.',
+    '- Đã đủ thông tin thì TRẢ LỜI THẲNG, không gọi thêm tool cho có.',
+    '- KHÔNG gọi lại tool với cùng args khi đã có kết quả trong cuộc hội thoại này.',
+    '- Câu hỏi sáng tạo thuần túy (viết kịch bản/caption từ ý tưởng của user, không cần dữ liệu ngoài) → viết luôn, không gọi tool.',
+    '- Các tool độc lập gọi SONG SONG trong cùng một turn (ví dụ: web_search trend + get_current_time).',
+    '- Tool trả lỗi → đọc kỹ thông báo lỗi, sửa args và thử lại tối đa 2 lần cho cùng một mục đích rồi chuyển hướng khác.',
+    '- Nếu hết lượt mà chưa xong việc: trả lời với những gì đã thu thập được + liệt kê rõ bước còn lại để user tiếp tục.',
     '',
     '## Phong cách trả lời',
     '- Trả lời bằng tiếng Việt, xưng mình/bạn; ngắn gọn, đi thẳng vào việc; hành động cụ thể quan trọng hơn lý thuyết.',
