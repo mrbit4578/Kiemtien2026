@@ -164,6 +164,66 @@ describe('runAgent', () => {
     assert.ok(result.toolCalls.every((t) => t.ok))
     assert.match(result.toolCalls[1].output, /giá vàng/)
   })
+
+  it('gọi trùng tool+args trong cùng turn → chỉ chạy 1 lần, tái dùng kết quả', async () => {
+    let executions = 0
+    const counting: ToolDefinition = {
+      ...timeTool,
+      execute: async () => {
+        executions++
+        return `lần ${executions}`
+      },
+    }
+    const backend = scriptedBackend([
+      {
+        text: '',
+        toolCalls: [
+          { id: 'c1', name: 'get_time', args: {} },
+          { id: 'c2', name: 'get_time', args: {} },
+        ],
+      },
+      { text: 'Xong.', toolCalls: [] },
+    ])
+    const result = await runAgent({
+      backend,
+      tools: registryWith(counting).list(),
+      messages: [{ role: 'user', content: 'hi' }],
+      workspaceId: 'ws1',
+    })
+    assert.equal(executions, 1)
+    assert.equal(result.toolCalls.length, 2)
+    assert.equal(result.toolCalls[0].output, result.toolCalls[1].output)
+    assert.ok(result.toolCalls.every((t) => t.ok))
+  })
+
+  it('turn cuối chèn nudge yêu cầu tổng hợp, không gọi thêm tool', async () => {
+    const seen: AgentMessage[][] = []
+    let calls = 0
+    const backend: ChatBackend = {
+      label: 'fake',
+      send: async (messages) => {
+        seen.push(messages)
+        calls++
+        if (calls < 3) {
+          return { text: '', toolCalls: [{ id: `c${calls}`, name: 'get_time', args: {} }] }
+        }
+        return { text: 'Tổng hợp xong.', toolCalls: [] }
+      },
+    }
+    const result = await runAgent({
+      backend,
+      tools: registryWith(timeTool).list(),
+      messages: [{ role: 'user', content: 'hi' }],
+      maxTurns: 3,
+      workspaceId: 'ws1',
+    })
+    assert.equal(result.stoppedReason, 'done')
+    assert.equal(result.content, 'Tổng hợp xong.')
+    const lastMsgs = seen[seen.length - 1]
+    const nudge = lastMsgs[lastMsgs.length - 1]
+    assert.equal(nudge.role, 'user')
+    assert.match(nudge.content, /lượt cuối cùng/)
+  })
 })
 
 describe('buildAgentSystemPrompt', () => {
@@ -198,6 +258,15 @@ describe('buildAgentSystemPrompt', () => {
     assert.match(p, /Permission-first/)
     assert.match(p, /video_brief/)
     assert.match(p, /video_risk_score/)
+  })
+
+  it('có kỷ luật vòng lặp ReAct: thought ngắn, trả lời thẳng khi đủ info, gọi song song, retry có trần', () => {
+    const p = buildAgentSystemPrompt(['web_search'])
+    assert.match(p, /Kỷ luật vòng lặp ReAct/)
+    assert.match(p, /TRẢ LỜI THẲNG/)
+    assert.match(p, /SONG SONG/)
+    assert.match(p, /tối đa 2 lần/)
+    assert.match(p, /KHÔNG đoán URL/)
   })
 })
 
