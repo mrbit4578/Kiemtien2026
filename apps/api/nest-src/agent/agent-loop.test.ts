@@ -338,13 +338,13 @@ describe('OpenAiCompatibleBackend — retry 400 tool_use_failed', () => {
   const okBody = (text: string) =>
     JSON.stringify({ choices: [{ message: { content: text, tool_calls: [] } }] })
 
-  function mockFetchOnce(responses: Array<{ status: number; body: string }>) {
+  function mockFetchOnce(responses: Array<{ status: number; body: string; headers?: Record<string, string> }>) {
     const origFetch = globalThis.fetch
     let calls = 0
     ;(globalThis as any).fetch = async () => {
       const r = responses[Math.min(calls, responses.length - 1)]
       calls++
-      return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json' } })
+      return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json', ...(r.headers ?? {}) } })
     }
     return {
       calls: () => calls,
@@ -385,7 +385,7 @@ describe('OpenAiCompatibleBackend — retry 400 tool_use_failed', () => {
     }
   })
 
-  it('dừng sau 3 lần thử khi tool_use_failed liên tục', async () => {
+  it('dừng sau 4 lần thử khi tool_use_failed liên tục', async () => {
     const mock = mockFetchOnce([{ status: 400, body: TOOL_FAIL_BODY }])
     try {
       const backend = new OpenAiCompatibleBackend('https://api.groq.com/openai/v1', 'key', 'openai/gpt-oss-120b', 100)
@@ -393,7 +393,55 @@ describe('OpenAiCompatibleBackend — retry 400 tool_use_failed', () => {
         backend.send([{ role: 'user', content: 'hi' }], [timeTool]),
         /tool_use_failed/,
       )
-      assert.equal(mock.calls(), 3)
+      assert.equal(mock.calls(), 4)
+    } finally {
+      mock.restore()
+    }
+  })
+
+  it('429: chờ theo gợi ý "try again in Xs" rồi thử lại thành công', async () => {
+    const mock = mockFetchOnce([
+      { status: 429, body: JSON.stringify({ error: { message: 'Rate limit reached. Please try again in 0.01s.' } }) },
+      { status: 200, body: okBody('xong sau 429') },
+    ])
+    try {
+      const backend = new OpenAiCompatibleBackend('https://api.groq.com/openai/v1', 'key', 'openai/gpt-oss-120b', 100)
+      const t0 = Date.now()
+      const turn = await backend.send([{ role: 'user', content: 'hi' }], [timeTool])
+      assert.equal(turn.text, 'xong sau 429')
+      assert.equal(mock.calls(), 2)
+      assert.ok(Date.now() - t0 < 5000, 'không chờ quá lâu trong test')
+    } finally {
+      mock.restore()
+    }
+  })
+
+  it('429: ưu tiên header retry-after', async () => {
+    const mock = mockFetchOnce([
+      { status: 429, body: 'slow down', headers: { 'retry-after': '0.01' } },
+      { status: 200, body: okBody('xong') },
+    ])
+    try {
+      const backend = new OpenAiCompatibleBackend('https://api.groq.com/openai/v1', 'key', 'openai/gpt-oss-120b', 100)
+      const turn = await backend.send([{ role: 'user', content: 'hi' }], [timeTool])
+      assert.equal(turn.text, 'xong')
+      assert.equal(mock.calls(), 2)
+    } finally {
+      mock.restore()
+    }
+  })
+
+  it('429 liên tục: dừng sau 4 lần thử', async () => {
+    const mock = mockFetchOnce([
+      { status: 429, body: JSON.stringify({ error: { message: 'Rate limit. try again in 0.01s' } }) },
+    ])
+    try {
+      const backend = new OpenAiCompatibleBackend('https://api.groq.com/openai/v1', 'key', 'openai/gpt-oss-120b', 100)
+      await assert.rejects(
+        backend.send([{ role: 'user', content: 'hi' }], [timeTool]),
+        /Provider trả lỗi 429/,
+      )
+      assert.equal(mock.calls(), 4)
     } finally {
       mock.restore()
     }
