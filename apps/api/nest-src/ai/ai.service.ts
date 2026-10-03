@@ -39,6 +39,8 @@ export const FALLBACK_PRIORITY: AiProviderId[] = [
   'deepseek',
   'anthropic',
   'xai',
+  'groq',
+  'moonshot',
 ]
 
 export interface EmbeddingKeyInfo {

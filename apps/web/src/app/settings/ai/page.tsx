@@ -31,6 +31,8 @@ const PROVIDER_ACCENT: Record<string, string> = {
   experientiallabs: 'from-fuchsia-500 to-pink-400',
   apmix: 'from-sky-500 to-indigo-400',
   muse: 'from-cyan-500 to-blue-600',
+  groq: 'from-red-500 to-orange-400',
+  moonshot: 'from-amber-400 to-yellow-300',
 }
 
 /** Code mau goi truc tiep API (chuan OpenAI) bang key cua user — cho tab "Quickstart". */
@@ -383,6 +385,11 @@ export default function AiSettingsPage() {
                 </div>
 
                 <p className="text-xs text-slate-400 leading-relaxed">{p.description}</p>
+                {p.keyNote && (
+                  <p className="text-[11px] font-semibold text-brand-emerald/90 -mt-2">
+                    {p.keyNote}
+                  </p>
+                )}
 
                 {conn && (
                   <div className="flex items-center gap-2 text-xs text-slate-400 font-mono bg-dark-950/60 border border-white/5 rounded-xl px-3 py-2">

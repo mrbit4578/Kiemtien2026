@@ -12,6 +12,8 @@ export type AiProviderId =
   | 'experientiallabs'
   | 'apmix'
   | 'muse'
+  | 'groq'
+  | 'moonshot'
 
 type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic'
 
@@ -25,6 +27,8 @@ export interface AiProviderMeta {
   models: string[]
   defaultModel: string
   description: string
+  /** Ghi chú ngắn về key (VD: "Key miễn phí") — hiển thị ở UI, không secret */
+  keyNote?: string
   /** @internal — chỉ dùng ở service */
   baseUrl: string
   /** @internal — chỉ dùng ở service */
@@ -39,6 +43,7 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     models: ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview'],
     defaultModel: 'gemini-3.6-flash',
     description: 'Miễn phí hào phóng, tốc độ nhanh, tốt cho tác vụ hàng ngày.',
+    keyNote: 'Key miễn phí',
     baseUrl: 'https://generativelanguage.googleapis.com',
     kind: 'gemini',
   },
@@ -59,6 +64,7 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     models: ['grok-3-mini', 'grok-3', 'grok-4'],
     defaultModel: 'grok-3-mini',
     description: 'Cập nhật kiến thức nhanh, phong cách trả lời thẳng thắn.',
+    keyNote: 'Cần tài khoản có thanh toán',
     baseUrl: 'https://api.x.ai/v1',
     kind: 'openai-compatible',
   },
@@ -101,6 +107,7 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     defaultModel: 'deepseek/deepseek-v4-flash-free',
     description:
       'Miễn phí — model DeepSeek free + GPT free qua Apmix (ID dạng hãng/tên-model), nhập key là chạy ngay.',
+    keyNote: 'Có gói miễn phí',
     baseUrl: 'https://api.apmix.ai/v1',
     kind: 'openai-compatible',
   },
@@ -115,6 +122,28 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     baseUrl: 'https://api.meta.ai/v1',
     kind: 'openai-compatible',
   },
+  {
+    id: 'groq',
+    name: 'Groq',
+    keyUrl: 'https://console.groq.com/keys',
+    models: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile'],
+    defaultModel: 'openai/gpt-oss-120b',
+    description:
+      'Inference siêu nhanh trên chip LPU, có key miễn phí. Chuẩn OpenAI.',
+    keyNote: 'Key miễn phí',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    kind: 'openai-compatible',
+  },
+  {
+    id: 'moonshot',
+    name: 'Kimi (Moonshot AI)',
+    keyUrl: 'https://platform.moonshot.ai/console/api-keys',
+    models: ['kimi-k3', 'kimi-k2.5', 'moonshot-v1-8k'],
+    defaultModel: 'kimi-k3',
+    description: 'Dòng model Kimi của Moonshot AI, mạnh tiếng Trung/Anh, context dài.',
+    baseUrl: 'https://api.moonshot.ai/v1',
+    kind: 'openai-compatible',
+  },
 ]
 
 export function getProviderMeta(id: string): AiProviderMeta | undefined {
@@ -123,12 +152,15 @@ export function getProviderMeta(id: string): AiProviderMeta | undefined {
 
 /** Metadata public trả về cho frontend — KHÔNG chứa baseUrl/kind nội bộ. */
 export function publicProviderMeta() {
-  return SUPPORTED_PROVIDERS.map(({ id, name, keyUrl, models, defaultModel, description }) => ({
-    id,
-    name,
-    keyUrl,
-    models,
-    defaultModel,
-    description,
-  }))
+  return SUPPORTED_PROVIDERS.map(
+    ({ id, name, keyUrl, models, defaultModel, description, keyNote }) => ({
+      id,
+      name,
+      keyUrl,
+      models,
+      defaultModel,
+      description,
+      ...(keyNote ? { keyNote } : {}),
+    }),
+  )
 }
