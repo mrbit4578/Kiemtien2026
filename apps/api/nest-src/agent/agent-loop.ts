@@ -109,46 +109,64 @@ export class OpenAiCompatibleBackend implements ChatBackend {
   }
 
   async send(messages: AgentMessage[], tools: ToolDefinition[]): Promise<AssistantTurn> {
-    const res = await fetchTimeout(
-      `${this.baseUrl}/chat/completions`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
-        body: JSON.stringify({
-          model: this.model,
-          messages: this.toWire(messages),
-          max_tokens: this.maxTokens,
-          ...(tools.length > 0
-            ? {
-                tools: tools.map((t) => ({ type: 'function', function: toolSchemaForPrompt(t) })),
-                tool_choice: 'auto',
-              }
-            : {}),
-        }),
-      },
-      PROVIDER_TIMEOUT_MS,
-    )
-    const text = await res.text()
-    if (!res.ok) throw new Error(`Provider trả lỗi ${res.status}: ${text.slice(0, 300)}`)
-    const data = JSON.parse(text) as {
-      choices?: Array<{
-        message?: {
-          content?: string | null
-          tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>
+    // Một số model OpenAI-compatible (VD: gpt-oss trên Groq) thỉnh thoảng sinh
+    // tool-call JSON lỗi → provider trả 400 tool_use_failed ("Failed to parse tool
+    // call arguments as JSON"). Đây là glitch ngẫu nhiên của model, thử lại
+    // thường hết — chỉ retry đúng lỗi này, các 400 khác (sai model, sai schema)
+    // báo ngay để không lặp vô ích.
+    const maxAttempts = 3
+    let lastErr: unknown = null
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const res = await fetchTimeout(
+        `${this.baseUrl}/chat/completions`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
+          body: JSON.stringify({
+            model: this.model,
+            messages: this.toWire(messages),
+            max_tokens: this.maxTokens,
+            ...(tools.length > 0
+              ? {
+                  tools: tools.map((t) => ({ type: 'function', function: toolSchemaForPrompt(t) })),
+                  tool_choice: 'auto',
+                }
+              : {}),
+          }),
+        },
+        PROVIDER_TIMEOUT_MS,
+      )
+      const text = await res.text()
+      if (res.ok) {
+        const data = JSON.parse(text) as {
+          choices?: Array<{
+            message?: {
+              content?: string | null
+              tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>
+            }
+          }>
         }
-      }>
-    }
-    const msg = data.choices?.[0]?.message
-    const toolCalls: ToolCallRequest[] = (msg?.tool_calls ?? []).map((tc, i) => {
-      let args: unknown = {}
-      try {
-        args = JSON.parse(tc.function?.arguments ?? '{}')
-      } catch {
-        args = {}
+        const msg = data.choices?.[0]?.message
+        const toolCalls: ToolCallRequest[] = (msg?.tool_calls ?? []).map((tc, i) => {
+          let args: unknown = {}
+          try {
+            args = JSON.parse(tc.function?.arguments ?? '{}')
+          } catch {
+            args = {}
+          }
+          return { id: tc.id ?? `call_${i}`, name: tc.function?.name ?? '', args }
+        })
+        return { text: msg?.content ?? '', toolCalls }
       }
-      return { id: tc.id ?? `call_${i}`, name: tc.function?.name ?? '', args }
-    })
-    return { text: msg?.content ?? '', toolCalls }
+      lastErr = new Error(`Provider trả lỗi ${res.status}: ${text.slice(0, 300)}`)
+      const retryable =
+        res.status === 400 &&
+        /tool_use_failed|failed to parse tool call arguments/i.test(text) &&
+        attempt < maxAttempts
+      if (!retryable) throw lastErr
+      await new Promise((r) => setTimeout(r, 600 * attempt))
+    }
+    throw lastErr
   }
 }
 

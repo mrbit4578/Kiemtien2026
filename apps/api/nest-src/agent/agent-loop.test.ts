@@ -4,6 +4,7 @@ import {
   runAgent,
   buildAgentSystemPrompt,
   GeminiBackend,
+  OpenAiCompatibleBackend,
   type AgentMessage,
   type AssistantTurn,
   type ChatBackend,
@@ -322,6 +323,79 @@ describe('GeminiBackend', () => {
       assert.deepEqual(decls[0].parameters.required, ['query'])
     } finally {
       globalThis.fetch = origFetch
+    }
+  })
+})
+
+describe('OpenAiCompatibleBackend — retry 400 tool_use_failed', () => {
+  const TOOL_FAIL_BODY = JSON.stringify({
+    error: {
+      message: 'Failed to parse tool call arguments as JSON',
+      type: 'invalid_request_error',
+      code: 'tool_use_failed',
+    },
+  })
+  const okBody = (text: string) =>
+    JSON.stringify({ choices: [{ message: { content: text, tool_calls: [] } }] })
+
+  function mockFetchOnce(responses: Array<{ status: number; body: string }>) {
+    const origFetch = globalThis.fetch
+    let calls = 0
+    ;(globalThis as any).fetch = async () => {
+      const r = responses[Math.min(calls, responses.length - 1)]
+      calls++
+      return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json' } })
+    }
+    return {
+      calls: () => calls,
+      restore: () => {
+        globalThis.fetch = origFetch
+      },
+    }
+  }
+
+  it('thử lại khi Groq trả 400 tool_use_failed rồi thành công', async () => {
+    const mock = mockFetchOnce([
+      { status: 400, body: TOOL_FAIL_BODY },
+      { status: 200, body: okBody('xong') },
+    ])
+    try {
+      const backend = new OpenAiCompatibleBackend('https://api.groq.com/openai/v1', 'key', 'openai/gpt-oss-120b', 100)
+      const turn = await backend.send([{ role: 'user', content: 'hi' }], [timeTool])
+      assert.equal(turn.text, 'xong')
+      assert.equal(mock.calls(), 2)
+    } finally {
+      mock.restore()
+    }
+  })
+
+  it('báo ngay với 400 khác (không phải tool_use_failed)', async () => {
+    const mock = mockFetchOnce([
+      { status: 400, body: JSON.stringify({ error: { message: 'model_not_found', code: 'invalid_model' } }) },
+    ])
+    try {
+      const backend = new OpenAiCompatibleBackend('https://api.groq.com/openai/v1', 'key', 'openai/gpt-oss-120b', 100)
+      await assert.rejects(
+        backend.send([{ role: 'user', content: 'hi' }], [timeTool]),
+        /Provider trả lỗi 400/,
+      )
+      assert.equal(mock.calls(), 1)
+    } finally {
+      mock.restore()
+    }
+  })
+
+  it('dừng sau 3 lần thử khi tool_use_failed liên tục', async () => {
+    const mock = mockFetchOnce([{ status: 400, body: TOOL_FAIL_BODY }])
+    try {
+      const backend = new OpenAiCompatibleBackend('https://api.groq.com/openai/v1', 'key', 'openai/gpt-oss-120b', 100)
+      await assert.rejects(
+        backend.send([{ role: 'user', content: 'hi' }], [timeTool]),
+        /tool_use_failed/,
+      )
+      assert.equal(mock.calls(), 3)
+    } finally {
+      mock.restore()
     }
   })
 })
