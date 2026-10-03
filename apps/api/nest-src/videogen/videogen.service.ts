@@ -46,6 +46,8 @@ const CAPABILITIES: Record<string, Capability[]> = {
   experientiallabs: ['chat'],
   apmix: ['chat'],
   muse: ['chat'],
+  groq: ['chat'],
+  moonshot: ['chat'],
 }
 
 /** Thứ tự ưu tiên khi user để provider='auto' */
@@ -99,6 +101,8 @@ export class VideogenService {
       'experientiallabs',
       'apmix',
       'muse',
+      'groq',
+      'moonshot',
     ]
     return all.map((id) => {
       const meta = getProviderMeta(id)

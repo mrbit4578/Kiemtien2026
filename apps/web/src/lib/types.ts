@@ -68,6 +68,8 @@ export interface AiProviderMeta {
   models: string[]
   defaultModel: string
   description: string
+  /** Ghi chú ngắn về key (VD: "Key miễn phí") — optional */
+  keyNote?: string
 }
 
 /** GET /ai/connections — backend KHÔNG bao giờ trả key (kể cả đã mã hóa) */
