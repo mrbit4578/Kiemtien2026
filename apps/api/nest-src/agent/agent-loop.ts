@@ -79,6 +79,32 @@ function toolSchemaForGemini(tool: ToolDefinition): Record<string, unknown> {
 
 // ─── Dialect: OpenAI-compatible (OpenAI, xAI/Grok, DeepSeek) ────────────────
 
+/**
+ * Tính thời gian chờ (ms) trước khi thử lại request tới provider.
+ * Trả về 0 = không nên thử lại.
+ * - 429: ưu tiên header `retry-after` (giây), rồi tới gợi ý "try again in Xs"
+ *   trong body; không có gợi ý thì backoff 2s. Chặn trần 30s mỗi lần chờ.
+ * - 400 tool_use_failed: glitch sinh tool-call JSON của model → chờ 600ms.
+ */
+function retryDelayMs(res: Response, bodyText: string): number {
+  if (res.status === 429) {
+    const headerSecs = Number(res.headers.get('retry-after'))
+    if (Number.isFinite(headerSecs) && headerSecs > 0) {
+      return Math.min(headerSecs * 1000, 30000)
+    }
+    const m = /try again in ([\d.]+)s/i.exec(bodyText)
+    if (m) {
+      const secs = parseFloat(m[1])
+      if (Number.isFinite(secs) && secs > 0) return Math.min(secs * 1000, 30000)
+    }
+    return 2000
+  }
+  if (res.status === 400 && /tool_use_failed|failed to parse tool call arguments/i.test(bodyText)) {
+    return 600
+  }
+  return 0
+}
+
 export class OpenAiCompatibleBackend implements ChatBackend {
   readonly label = 'openai-compatible'
   constructor(
@@ -109,12 +135,14 @@ export class OpenAiCompatibleBackend implements ChatBackend {
   }
 
   async send(messages: AgentMessage[], tools: ToolDefinition[]): Promise<AssistantTurn> {
-    // Một số model OpenAI-compatible (VD: gpt-oss trên Groq) thỉnh thoảng sinh
-    // tool-call JSON lỗi → provider trả 400 tool_use_failed ("Failed to parse tool
-    // call arguments as JSON"). Đây là glitch ngẫu nhiên của model, thử lại
-    // thường hết — chỉ retry đúng lỗi này, các 400 khác (sai model, sai schema)
-    // báo ngay để không lặp vô ích.
-    const maxAttempts = 3
+    // Chính sách retry cho provider OpenAI-compatible:
+    // - 400 tool_use_failed ("Failed to parse tool call arguments as JSON"): một số
+    //   model (VD: gpt-oss trên Groq) thỉnh thoảng sinh tool-call JSON lỗi — glitch
+    //   ngẫu nhiên của model, thử lại thường hết. Chỉ retry đúng lỗi này, các 400
+    //   khác (sai model, sai schema) báo ngay để không lặp vô ích.
+    // - 429 rate limit: tôn trọng thời gian chờ provider gợi ý ("try again in Xs"
+    //   trong body hoặc header retry-after), tối đa 30s mỗi lần chờ.
+    const maxAttempts = 4
     let lastErr: unknown = null
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const res = await fetchTimeout(
@@ -159,12 +187,13 @@ export class OpenAiCompatibleBackend implements ChatBackend {
         return { text: msg?.content ?? '', toolCalls }
       }
       lastErr = new Error(`Provider trả lỗi ${res.status}: ${text.slice(0, 300)}`)
-      const retryable =
-        res.status === 400 &&
-        /tool_use_failed|failed to parse tool call arguments/i.test(text) &&
-        attempt < maxAttempts
-      if (!retryable) throw lastErr
-      await new Promise((r) => setTimeout(r, 600 * attempt))
+      if (attempt >= maxAttempts) break
+      const waitMs = retryDelayMs(res, text)
+      if (waitMs > 0) {
+        await new Promise((r) => setTimeout(r, waitMs))
+        continue
+      }
+      throw lastErr
     }
     throw lastErr
   }
