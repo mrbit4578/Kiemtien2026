@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Network,
   Sparkles,
@@ -18,6 +19,7 @@ import {
   Loader2,
   X,
   TriangleAlert,
+  Clapperboard,
 } from 'lucide-react'
 import {
   useAiConnections,
@@ -30,6 +32,7 @@ import {
   mixNiches,
   replaceNiche,
   slugifyNiche,
+  createVideoProject,
   type UsedNiche,
   type MixedNiche,
 } from '../lib/hooks'
@@ -304,6 +307,7 @@ function buildNodePrompt(node: GraphNode | null): string {
 }
 
 export function InteractiveKnowledgeGraph() {
+  const router = useRouter()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(DEFAULT_NODES[0])
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
@@ -587,6 +591,25 @@ export function InteractiveKnowledgeGraph() {
     if (!n || isNodeUsed(n)) return
     // Không chặn điều hướng sang Copilot: chạy chọn + backfill nền
     handlePickNiche(n).catch(() => {})
+  }
+
+  /** Mapping ngách → Video Faceless: tạo dự án từ node đang chọn rồi mở thẳng
+   * tab Kịch bản (nơi có nút "Xuất brief Director Studio"). */
+  const [creatingVideo, setCreatingVideo] = useState(false)
+  const handleCreateVideoProject = async (n: GraphNode | null) => {
+    if (!n || creatingVideo) return
+    setCreatingVideo(true)
+    try {
+      const title = n.label.length > 150 ? n.label.slice(0, 150) : n.label
+      const p = await createVideoProject({ title, series: 'Ngách AI' })
+      // Đánh dấu ngách đã dùng + backfill như luồng Copilot (chạy nền, không chặn)
+      handlePickNiche(n).catch(() => {})
+      router.push(`/video-faceless?project=${p.id}&tab=script`)
+    } catch {
+      setScanError('Không tạo được dự án Video Faceless. Hãy thử lại.')
+    } finally {
+      setCreatingVideo(false)
+    }
   }
 
   /** Ghi nhận kết quả dùng ngách — vòng kaizen cho lần trộn sau. */
@@ -1159,6 +1182,15 @@ export function InteractiveKnowledgeGraph() {
               <span>Dùng AI Copilot Tạo Kịch Bản Cho Node Này</span>
               <ArrowUpRight className="w-4 h-4" />
             </a>
+            <button
+              onClick={() => handleCreateVideoProject(selectedNode)}
+              disabled={creatingVideo || !selectedNode}
+              title="Tạo dự án Video Faceless từ ngách này rồi mở thẳng tab Kịch bản — nơi có nút Xuất brief Director Studio"
+              className="w-full py-2.5 px-4 rounded-lg border border-brand-cyan/40 text-brand-cyan font-bold text-xs flex items-center justify-center gap-2 hover:bg-brand-cyan/10 transition-all disabled:opacity-50 disabled:cursor-wait"
+            >
+              {creatingVideo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clapperboard className="w-4 h-4" />}
+              <span>{creatingVideo ? 'Đang tạo dự án...' : 'Tạo Dự Án Video Faceless Từ Node Này'}</span>
+            </button>
           </div>
         </div>
       </div>
