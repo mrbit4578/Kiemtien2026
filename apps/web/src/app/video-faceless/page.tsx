@@ -121,8 +121,10 @@ function VideoFacelessInner() {
   const [studioProvider, setStudioProvider] = useState<string | null>(() =>
     searchParams.get('provider'),
   )
+  // Mở thẳng tab trong chi tiết dự án (mapping từ trang ngách): ?project=<id>&tab=script
+  const [initialTab] = useState(() => searchParams.get('tab'))
   if (selectedId && !studio)
-    return <ProjectDetail id={selectedId} onBack={() => setSelectedId(null)} />
+    return <ProjectDetail id={selectedId} initialTab={initialTab} onBack={() => setSelectedId(null)} />
   if (studio)
     return (
       <VideoGenStudio
@@ -412,11 +414,13 @@ function ProjectList({ onSelect, onStudio }: { onSelect: (id: string) => void; o
 
 /* ─── Chi tiết dự án ─── */
 
-function ProjectDetail({ id, onBack }: { id: string; onBack: () => void }) {
+function ProjectDetail({ id, initialTab, onBack }: { id: string; initialTab?: string | null; onBack: () => void }) {
   const [project, setProject] = useState<VideoProjectDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTab] = useState<TabId>('overview')
+  const [tab, setTab] = useState<TabId>(() =>
+    TABS.some((t) => t.id === initialTab) ? (initialTab as TabId) : 'overview',
+  )
 
   const refresh = useCallback(async () => {
     try {

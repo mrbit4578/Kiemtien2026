@@ -564,6 +564,15 @@ export async function sendVideoToContentStudio(id: string): Promise<{ ok: boolea
   return api.post(`/video/projects/${id}/to-content-studio`)
 }
 
+/** Tạo dự án Video Faceless mới (dùng cho mapping từ trang ngách). */
+export async function createVideoProject(input: {
+  title: string
+  series?: string
+  viralSourceUrl?: string
+}): Promise<VideoProjectSummary> {
+  return api.post<VideoProjectSummary>('/video/projects', input)
+}
+
 export async function addVideoAsset(
   projectId: string,
   input: { name: string; assetType: string; sourceUrl?: string; owner?: string; rightsBasis: string; scope?: string; proof?: string },
