@@ -551,6 +551,15 @@ export async function getVideoReadiness(id: string): Promise<PublishReadiness> {
   return api.get<PublishReadiness>(`/video/projects/${id}/readiness`)
 }
 
+/** Đấu nối Director Studio: lấy video brief chuẩn (.md) mapping từ kịch bản. */
+export async function getDirectorBrief(
+  id: string,
+): Promise<{ filename: string; markdown: string; warnings: string[] }> {
+  return api.get<{ filename: string; markdown: string; warnings: string[] }>(
+    `/video/projects/${id}/director-brief`,
+  )
+}
+
 export async function sendVideoToContentStudio(id: string): Promise<{ ok: boolean; contentItemId: string }> {
   return api.post(`/video/projects/${id}/to-content-studio`)
 }

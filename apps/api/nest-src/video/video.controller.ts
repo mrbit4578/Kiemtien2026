@@ -92,6 +92,17 @@ export class VideoController {
     return this.video.getProject(requireWorkspaceId(session), id)
   }
 
+  /**
+   * GET /video/projects/:id/director-brief — xuất video brief chuẩn Director
+   * Studio (Taovideo2026): mapping toàn bộ kịch bản + claim ledger sang định
+   * dạng brief 8 trường để import vào quy trình tiền kỳ 9 bước.
+   * Trả về { filename, markdown, warnings } — client tải file .md về.
+   */
+  @Get('projects/:id/director-brief')
+  async directorBrief(@Param('id') id: string, @Session() session: any) {
+    return this.video.getDirectorBrief(requireWorkspaceId(session), id)
+  }
+
   @Patch('projects/:id')
   async update(
     @Param('id') id: string,

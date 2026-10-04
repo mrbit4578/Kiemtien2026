@@ -6,11 +6,12 @@ import { useSearchParams } from 'next/navigation'
 import {
   Plus, ArrowLeft, Clapperboard, AlertTriangle, Trash2, Send, ShieldCheck,
   Bot, ClipboardCheck, Gauge, Save, CheckCircle2, XCircle, Link2, Sparkles,
-  FileText, Scale, BrainCircuit, Zap, Coins, BadgeCheck,
+  FileText, Scale, BrainCircuit, Zap, Coins, BadgeCheck, Download,
 } from 'lucide-react'
 import {
   useVideoProjects,
   getVideoProject,
+  getDirectorBrief,
   updateVideoProject,
   updateVideoGates,
   scoreVideoRisk,
@@ -611,6 +612,9 @@ function ScriptTab({ project, onSaved }: { project: VideoProjectDetail; onSaved:
   const [caption, setCaption] = useState(project.caption ?? '')
   const [saving, setSaving] = useState(false)
   const [savedTick, setSavedTick] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportWarnings, setExportWarnings] = useState<string[]>([])
+  const [exportError, setExportError] = useState('')
 
   const save = async () => {
     setSaving(true)
@@ -621,6 +625,32 @@ function ScriptTab({ project, onSaved }: { project: VideoProjectDetail; onSaved:
       setTimeout(() => setSavedTick(false), 2000)
     } finally {
       setSaving(false)
+    }
+  }
+
+  /** Đấu nối Director Studio: lưu kịch bản rồi xuất video brief chuẩn (.md). */
+  const exportBrief = async () => {
+    setExporting(true)
+    setExportError('')
+    setExportWarnings([])
+    try {
+      await updateVideoProject(project.id, { script, caption })
+      onSaved()
+      const { filename, markdown, warnings } = await getDirectorBrief(project.id)
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      setExportWarnings(warnings ?? [])
+    } catch (e: any) {
+      setExportError(e?.message || 'Xuất brief thất bại.')
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -643,9 +673,26 @@ function ScriptTab({ project, onSaved }: { project: VideoProjectDetail; onSaved:
         <label className={labelCls}>Caption đăng bài (khối ## CAPTION ĐĂNG BÀI)</label>
         <textarea className={inputCls} rows={6} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="1 HOOK + 2–3 câu ngắn + 1 CTA (link trong bio) + 5–8 hashtag" />
       </div>
-      <button onClick={save} disabled={saving} className={btnPrimary}>
-        <Save className="w-4 h-4" /> {saving ? 'Đang lưu…' : savedTick ? 'Đã lưu ✓' : 'Lưu kịch bản'}
-      </button>
+      <div className="flex flex-wrap items-center gap-3">
+        <button onClick={save} disabled={saving} className={btnPrimary}>
+          <Save className="w-4 h-4" /> {saving ? 'Đang lưu…' : savedTick ? 'Đã lưu ✓' : 'Lưu kịch bản'}
+        </button>
+        <button onClick={exportBrief} disabled={exporting || saving} className={btnGhost} title="Mapping kịch bản sang video brief chuẩn Director Studio (.md) — import vào app Director Studio để chạy quy trình tiền kỳ 9 bước">
+          <Download className="w-4 h-4" /> {exporting ? 'Đang xuất…' : 'Xuất brief Director Studio'}
+        </button>
+      </div>
+      {exportError && (
+        <p className="text-xs text-red-400 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> {exportError}</p>
+      )}
+      {exportWarnings.length > 0 && (
+        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200/90 space-y-1">
+          <p className="font-semibold text-amber-300">Brief đã xuất — lưu ý khi import vào Director Studio:</p>
+          {exportWarnings.map((w, i) => <p key={i}>• {w}</p>)}
+        </div>
+      )}
+      <p className="text-[11px] text-slate-500 leading-relaxed">
+        File .md tải về đúng chuẩn brief 8 trường của Director Studio — mở app Director Studio → bước 1 (Brief) → import file để mapping toàn bộ kịch bản, claim ledger, hook và CTA vào dự án mới.
+      </p>
     </div>
   )
 }
