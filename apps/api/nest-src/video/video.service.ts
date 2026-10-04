@@ -5,6 +5,7 @@ import { AiService, FALLBACK_PRIORITY } from '../ai/ai.service'
 import { getProviderMeta, type AiProviderId } from '../ai/ai.providers'
 import { videoBriefTool, videoScriptTool } from '../agent/video-tools'
 import { GATE_IDS, VIDEO_STAGES } from './dto'
+import { buildDirectorBriefMd } from './director-brief'
 import { getPresetById, listPresetSummaries } from './presets'
 import { renderShotList } from './presets/timelapse-construction'
 import { validateClaimMarkers, type ClaimCheckResult } from './claim-evidence'
@@ -245,6 +246,7 @@ Nguyên tắc ràng buộc (bắt buộc tuân thủ):
       source_analysis: data['source_analysis'],
       angles: data['angles'],
       chosen_angle: data['chosen_angle'],
+      hook: data['hook'] ?? '',
       originality: 'G0 PASS (O1–O5 = YES)',
       generated_by: `${meta.name} / ${model}`,
     })
@@ -328,6 +330,22 @@ Nguyên tắc ràng buộc (bắt buộc tuân thủ):
       this.prisma.videoAiEntry.findMany({ where: { projectId: id }, orderBy: { createdAt: 'asc' } }),
     ])
     return { ...project, assets, claims, aiEntries }
+  }
+
+  /**
+   * Đấu nối Kiemtien2026 → Director Studio (Taovideo2026).
+   * Khi một kịch bản đã được tạo (auto-build hoặc viết tay), mapping toàn bộ
+   * sang video brief chuẩn 8 trường của Director Studio để import vào quy
+   * trình tiền kỳ 9 bước. Sinh on-demand nên luôn fresh theo kịch bản mới nhất.
+   */
+  async getDirectorBrief(workspaceId: string, id: string) {
+    const full = await this.getProject(workspaceId, id)
+    if (!full.script?.trim() && !full.caption?.trim()) {
+      throw new BadRequestException(
+        'Dự án chưa có kịch bản/caption — hãy chạy auto-build hoặc nhập kịch bản ở tab Kịch bản trước.',
+      )
+    }
+    return buildDirectorBriefMd(full, full.claims ?? [])
   }
 
   async updateProject(workspaceId: string, id: string, dto: UpdateVideoProjectDto) {
