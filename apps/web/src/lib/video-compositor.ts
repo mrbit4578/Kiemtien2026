@@ -22,6 +22,8 @@ export interface ComposeOptions {
   height?: number
   fps?: number
   accent?: string
+  /** Voiceover tổng cho cả video (từ Workflow template) — phát từ giây 0, thay cho audio từng scene */
+  masterAudioUrl?: string | null
   onProgress?: (p: number, label: string) => void
   onScene?: (index: number, total: number) => void
 }
@@ -321,10 +323,20 @@ export async function composeVideo(
   await actx.resume()
 
   let totalDuration = 0
+  let masterAudio: AudioBuffer | null = null
+  if (opts.masterAudioUrl) {
+    try {
+      masterAudio = await loadAudioBuffer(actx, opts.masterAudioUrl)
+    } catch {
+      masterAudio = null
+    }
+  }
+  // Chỉ bỏ qua audio từng scene khi master thực sự tải được (không thì fallback về giọng scene)
+  const useMaster = !!masterAudio
   for (let i = 0; i < scenes.length; i++) {
     const s = scenes[i]
     let dur = 0
-    if (s.audioUrl) {
+    if (!useMaster && s.audioUrl) {
       try {
         prepared[i].audio = await loadAudioBuffer(actx, s.audioUrl)
       } catch {
@@ -337,20 +349,32 @@ export async function composeVideo(
     prepared[i].duration = Math.max(1.2, dur)
     totalDuration += prepared[i].duration
   }
+  // Voiceover tổng dài hơn chuỗi scene → kéo dài video cho hết tiếng (frame cuối giữ nguyên)
+  if (masterAudio && masterAudio.duration > totalDuration) {
+    totalDuration = masterAudio.duration
+  }
 
   /* ---- 3. Kênh ghi âm ---- */
   const dest = actx.createMediaStreamDestination()
   const sources: Array<{ src: AudioBufferSourceNode; when: number }> = []
   let audioOffset = 0
-  for (const item of prepared) {
-    if (item.audio) {
-      const src = actx.createBufferSource()
-      src.buffer = item.audio
-      src.connect(dest)
-      src.connect(actx.destination) // nghe trực tiếp khi render
-      sources.push({ src, when: audioOffset })
+  if (masterAudio) {
+    const src = actx.createBufferSource()
+    src.buffer = masterAudio
+    src.connect(dest)
+    src.connect(actx.destination) // nghe trực tiếp khi render
+    sources.push({ src, when: 0 })
+  } else {
+    for (const item of prepared) {
+      if (item.audio) {
+        const src = actx.createBufferSource()
+        src.buffer = item.audio
+        src.connect(dest)
+        src.connect(actx.destination) // nghe trực tiếp khi render
+        sources.push({ src, when: audioOffset })
+      }
+      audioOffset += item.duration
     }
-    audioOffset += item.duration
   }
   const hasAudioTrack = sources.length > 0
   if (hasAudioTrack) {

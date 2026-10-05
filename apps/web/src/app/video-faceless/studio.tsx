@@ -175,6 +175,7 @@ export function VideoGenStudio({
   // Workflow templates (giọng đọc)
   const [tplOpen, setTplOpen] = useState(true)
   const [tplText, setTplText] = useState('')
+  const [tplTouched, setTplTouched] = useState(false)
   const [tplProvider, setTplProvider] = useState('edge')
   const [tplVoice, setTplVoice] = useState('')
   const [tplLoading, setTplLoading] = useState(false)
@@ -184,6 +185,8 @@ export function VideoGenStudio({
     srt: string
     durationSec: number
   } | null>(null)
+  /** Chiều ra mapping: dùng voiceover tổng từ template thay cho giọng từng scene ở Bước 5 */
+  const [useMasterVoice, setUseMasterVoice] = useState(false)
 
   const [composing, setComposing] = useState(false)
   const [composeLabel, setComposeLabel] = useState('')
@@ -377,6 +380,41 @@ export function VideoGenStudio({
   }
 
   /* ─── Workflow template: text dài → voice + SRT (không qua Bước 1–3) ─── */
+  /** Chiều vào mapping: gom lời thoại các scene thành text cho template */
+  const scriptTextOfScenes = () =>
+    scenes.map((s) => s.text.trim()).filter(Boolean).join('\n\n')
+
+  const fillTplFromScript = () => {
+    const t = scriptTextOfScenes()
+    if (!t) {
+      say('err', 'Chưa có kịch bản scene nào để mapping.')
+      return
+    }
+    setTplText(t)
+    setTplTouched(true)
+    say('ok', `Đã mapping ${scenes.length} scene vào template.`)
+  }
+
+  // Tự mapping kịch bản vào template khi scene mới sinh và user chưa sửa tay
+  useEffect(() => {
+    if (scenes.length > 0 && !tplTouched && !tplText.trim()) {
+      setTplText(scriptTextOfScenes())
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenes])
+
+  /** Chiều ra mapping: đưa voiceover template vào Bước 5 (dựng) */
+  const sendTplToBuild = () => {
+    if (!tplResult) return
+    if (!scenes.length) {
+      say('err', 'Chưa có scene nào — hãy viết kịch bản (Bước 1) trước rồi đưa voiceover vào dựng.')
+      return
+    }
+    setUseMasterVoice(true)
+    say('ok', 'Đã mapping voiceover template vào Bước 5 — bấm "Dựng video hoàn chỉnh".')
+    document.getElementById('studio-build')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   const tplGen = async () => {
     if (!tplText.trim()) {
       say('err', 'Dán đoạn text dài cần đọc trước.')
@@ -477,6 +515,8 @@ export function VideoGenStudio({
           width: 720,
           height: 1280,
           fps: 30,
+          // Mapping từ Workflow template: voiceover tổng phát suốt video thay cho giọng từng scene
+          masterAudioUrl: useMasterVoice && tplResult ? tplResult.audioUrl : null,
           onProgress: (p, label) => {
             setComposeProgress(p)
             setComposeLabel(label)
@@ -677,12 +717,25 @@ export function VideoGenStudio({
 
             {/* Card 2: text dài → voice + SRT */}
             <div className="p-3 rounded-xl bg-dark-950/60 border border-dark-700">
-              <div className="text-xs font-bold text-white mb-2">📝 Text dài → Voice + SRT</div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-bold text-white">📝 Text dài → Voice + SRT</div>
+                <button
+                  onClick={fillTplFromScript}
+                  disabled={!scenes.length}
+                  className={btnGhost + ' !py-1 !px-2 !text-[11px]'}
+                  title="Mapping lời thoại các scene vào template"
+                >
+                  📋 Lấy từ kịch bản
+                </button>
+              </div>
               <textarea
                 value={tplText}
-                onChange={(e) => setTplText(e.target.value)}
+                onChange={(e) => {
+                  setTplText(e.target.value)
+                  setTplTouched(true)
+                }}
                 rows={5}
-                placeholder="Dán đoạn text dài cần đọc…"
+                placeholder="Dán đoạn text dài cần đọc… (tự mapping từ kịch bản khi có scene)"
                 className={inputCls + ' mb-2'}
               />
               <div className="grid grid-cols-2 gap-2 mb-2">
@@ -724,9 +777,13 @@ export function VideoGenStudio({
                     <button onClick={() => downloadText('voiceover.srt', tplResult.srt)} className={btnGhost}>
                       Tải SRT
                     </button>
+                    <button onClick={sendTplToBuild} disabled={!scenes.length} className={btnGhost} title="Mapping voiceover này vào Bước 5 (dựng)">
+                      🎬 Đưa vào bước Dựng
+                    </button>
                   </div>
                   <p className="text-[10px] text-slate-500">
                     {Math.round(tplResult.durationSec)}s · {tplResult.mime}
+                    {!scenes.length && ' · cần có scene ở Bước 1 mới đưa vào dựng được'}
                   </p>
                 </div>
               )}
@@ -997,7 +1054,7 @@ export function VideoGenStudio({
 
       {/* Bước 5: dựng */}
       {scenes.length > 0 && (
-        <section className="p-4 rounded-2xl bg-dark-900/60 border border-dark-700">
+        <section id="studio-build" className="p-4 rounded-2xl bg-dark-900/60 border border-dark-700 scroll-mt-4">
           <h2 className="text-sm font-bold text-white flex items-center gap-2 mb-3">
             <span className="w-6 h-6 rounded-full bg-brand-emerald/20 text-brand-emerald text-xs font-bold flex items-center justify-center">5</span>
             Dựng video hoàn chỉnh
@@ -1006,6 +1063,23 @@ export function VideoGenStudio({
             Dựng ngay trong trình duyệt (Ken Burns + phụ đề + ghép giọng) — không cần FFmpeg. Render theo thời gian
             thực, giữ tab mở tới khi xong.
           </p>
+          {tplResult && (
+            <label className="flex items-start gap-2 text-xs text-slate-300 mb-3 cursor-pointer p-2 rounded-lg bg-dark-950/60 border border-dark-700">
+              <input
+                type="checkbox"
+                checked={useMasterVoice}
+                onChange={(e) => setUseMasterVoice(e.target.checked)}
+                className="mt-0.5 accent-emerald-500"
+              />
+              <span>
+                🎙️ Dùng voiceover tổng từ Workflow template ({Math.round(tplResult.durationSec)}s) — phát suốt video,
+                thay cho giọng từng scene.
+                <span className="block text-[10px] text-slate-500 mt-0.5">
+                  Tắt để dùng lại giọng từng scene ở Bước 3.
+                </span>
+              </span>
+            </label>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             <button onClick={compose} disabled={composing} className={btnPrimary}>
               {composing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Film className="w-4 h-4" />}
