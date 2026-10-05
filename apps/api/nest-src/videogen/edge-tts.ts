@@ -1,17 +1,51 @@
 /**
  * edge-tts.ts — client WebSocket tối giản tới Edge TTS (Microsoft, miễn phí,
- * không cần API key), chỉ dùng node builtins (node:https + node:crypto).
+ * không cần API key), chỉ dùng node builtins (node:tls + node:crypto).
  *
  * Cố ý KHÔNG dùng package `ws` (không thêm npm dependency mới).
  */
 
-import { request as httpsRequest } from 'node:https'
+import { connect as tlsConnect } from 'node:tls'
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 
-const EDGE_URL =
-  'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4-DFD9-6BCC-1300-9C8D-FE4F9ADF7E34'
+const EDGE_HOST = 'speech.platform.bing.com'
+const EDGE_PATH = '/consumer/speech/synthesize/readaloud/edge/v1'
+/** Token client tin cậy (dạng không gạch nối, chuẩn thư viện edge-tts). */
+const TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4'
+/**
+ * Microsoft yêu cầu Sec-MS-GEC-Version >= 1-133 (thư viện edge-tts hiện dùng
+ * 1-143.0.3650.75). Version cũ hơn bị từ chối handshake 401/403.
+ */
+const SEC_MS_GEC_VERSION = '1-143.0.3650.75'
+const EDGE_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'
+/** Origin của extension Read Aloud — endpoint chỉ chấp nhận Origin giả trình duyệt Edge. */
+const EDGE_ORIGIN = 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold'
 const WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 const EDGE_TIMEOUT_MS = 60_000
+const WIN_EPOCH = 11644473600 // giây từ 1601-01-01 tới 1970-01-01
+
+/**
+ * Sinh token Sec-MS-GEC theo đúng thuật toán của thư viện edge-tts
+ * (rany2/edge-tts drm.py): SHA256 hex hoa của
+ * "<windows file time, làm tròn xuống 5 phút><trusted client token>".
+ * Thiếu token này → Microsoft trả 401 ở bước handshake.
+ */
+function generateSecMsGec(): string {
+  let ticks = Date.now() / 1000 // float, giống time.time() của Python
+  ticks += WIN_EPOCH
+  ticks -= ticks % 300
+  ticks *= 10_000_000
+  // ticks lúc này luôn là số nguyên (bội của 32 ở độ lớn này) nên Math.round
+  // cho kết quả hệt f"{ticks:.0f}" của Python (cả hai đều là float64 IEEE754).
+  const strToHash = `${Math.round(ticks)}${TRUSTED_CLIENT_TOKEN}`
+  return createHash('sha256').update(strToHash, 'ascii').digest('hex').toUpperCase()
+}
+
+/** MUID ngẫu nhiên cho Cookie, theo headers_with_muid của edge-tts. */
+function generateMuid(): string {
+  return randomBytes(16).toString('hex').toUpperCase()
+}
 
 export interface EdgeWord {
   word: string
@@ -52,6 +86,101 @@ function encodeFrame(opcode: number, data: Buffer): Buffer {
   const masked = Buffer.allocUnsafe(len)
   for (let i = 0; i < len; i++) masked[i] = data[i] ^ maskKey[i % 4]
   return Buffer.concat([header, maskKey, masked])
+}
+
+/**
+ * Bắt tay WebSocket bằng TLS thô (tự ghi HTTP request, tự đọc 101).
+ * Lý do không dùng node:https: server của Microsoft trả
+ * `connection: close` (thay vì `connection: upgrade`) trong response 101,
+ * khiến Node không emit event 'upgrade' mà emit 'response' — tự làm handshake
+ * thì không phụ thuộc vào state machine HTTP của Node.
+ */
+function doHandshake(): Promise<{
+  socket: import('node:net').Socket
+}> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const done = (
+      fn: () => void,
+    ): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      fn()
+    }
+    const timer = setTimeout(() => {
+      done(() => {
+        try {
+          socket.destroy()
+        } catch {
+          /* bỏ qua */
+        }
+        reject(new Error('Edge TTS quá 15 giây chưa xong handshake — hãy thử lại.'))
+      })
+    }, 15_000)
+
+    const wsKey = randomBytes(16).toString('base64')
+    const connectionId = randomUUID().replace(/-/g, '')
+    const path =
+      EDGE_PATH +
+      `?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}` +
+      `&ConnectionId=${connectionId}` +
+      `&Sec-MS-GEC=${generateSecMsGec()}` +
+      `&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}`
+    const socket = tlsConnect({ host: EDGE_HOST, port: 443, servername: EDGE_HOST })
+    socket.on('error', (err) =>
+      done(() => reject(new Error(`Không kết nối được tới Edge TTS: ${err.message}`))),
+    )
+    let buf: Buffer = Buffer.alloc(0)
+    socket.on('data', (chunk: Buffer) => {
+      buf = buf.length ? Buffer.concat([buf, chunk]) : chunk
+      const sep = buf.indexOf('\r\n\r\n')
+      if (sep === -1) return
+      const head = buf.subarray(0, sep).toString('latin1')
+      const lines = head.split('\r\n')
+      const status = parseInt(lines[0].split(' ')[1] ?? '', 10)
+      if (status !== 101) {
+        done(() => {
+          socket.destroy()
+          reject(new Error(`Edge TTS từ chối handshake (HTTP ${Number.isNaN(status) ? '?' : status}).`))
+        })
+        return
+      }
+      const headers: Record<string, string> = {}
+      for (const line of lines.slice(1)) {
+        const i = line.indexOf(':')
+        if (i > 0) headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim()
+      }
+      const expected = createHash('sha1').update(wsKey + WS_MAGIC).digest('base64')
+      if (headers['sec-websocket-accept'] !== expected) {
+        done(() => {
+          socket.destroy()
+          reject(new Error('Máy chủ Edge từ chối kết nối WebSocket (Sec-WebSocket-Accept không hợp lệ).'))
+        })
+        return
+      }
+      const rest = buf.subarray(sep + 4)
+      socket.removeAllListeners('data')
+      if (rest.length) socket.unshift(rest) // byte frame WS có thể đã về chung với headers
+      done(() => resolve({ socket }))
+    })
+    const lines = [
+      `GET ${path} HTTP/1.1`,
+      `Host: ${EDGE_HOST}`,
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      `Sec-WebSocket-Key: ${wsKey}`,
+      'Sec-WebSocket-Version: 13',
+      'Pragma: no-cache',
+      'Cache-Control: no-cache',
+      `Origin: ${EDGE_ORIGIN}`,
+      'Accept-Encoding: gzip, deflate, br, zstd',
+      'Accept-Language: en-US,en;q=0.9',
+      `Cookie: muid=${generateMuid()};`,
+      `User-Agent: ${EDGE_UA}`,
+    ]
+    socket.write(lines.join('\r\n') + '\r\n\r\n')
+  })
 }
 
 /**
@@ -169,7 +298,7 @@ export function synthesizeEdge(
       settled = true
       clearTimeout(timer)
       try {
-        req.destroy()
+        socketRef?.destroy()
       } catch {
         /* bỏ qua */
       }
@@ -182,37 +311,20 @@ export function synthesizeEdge(
       resolve(r)
     }
 
-    const wsKey = randomBytes(16).toString('base64')
-    const u = new URL(EDGE_URL)
-    const req = httpsRequest({
-      hostname: u.hostname,
-      port: 443,
-      path: u.pathname + u.search,
-      method: 'GET',
-      headers: {
-        Host: u.hostname,
-        Upgrade: 'websocket',
-        Connection: 'Upgrade',
-        'Sec-WebSocket-Key': wsKey,
-        'Sec-WebSocket-Version': '13',
-        Origin: 'https://www.bing.com',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+    let socketRef: import('node:net').Socket | null = null
+    doHandshake().then(
+      ({ socket }) => {
+        if (settled) {
+          socket.destroy()
+          return
+        }
+        socketRef = socket
+        onSocket(socket)
       },
-    })
-    req.on('error', (err) => fail(`Không kết nối được tới Edge TTS: ${err.message}`))
-    req.on('response', (res) =>
-      fail(`Edge TTS từ chối handshake (HTTP ${res.statusCode ?? '?'}).`),
+      (err) => fail(err instanceof Error ? err.message : String(err)),
     )
-    req.on('upgrade', (res, socket) => {
-      const expected = createHash('sha1')
-        .update(wsKey + WS_MAGIC)
-        .digest('base64')
-      if (res.headers['sec-websocket-accept'] !== expected) {
-        socket.destroy()
-        fail('Máy chủ Edge từ chối kết nối WebSocket (Sec-WebSocket-Accept không hợp lệ).')
-        return
-      }
+
+    const onSocket = (socket: import('node:net').Socket) => {
 
       const requestId = randomUUID()
       const words: EdgeWord[] = []
@@ -298,7 +410,6 @@ export function synthesizeEdge(
           `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="vi-VN">` +
           `<voice name="${voiceName}"><prosody rate="+0%" pitch="+0Hz">${escapeXml(text)}</prosody></voice></speak>`,
       )
-    })
-    req.end()
+    }
   })
 }
