@@ -1,6 +1,7 @@
-import { IsString, IsOptional, IsInt, Min, Max, IsIn, MaxLength } from 'class-validator'
+import { IsString, IsOptional, IsInt, Min, Max, IsIn, MaxLength, IsArray, ArrayMinSize, ArrayMaxSize, ValidateNested } from 'class-validator'
+import { Type } from 'class-transformer'
 
-const PROVIDERS = ['gemini', 'openai', 'xai', 'anthropic', 'deepseek', 'experientiallabs', 'apmix', 'muse', 'groq', 'moonshot'] as const
+const PROVIDERS = ['gemini', 'openai', 'xai', 'anthropic', 'deepseek', 'experientiallabs', 'apmix', 'muse', 'groq', 'moonshot', 'edge'] as const
 
 export class ScriptDto {
   /** Chủ đề video */
@@ -91,4 +92,44 @@ export class ClipDto {
   @IsOptional()
   @IsIn([...PROVIDERS])
   provider?: string
+}
+
+export class VoiceBatchSegmentDto {
+  @IsString()
+  @MaxLength(50)
+  id!: string
+
+  @IsString()
+  @MaxLength(4000)
+  text!: string
+}
+
+/** POST /videogen/voice-batch — sinh giọng đọc hàng loạt theo segment */
+export class VoiceBatchDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => VoiceBatchSegmentDto)
+  segments!: VoiceBatchSegmentDto[]
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  voice?: string
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  language?: string
+
+  @IsOptional()
+  @IsIn(['gemini', 'openai', 'edge'])
+  provider?: string
+
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  @Max(16)
+  concurrency?: number
 }

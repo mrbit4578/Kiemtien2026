@@ -10,7 +10,7 @@ import {
   Res,
 } from '@nestjs/common'
 import { VideogenService } from './videogen.service'
-import { ScriptDto, ImageDto, VoiceDto, ClipDto } from './dto'
+import { ScriptDto, ImageDto, VoiceDto, VoiceBatchDto, ClipDto } from './dto'
 import { requireWorkspaceId } from '../common/session'
 import type { Request, Response } from 'express'
 
@@ -48,6 +48,13 @@ export class VideogenController {
   @HttpCode(200)
   async voice(@Body() dto: VoiceDto, @Session() session: any, @Req() req: Request) {
     return this.vg.voice(requireWorkspaceId(session), dto, req.ip)
+  }
+
+  /** Sinh giọng đọc hàng loạt theo segment (worker pool + adaptive 429) */
+  @Post('voice-batch')
+  @HttpCode(200)
+  async voiceBatch(@Body() dto: VoiceBatchDto, @Session() session: any, @Req() req: Request) {
+    return this.vg.voiceBatch(requireWorkspaceId(session), dto, req.ip)
   }
 
   /** Khởi job sinh clip AI (Veo/Sora) — poll để lấy tiến độ */
