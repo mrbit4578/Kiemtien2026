@@ -41,6 +41,7 @@ interface GenScene {
   audioUrl: string | null
   voiceLoading: boolean
   voiceProvider: string | null
+  srt: string | null
   clipUrl: string | null
   clipJobId: string | null
   clipStatus: string | null
@@ -61,6 +62,18 @@ function toMessage(err: unknown): string {
 
 function dataUrl(mime: string, b64: string): string {
   return `data:${mime};base64,${b64}`
+}
+
+function downloadText(filename: string, text: string) {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 /* ─── Component chính ─── */
@@ -159,6 +172,19 @@ export function VideoGenStudio({
   const [allVoiceLoading, setAllVoiceLoading] = useState(false)
   const [allImageLoading, setAllImageLoading] = useState(false)
 
+  // Workflow templates (giọng đọc)
+  const [tplOpen, setTplOpen] = useState(true)
+  const [tplText, setTplText] = useState('')
+  const [tplProvider, setTplProvider] = useState('edge')
+  const [tplVoice, setTplVoice] = useState('')
+  const [tplLoading, setTplLoading] = useState(false)
+  const [tplResult, setTplResult] = useState<{
+    audioUrl: string
+    mime: string
+    srt: string
+    durationSec: number
+  } | null>(null)
+
   const [composing, setComposing] = useState(false)
   const [composeLabel, setComposeLabel] = useState('')
   const [composeProgress, setComposeProgress] = useState(0)
@@ -182,7 +208,9 @@ export function VideoGenStudio({
 
   const providerOptions = (cap: 'chat' | 'image' | 'voice' | 'video') => (
     <>
-      <option value="auto">Tự động (Gemini → OpenAI)</option>
+      <option value="auto">
+        {cap === 'voice' ? 'Tự động (Gemini → OpenAI → Edge)' : 'Tự động (Gemini → OpenAI)'}
+      </option>
       {providers
         .filter((p) => p.connected && p.capabilities.includes(cap))
         .map((p) => (
@@ -229,6 +257,7 @@ export function VideoGenStudio({
           audioUrl: null,
           voiceLoading: false,
           voiceProvider: null,
+          srt: null,
           clipUrl: null,
           clipJobId: null,
           clipStatus: null,
@@ -307,13 +336,79 @@ export function VideoGenStudio({
   const genAllVoices = async () => {
     if (!scenes.length) return
     setAllVoiceLoading(true)
-    let ok = 0
-    for (let i = 0; i < scenes.length; i++) {
-      // eslint-disable-next-line no-await-in-loop
-      if (await genVoiceOne(i)) ok++
+    say('', '')
+    try {
+      const res = await api.post<{
+        provider: string
+        segments: Array<{ id: string; audioBase64: string; mime: string; durationSec: number; srt: string }>
+      }>('/videogen/voice-batch', {
+        segments: scenes.map((s, i) => ({ id: String(i), text: s.text })),
+        voice: voiceName.trim() || undefined,
+        language: voiceLang,
+        provider: provParam(voiceProvider),
+        concurrency: 8,
+      })
+      const byId = new Map(res.segments.map((sg) => [sg.id, sg]))
+      setScenes((prev) =>
+        prev.map((s, i) => {
+          const sg = byId.get(String(i))
+          if (!sg) return s
+          return {
+            ...s,
+            audioUrl: dataUrl(sg.mime, sg.audioBase64),
+            srt: sg.srt,
+            voiceLoading: false,
+            voiceProvider: res.provider,
+          }
+        }),
+      )
+      say('ok', `Đã sinh giọng đọc cho ${res.segments.length}/${scenes.length} scene (chạy song song, via ${res.provider}).`)
+    } catch (err) {
+      say('', 'Batch lỗi, đang thử lại từng scene…')
+      let ok = 0
+      for (let i = 0; i < scenes.length; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        if (await genVoiceOne(i)) ok++
+      }
+      say(ok ? 'ok' : 'err', ok ? `Đã sinh giọng đọc cho ${ok}/${scenes.length} scene (chế độ từng scene).` : toMessage(err))
+    } finally {
+      setAllVoiceLoading(false)
     }
-    setAllVoiceLoading(false)
-    say('ok', `Đã sinh giọng đọc cho ${ok}/${scenes.length} scene.`)
+  }
+
+  /* ─── Workflow template: text dài → voice + SRT (không qua Bước 1–3) ─── */
+  const tplGen = async () => {
+    if (!tplText.trim()) {
+      say('err', 'Dán đoạn text dài cần đọc trước.')
+      return
+    }
+    setTplLoading(true)
+    say('', '')
+    try {
+      const res = await api.post<{
+        provider: string
+        segments: Array<{ id: string; audioBase64: string; mime: string; durationSec: number; srt: string }>
+      }>('/videogen/voice-batch', {
+        segments: [{ id: '0', text: tplText.trim() }],
+        voice: tplVoice.trim() || undefined,
+        language: 'vi-VN',
+        provider: provParam(tplProvider),
+        concurrency: 8,
+      })
+      const sg = res.segments[0]
+      if (!sg) throw new Error('Không nhận được audio từ server.')
+      setTplResult({
+        audioUrl: dataUrl(sg.mime, sg.audioBase64),
+        mime: sg.mime,
+        srt: sg.srt,
+        durationSec: sg.durationSec,
+      })
+      say('ok', `Đã tạo voiceover (${Math.round(sg.durationSec)}s, via ${res.provider}).`)
+    } catch (err) {
+      say('err', toMessage(err))
+    } finally {
+      setTplLoading(false)
+    }
   }
 
   /* ─── Bước 4 (tuỳ chọn): clip AI ─── */
@@ -514,7 +609,7 @@ export function VideoGenStudio({
             <div>
               <label className={labelCls}>🎙️ Giọng đọc</label>
               <select value={voiceProvider} onChange={(e) => setVoiceProvider(e.target.value)} className={inputCls}>
-                <option value="auto">Tự động (Gemini → OpenAI)</option>
+                <option value="auto">Tự động (Gemini → OpenAI → Edge)</option>
                 {providers
                   .filter((p) => p.connected && p.capabilities.includes('voice'))
                   .map((p) => (
@@ -539,10 +634,11 @@ export function VideoGenStudio({
             </div>
           </div>
           <div className="text-[11px] text-slate-500 leading-relaxed mt-3">
-            🖼️🎙️🎬 Ảnh / giọng / clip AI cần <b className="text-slate-300">Gemini</b> hoặc{' '}
+            🖼️🎬 Ảnh / clip AI cần <b className="text-slate-300">Gemini</b> hoặc{' '}
             <b className="text-slate-300">OpenAI</b> — tick chọn key cho từng bước ở trên; để "Tự động"
-            thì hệ thống tự fallback sang key Gemini/OpenAI đã kết nối. Viết kịch bản dùng được mọi
-            key đã kết nối.
+            thì hệ thống tự fallback sang key Gemini/OpenAI đã kết nối. 🎙️ Giọng đọc có thêm{' '}
+            <b className="text-slate-300">Edge TTS miễn phí (không cần key)</b> — chọn trong ô Giọng đọc ở trên.
+            Viết kịch bản dùng được mọi key đã kết nối.
             {!canVideo && (
               <span className="block mt-1 text-brand-amber">
                 ⚠️ Chưa có key sinh clip AI (cần Gemini billing hoặc OpenAI credits) — vẫn dựng được video từ ảnh + Ken Burns.
@@ -551,6 +647,109 @@ export function VideoGenStudio({
           </div>
         </div>
       </div>
+
+      {/* Workflow templates — phím tắt giọng đọc */}
+      <section className="p-4 rounded-2xl bg-dark-900/60 border border-dark-700">
+        <button onClick={() => setTplOpen(!tplOpen)} className="w-full flex items-start justify-between gap-3 text-left">
+          <span>
+            <span className="block text-sm font-bold text-white">⚡ Workflow templates</span>
+            <span className="block text-[11px] text-slate-500 mt-0.5">
+              Phím tắt workflow giọng đọc — chạy ngay không cần đi từng bước.
+            </span>
+          </span>
+          <span className="text-slate-400 text-base shrink-0">{tplOpen ? '▾' : '▸'}</span>
+        </button>
+
+        {tplOpen && (
+          <div className="grid md:grid-cols-3 gap-3 mt-3">
+            {/* Card 1: voiceover song song + subtitle */}
+            <div className="p-3 rounded-xl bg-dark-950/60 border border-dark-700 flex flex-col">
+              <div className="text-xs font-bold text-white mb-1">🎙️ Voiceover song song + Subtitle</div>
+              <p className="text-[11px] text-slate-500 mb-3">
+                Sinh giọng cho toàn bộ scene cùng lúc (thay vì từng scene), kèm SRT từng scene.
+              </p>
+              <button onClick={genAllVoices} disabled={!scenes.length || allVoiceLoading} className={btnPrimary + ' mt-auto'}>
+                {allVoiceLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />}
+                Chạy cho tất cả scene
+              </button>
+              <p className="text-[10px] text-slate-500 mt-2">Tận dụng Bước 3 — kết quả đổ vào từng scene bên dưới.</p>
+            </div>
+
+            {/* Card 2: text dài → voice + SRT */}
+            <div className="p-3 rounded-xl bg-dark-950/60 border border-dark-700">
+              <div className="text-xs font-bold text-white mb-2">📝 Text dài → Voice + SRT</div>
+              <textarea
+                value={tplText}
+                onChange={(e) => setTplText(e.target.value)}
+                rows={5}
+                placeholder="Dán đoạn text dài cần đọc…"
+                className={inputCls + ' mb-2'}
+              />
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <div>
+                  <label className={labelCls}>Provider</label>
+                  <select value={tplProvider} onChange={(e) => setTplProvider(e.target.value)} className={inputCls}>
+                    {providerOptions('voice')}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Giọng</label>
+                  {tplProvider === 'edge' ? (
+                    <select value={tplVoice} onChange={(e) => setTplVoice(e.target.value)} className={inputCls}>
+                      <option value="">Nam miền Bắc (mặc định)</option>
+                      <option value="vi-VN-HoaiMyNeural">Nữ miền Bắc</option>
+                    </select>
+                  ) : (
+                    <input
+                      value={tplVoice}
+                      onChange={(e) => setTplVoice(e.target.value)}
+                      placeholder="Kore / alloy… (để trống = mặc định)"
+                      className={inputCls}
+                    />
+                  )}
+                </div>
+              </div>
+              <button onClick={tplGen} disabled={tplLoading} className={btnPrimary}>
+                {tplLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />}
+                Tạo voiceover
+              </button>
+              {tplResult && (
+                <div className="mt-3 space-y-2">
+                  <audio src={tplResult.audioUrl} controls className="h-8 w-full" />
+                  <div className="flex flex-wrap gap-2">
+                    <a href={tplResult.audioUrl} download="voiceover.mp3" className={btnGhost}>
+                      <Download className="w-4 h-4 inline mr-1" />
+                      Tải audio
+                    </a>
+                    <button onClick={() => downloadText('voiceover.srt', tplResult.srt)} className={btnGhost}>
+                      Tải SRT
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    {Math.round(tplResult.durationSec)}s · {tplResult.mime}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Card 3: dub đa ngôn ngữ (sắp có) */}
+            <div className="p-3 rounded-xl bg-dark-950/60 border border-dark-700 opacity-60 flex flex-col">
+              <div className="text-xs font-bold text-white mb-1 flex items-center gap-2">
+                🌍 Dub đa ngôn ngữ
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-amber/20 text-brand-amber border border-brand-amber/30 font-semibold">
+                  Sắp có
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 mb-3">
+                Dịch và lồng tiếng sang nhiều ngôn ngữ trong một lần chạy.
+              </p>
+              <button disabled className={btnPrimary + ' mt-auto'}>
+                Chạy
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
 
       {status.msg && (
         <div
@@ -706,7 +905,7 @@ export function VideoGenStudio({
               <input
                 value={voiceName}
                 onChange={(e) => setVoiceName(e.target.value)}
-                placeholder="Gemini: Kore, Puck… · OpenAI: alloy, nova…"
+                placeholder="Gemini: Kore, Puck… · OpenAI: alloy, nova… · Edge: để trống = Nam miền Bắc"
                 className={inputCls}
               />
             </div>
@@ -717,11 +916,6 @@ export function VideoGenStudio({
                 <option value="en-US">English (US)</option>
               </select>
             </div>
-            {!canVoice && (
-              <p className="text-[11px] text-brand-amber self-end flex items-center gap-1">
-                <AlertTriangle className="w-3.5 h-3.5" /> Cần key Gemini hoặc OpenAI để sinh giọng.
-              </p>
-            )}
           </div>
           <div className="space-y-2">
             {scenes.map((s, i) => (
@@ -735,6 +929,14 @@ export function VideoGenStudio({
                     <CheckCircle2 className="w-4 h-4 text-brand-emerald shrink-0" />
                     {s.voiceProvider && (
                       <span className="text-[10px] text-slate-500 shrink-0">via {provName(s.voiceProvider)}</span>
+                    )}
+                    {s.srt && (
+                      <button
+                        onClick={() => downloadText(`scene-${i + 1}.srt`, s.srt as string)}
+                        className="text-[11px] font-semibold text-brand-amber hover:underline shrink-0"
+                      >
+                        Tải SRT
+                      </button>
                     )}
                   </>
                 ) : (

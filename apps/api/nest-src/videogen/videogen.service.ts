@@ -15,8 +15,9 @@ import {
   type AiProviderId,
 } from '../ai/ai.providers'
 import { fetchTimeout } from '../common/safe-fetch'
-import { parseJsonLoose, pcmToWav, dataUrlParts, sleep } from './utils'
-import type { ScriptDto, ImageDto, VoiceDto, ClipDto } from './dto'
+import { parseJsonLoose, pcmToWav, dataUrlParts, sleep, chunkText, buildSrt, mp3DurationMs } from './utils'
+import { synthesizeEdge } from './edge-tts'
+import type { ScriptDto, ImageDto, VoiceDto, VoiceBatchDto, ClipDto } from './dto'
 
 /**
  * VideogenService — "Studio tạo video": sinh kịch bản / ảnh / giọng đọc /
@@ -48,6 +49,7 @@ const CAPABILITIES: Record<string, Capability[]> = {
   muse: ['chat'],
   groq: ['chat'],
   moonshot: ['chat'],
+  edge: ['voice'], // Edge TTS (Microsoft) — miễn phí, không cần key
 }
 
 /** Thứ tự ưu tiên khi user để provider='auto' */
@@ -104,7 +106,14 @@ export class VideogenService {
       'groq',
       'moonshot',
     ]
-    return all.map((id) => {
+    interface ProviderInfo {
+      id: string
+      name: string
+      connected: boolean
+      keyHint: string | null
+      capabilities: Capability[]
+    }
+    const list: ProviderInfo[] = all.map((id) => {
       const meta = getProviderMeta(id)
       const conn = conns.find((c) => c.provider === id)
       return {
@@ -115,6 +124,15 @@ export class VideogenService {
         capabilities: connected.has(id) ? (CAPABILITIES[id] ?? ['chat']) : [],
       }
     })
+    // 'edge' không thuộc AiProviderId union → append riêng, luôn connected
+    list.push({
+      id: 'edge',
+      name: 'Edge TTS (miễn phí)',
+      connected: true,
+      keyHint: 'miễn phí · không cần key',
+      capabilities: ['voice'],
+    })
+    return list
   }
 
   /** Chọn provider: ưu tiên provider được chỉ định (nếu đủ capability + đã kết nối),
@@ -400,32 +418,133 @@ export class VideogenService {
     dto: VoiceDto,
     ip?: string,
   ): Promise<{ provider: string; model: string; audioBase64: string; mime: string }> {
-    const { meta, apiKey } = await this.resolveProvider(
-      workspaceId,
-      dto.provider,
-      'voice',
-    )
-    try {
-      if (meta.kind === 'gemini') {
-        return await this.voiceGemini(meta, apiKey, dto, workspaceId, ip)
-      }
-      return await this.voiceOpenAi(meta, apiKey, dto, workspaceId, ip)
-    } catch (err) {
-      if (err instanceof HttpException) throw err
-      throw new HttpException(
-        `Không sinh được giọng đọc qua ${meta.name}. Hãy thử lại sau.`,
-        HttpStatus.BAD_GATEWAY,
+    // Edge TTS miễn phí — không cần key, gọi thẳng
+    if (dto.provider === 'edge') {
+      const r = await this.voiceEdgeRaw({
+        text: dto.text,
+        voice: dto.voice,
+        language: dto.language,
+      })
+      await this.log(
+        workspaceId,
+        'videogen_voice',
+        'edge',
+        { model: 'edge-tts', voice: dto.voice, textLen: dto.text.length },
+        ip,
       )
+      return {
+        provider: 'edge',
+        model: 'edge-tts',
+        audioBase64: r.mp3.toString('base64'),
+        mime: 'audio/mpeg',
+      }
     }
+    // Thử theo thứ tự [requested?, gemini, openai, edge] (lọc trùng).
+    // 429/quota → provider tiếp; lỗi khác → throw ngay.
+    const order = [dto.provider, 'gemini', 'openai', 'edge'].filter(
+      (p, i, arr): p is string => !!p && arr.indexOf(p) === i,
+    )
+    for (const id of order) {
+      if (id === 'edge') {
+        try {
+          const r = await this.voiceEdgeRaw({
+            text: dto.text,
+            voice: dto.voice,
+            language: dto.language,
+          })
+          await this.log(
+            workspaceId,
+            'videogen_voice',
+            'edge',
+            { model: 'edge-tts', voice: dto.voice, textLen: dto.text.length },
+            ip,
+          )
+          return {
+            provider: 'edge',
+            model: 'edge-tts',
+            audioBase64: r.mp3.toString('base64'),
+            mime: 'audio/mpeg',
+          }
+        } catch (err) {
+          if (this.is429ish(err)) continue
+          throw err
+        }
+      }
+      let key: { meta: AiProviderMeta; apiKey: string }
+      try {
+        key = await this.ai.getChatKey(workspaceId, id as AiProviderId)
+      } catch {
+        continue // chưa kết nối → thử provider tiếp
+      }
+      try {
+        if (key.meta.kind === 'gemini') {
+          const { pcm, rate } = await this.voiceGeminiRaw(key.meta, key.apiKey, {
+            text: dto.text,
+            voice: dto.voice,
+          })
+          const wav = pcmToWav(pcm, rate)
+          await this.log(
+            workspaceId,
+            'videogen_voice',
+            key.meta.id,
+            {
+              model: 'gemini-2.5-flash-preview-tts',
+              voice: dto.voice || 'Kore',
+              textLen: dto.text.length,
+            },
+            ip,
+          )
+          return {
+            provider: key.meta.id,
+            model: 'gemini-2.5-flash-preview-tts',
+            audioBase64: wav.toString('base64'),
+            mime: 'audio/wav',
+          }
+        }
+        const { mp3 } = await this.voiceOpenAiRaw(key.meta, key.apiKey, {
+          text: dto.text,
+          voice: dto.voice,
+        })
+        await this.log(
+          workspaceId,
+          'videogen_voice',
+          key.meta.id,
+          {
+            model: 'gpt-4o-mini-tts',
+            voice: dto.voice || 'alloy',
+            textLen: dto.text.length,
+          },
+          ip,
+        )
+        return {
+          provider: key.meta.id,
+          model: 'gpt-4o-mini-tts',
+          audioBase64: mp3.toString('base64'),
+          mime: 'audio/mpeg',
+        }
+      } catch (err) {
+        if (this.is429ish(err)) continue
+        throw err
+      }
+    }
+    throw new HttpException(
+      'Không sinh được giọng đọc: tất cả provider đều thất bại. Hãy thử lại sau.',
+      HttpStatus.BAD_GATEWAY,
+    )
   }
 
-  private async voiceGemini(
+  /** Lỗi 429 / rate limit / quota (theo message) → đáng thử provider tiếp. */
+  private is429ish(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err)
+    return /429|rate.?limit|quota/i.test(msg)
+  }
+
+  /** Gemini TTS → PCM thô + sample rate (không log — voice/voiceBatch tự log). */
+  private async voiceGeminiRaw(
     meta: AiProviderMeta,
     apiKey: string,
-    dto: VoiceDto,
-    workspaceId: string,
-    ip?: string,
-  ) {
+    p: { text: string; voice?: string },
+  ): Promise<{ pcm: Buffer; rate: number }> {
     const model = 'gemini-2.5-flash-preview-tts'
     const url =
       `${meta.baseUrl}/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
@@ -435,12 +554,12 @@ export class VideogenService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: dto.text }] }],
+          contents: [{ parts: [{ text: p.text }] }],
           generationConfig: {
             responseModalities: ['AUDIO'],
             speechConfig: {
               voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: dto.voice || 'Kore' },
+                prebuiltVoiceConfig: { voiceName: p.voice || 'Kore' },
               },
             },
           },
@@ -458,37 +577,27 @@ export class VideogenService {
     const data = JSON.parse(text) as {
       candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> } }>
     }
-    const part = (data.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data)
+    const part = (data.candidates?.[0]?.content?.parts ?? []).find(
+      (x) => x.inlineData?.data,
+    )
     if (!part?.inlineData?.data) {
-      throw new HttpException(`${meta.name} không trả về audio.`, HttpStatus.BAD_GATEWAY)
+      throw new HttpException(
+        `${meta.name} không trả về audio.`,
+        HttpStatus.BAD_GATEWAY,
+      )
     }
-    // audio/L16;codec=pcm;rate=24000 → bọc WAV để phát trực tiếp được
+    // audio/L16;codec=pcm;rate=24000
     const mime = part.inlineData.mimeType ?? 'audio/L16;rate=24000'
     const rate = Number(/rate=(\d+)/.exec(mime)?.[1] ?? 24000)
-    const pcm = Buffer.from(part.inlineData.data, 'base64')
-    const wav = pcmToWav(pcm, rate)
-    await this.log(
-      workspaceId,
-      'videogen_voice',
-      meta.id,
-      { model, voice: dto.voice || 'Kore', textLen: dto.text.length },
-      ip,
-    )
-    return {
-      provider: meta.id,
-      model,
-      audioBase64: wav.toString('base64'),
-      mime: 'audio/wav',
-    }
+    return { pcm: Buffer.from(part.inlineData.data, 'base64'), rate }
   }
 
-  private async voiceOpenAi(
+  /** OpenAI TTS → MP3 thô (không log). */
+  private async voiceOpenAiRaw(
     meta: AiProviderMeta,
     apiKey: string,
-    dto: VoiceDto,
-    workspaceId: string,
-    ip?: string,
-  ) {
+    p: { text: string; voice?: string },
+  ): Promise<{ mp3: Buffer }> {
     const model = 'gpt-4o-mini-tts'
     const res = await fetchTimeout(
       `${meta.baseUrl}/audio/speech`,
@@ -500,8 +609,8 @@ export class VideogenService {
         },
         body: JSON.stringify({
           model,
-          voice: dto.voice || 'alloy',
-          input: dto.text,
+          voice: p.voice || 'alloy',
+          input: p.text,
           response_format: 'mp3',
         }),
       },
@@ -514,20 +623,300 @@ export class VideogenService {
         HttpStatus.BAD_GATEWAY,
       )
     }
-    const buf = Buffer.from(await res.arrayBuffer())
-    await this.log(
-      workspaceId,
-      'videogen_voice',
-      meta.id,
-      { model, voice: dto.voice || 'alloy', textLen: dto.text.length },
-      ip,
-    )
-    return {
-      provider: meta.id,
-      model,
-      audioBase64: buf.toString('base64'),
-      mime: 'audio/mpeg',
+    return { mp3: Buffer.from(await res.arrayBuffer()) }
+  }
+
+  /** Edge TTS (miễn phí, không cần key) → MP3 + word boundaries. */
+  private async voiceEdgeRaw(p: {
+    text: string
+    voice?: string
+    language?: string
+  }): Promise<{
+    mp3: Buffer
+    words: { word: string; startMs: number; endMs: number }[]
+    durationMs: number
+  }> {
+    const lang = (p.language ?? '').toLowerCase()
+    const voiceName = /neural$/i.test(p.voice ?? '')
+      ? (p.voice as string)
+      : lang.startsWith('en')
+        ? 'en-US-AriaNeural'
+        : 'vi-VN-NamMinhNeural'
+    try {
+      const r = await synthesizeEdge(p.text, voiceName)
+      return { mp3: r.audio, words: r.words, durationMs: r.durationMs }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new HttpException(`Edge TTS lỗi: ${msg}`, HttpStatus.BAD_GATEWAY)
     }
+  }
+
+  // ─── 3b. Giọng đọc hàng loạt (voice workflows) ──────────────────────────
+
+  async voiceBatch(
+    workspaceId: string,
+    dto: VoiceBatchDto,
+    ip?: string,
+  ): Promise<{
+    provider: string
+    segments: Array<{
+      id: string
+      audioBase64: string
+      mime: string
+      durationSec: number
+      srt: string
+      chunks: Array<{ text: string; startSec: number; endSec: number }>
+    }>
+  }> {
+    // 1. Chain provider: ưu tiên dto.provider, thiếu key gemini/openai → loại khỏi chain
+    const requested = dto.provider
+      ? [dto.provider, ...['gemini', 'openai', 'edge'].filter((p) => p !== dto.provider)]
+      : ['gemini', 'openai', 'edge']
+    const keys = new Map<string, { meta: AiProviderMeta; apiKey: string }>()
+    for (const id of requested) {
+      if (id === 'edge') continue
+      try {
+        keys.set(id, await this.ai.getChatKey(workspaceId, id as AiProviderId))
+      } catch {
+        /* thiếu key → loại khỏi chain */
+      }
+    }
+    const chain = requested.filter((id) => id === 'edge' || keys.has(id))
+    if (!chain.length) {
+      throw new BadRequestException(
+        'Không có provider giọng đọc nào dùng được. Hãy kết nối key ở Cài đặt → AI Pro.',
+      )
+    }
+
+    // 2. Tách task: mỗi segment → chunkText(text, 50); segment trống → 400
+    interface Task {
+      segIdx: number
+      segId: string
+      chunkIdx: number
+      text: string
+    }
+    const tasks: Task[] = []
+    dto.segments.forEach((seg, segIdx) => {
+      const chunks = chunkText(seg.text, 50)
+      if (!chunks.length) {
+        throw new BadRequestException(
+          `Segment "${seg.id}" trống — cần nhập text để sinh giọng đọc.`,
+        )
+      }
+      chunks.forEach((text, chunkIdx) =>
+        tasks.push({ segIdx, segId: seg.id, chunkIdx, text }),
+      )
+    })
+
+    // 3. Worker pool + adaptive 429 handling
+    interface ChunkOut {
+      provider: string
+      pcm?: Buffer
+      rate?: number
+      mp3?: Buffer
+      words?: { word: string; startMs: number; endMs: number }[]
+      durationMs?: number
+    }
+    const shared = {
+      providerIdx: 0,
+      concurrency: dto.concurrency ?? 8,
+      pausedUntil: 0,
+      chunk429: 0,
+    }
+    const providersUsed = new Set<string>()
+    const results: (ChunkOut | undefined)[] = new Array(tasks.length)
+
+    const callEngine = async (
+      providerId: string,
+      task: Task,
+    ): Promise<ChunkOut> => {
+      if (providerId === 'edge') {
+        const r = await this.voiceEdgeRaw({
+          text: task.text,
+          voice: dto.voice,
+          language: dto.language,
+        })
+        return {
+          provider: 'edge',
+          mp3: r.mp3,
+          words: r.words,
+          durationMs: r.durationMs,
+        }
+      }
+      const k = keys.get(providerId)
+      if (!k) throw new Error(`Thiếu key ${providerId}.`)
+      if (k.meta.kind === 'gemini') {
+        const { pcm, rate } = await this.voiceGeminiRaw(k.meta, k.apiKey, {
+          text: task.text,
+          voice: dto.voice,
+        })
+        return { provider: providerId, pcm, rate }
+      }
+      const { mp3 } = await this.voiceOpenAiRaw(k.meta, k.apiKey, {
+        text: task.text,
+        voice: dto.voice,
+      })
+      return { provider: providerId, mp3 }
+    }
+
+    const runTask = async (task: Task): Promise<ChunkOut> => {
+      let n429 = 0
+      let nOther = 0
+      for (;;) {
+        const providerId = chain[shared.providerIdx]
+        try {
+          const wait = shared.pausedUntil - Date.now()
+          if (wait > 0) await sleep(wait)
+          const out = await callEngine(providerId, task)
+          providersUsed.add(providerId)
+          return out
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (this.is429ish(err)) {
+            shared.chunk429++
+            shared.concurrency = Math.max(2, Math.floor(shared.concurrency * 0.6))
+            shared.pausedUntil = Date.now() + 5000
+            if (shared.chunk429 >= 3 && shared.providerIdx < chain.length - 1) {
+              shared.providerIdx++
+            }
+            n429++
+            if (n429 >= 5) {
+              throw new HttpException(
+                'Provider giọng đọc đang bị giới hạn (quá nhiều lỗi 429). Hãy thử lại sau vài phút.',
+                HttpStatus.BAD_GATEWAY,
+              )
+            }
+            await sleep(5000)
+            continue
+          }
+          nOther++
+          if (nOther >= 2) {
+            throw err instanceof HttpException
+              ? err
+              : new HttpException(
+                  `Sinh giọng đọc thất bại: ${msg.slice(0, 200)}`,
+                  HttpStatus.BAD_GATEWAY,
+                )
+          }
+        }
+      }
+    }
+
+    const queue = tasks.map((_, i) => i)
+    const nWorkers = Math.max(1, Math.min(shared.concurrency, queue.length))
+    const workers: Promise<void>[] = []
+    let active = 0
+    for (let w = 0; w < nWorkers; w++) {
+      const wi = w
+      workers.push(
+        (async () => {
+          await sleep(wi * 150) // stagger — không dồn request cùng lúc
+          for (;;) {
+            // Adaptive throttling: concurrency có thể bị giảm khi dính 429 —
+            // chỉ lấy task mới khi số worker đang chạy còn dưới ngưỡng hiện tại
+            while (active >= shared.concurrency) await sleep(200)
+            const idx = queue.shift()
+            if (idx === undefined) break
+            active++
+            try {
+              results[idx] = await runTask(tasks[idx])
+            } finally {
+              active--
+            }
+          }
+        })(),
+      )
+    }
+    await Promise.all(workers)
+
+    // 4. Merge theo segment (đúng thứ tự chunk) + timing + SRT
+    const round2 = (n: number) => Math.round(n * 100) / 100
+    const round3 = (n: number) => Math.round(n * 1000) / 1000
+    const chunkDurSec = (o: ChunkOut): number => {
+      if (o.pcm) return o.pcm.length / ((o.rate ?? 24000) * 2)
+      if (o.mp3) {
+        return o.provider === 'edge' && o.durationMs != null
+          ? o.durationMs / 1000
+          : mp3DurationMs(o.mp3) / 1000
+      }
+      return 0
+    }
+
+    const segments = dto.segments.map((seg, segIdx) => {
+      const idxs = tasks
+        .map((t, i) => ({ t, i }))
+        .filter(({ t }) => t.segIdx === segIdx)
+        .sort((a, b) => a.t.chunkIdx - b.t.chunkIdx)
+      const outs = idxs.map(({ i }) => results[i] as ChunkOut)
+      const texts = idxs.map(({ t }) => t.text)
+
+      // Merge audio theo định dạng: gemini → WAV (concat pcm, rate từ chunk đầu),
+      // openai/edge → MP3 (Buffer.concat). Segment lẫn provider (hiếm, khi 429
+      // chuyển provider giữa chừng): lấy nhóm có tổng thời lượng dài nhất để
+      // audio không bị hỏng định dạng.
+      const pcmOuts = outs.filter((o) => o.pcm)
+      const mp3Outs = outs.filter((o) => o.mp3)
+      const pcmMs = pcmOuts.reduce((s, o) => s + chunkDurSec(o) * 1000, 0)
+      const mp3Ms = mp3Outs.reduce((s, o) => s + chunkDurSec(o) * 1000, 0)
+      let audioBase64: string
+      let mime: string
+      if (pcmOuts.length && pcmMs >= mp3Ms) {
+        const rate = outs[0]?.rate ?? pcmOuts[0].rate ?? 24000
+        const pcm = Buffer.concat(pcmOuts.map((o) => o.pcm as Buffer))
+        audioBase64 = pcmToWav(pcm, rate).toString('base64')
+        mime = 'audio/wav'
+      } else {
+        const mp3 = Buffer.concat(mp3Outs.map((o) => o.mp3 as Buffer))
+        audioBase64 = mp3.toString('base64')
+        mime = 'audio/mpeg'
+      }
+      const totalSec = outs.reduce((s, o) => s + chunkDurSec(o), 0)
+
+      // Timing từng chunk:
+      // - edge → word boundaries (cộng dồn thời lượng các chunk trước để cue đúng timeline)
+      // - gemini/openai → chia theo tỉ lệ ký tự trên tổng thời lượng segment
+      const totalChars = texts.reduce((s, x) => s + x.length, 0) || 1
+      let charsBefore = 0
+      let secsBefore = 0
+      const cues = idxs.map(({ t }, k) => {
+        const o = outs[k]
+        const dur = chunkDurSec(o)
+        let startSec: number
+        let endSec: number
+        if (o.words && o.words.length) {
+          startSec = secsBefore + o.words[0].startMs / 1000
+          endSec = secsBefore + o.words[o.words.length - 1].endMs / 1000
+        } else {
+          startSec = (totalSec * charsBefore) / totalChars
+          charsBefore += t.text.length
+          endSec = (totalSec * charsBefore) / totalChars
+        }
+        secsBefore += dur
+        return {
+          text: t.text,
+          startSec: round3(startSec),
+          endSec: round3(endSec),
+        }
+      })
+
+      return {
+        id: seg.id,
+        audioBase64,
+        mime,
+        durationSec: round2(totalSec),
+        srt: buildSrt(cues),
+        chunks: cues,
+      }
+    })
+
+    await this.log(workspaceId, 'videogen_voice_batch', chain[shared.providerIdx], {
+      segments: dto.segments.length,
+      chunks: tasks.length,
+      providers: [...providersUsed],
+      concurrency: dto.concurrency ?? 8,
+    }, ip)
+
+    return { provider: [...providersUsed].join('+'), segments }
   }
 
   // ─── 4. Clip AI (Veo / Sora) — job dài, poll ────────────────────────────
