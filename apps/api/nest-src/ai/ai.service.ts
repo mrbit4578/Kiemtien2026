@@ -92,6 +92,9 @@ export class AiService {
         case 'anthropic':
           valid = await this.validateAnthropic(meta, apiKey)
           break
+        case 'tinyfish':
+          valid = await this.validateTinyFish(apiKey)
+          break
         default:
           valid = await this.validateOpenAiCompatible(meta, apiKey)
       }
@@ -156,6 +159,20 @@ export class AiService {
       // body không parse được → không kết luận
     }
     return false
+  }
+
+  /**
+   * TinyFish không phải LLM chat — validate bằng 1 search call rẻ nhất
+   * (gói Search miễn phí). 401/403 → key sai; ok → key hợp lệ.
+   */
+  private async validateTinyFish(apiKey: string): Promise<boolean> {
+    const res = await fetchTimeout(
+      `https://api.search.tinyfish.ai?query=${encodeURIComponent('tinyfish')}&limit=1`,
+      { headers: { 'X-API-Key': apiKey } },
+      VALIDATE_TIMEOUT_MS,
+    )
+    if (res.status === 401 || res.status === 403) return false
+    return res.ok
   }
 
   // ─── CRUD connections ────────────────────────────────────────────────────
@@ -363,6 +380,12 @@ export class AiService {
   async chat(workspaceId: string, dto: ChatDto, ip?: string) {
     const meta = getProviderMeta(dto.provider)
     if (!meta) throw new BadRequestException('Provider không được hỗ trợ.')
+    // TinyFish là Search/Fetch API cho agent, không phải model chat.
+    if (meta.kind === 'tinyfish') {
+      throw new BadRequestException(
+        'TinyFish là Search/Fetch API (cấp dữ liệu cho tool web_search/fetch_url của AI Copilot), không phải model chat. Hãy chọn một provider chat khác.',
+      )
+    }
 
     const conn = await this.prisma.aiConnection.findUnique({
       where: { workspaceId_provider: { workspaceId, provider: meta.id } },

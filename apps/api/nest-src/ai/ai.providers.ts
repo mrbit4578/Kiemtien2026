@@ -14,8 +14,9 @@ export type AiProviderId =
   | 'muse'
   | 'groq'
   | 'moonshot'
+  | 'tinyfish'
 
-type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic'
+type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic' | 'tinyfish'
 
 export interface AiProviderMeta {
   id: AiProviderId
@@ -144,6 +145,18 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     baseUrl: 'https://api.moonshot.ai/v1',
     kind: 'openai-compatible',
   },
+  {
+    id: 'tinyfish',
+    name: 'TinyFish',
+    keyUrl: 'https://agent.tinyfish.ai/api-keys',
+    models: [],
+    defaultModel: '',
+    description:
+      'Search & Fetch API cho AI agent (không phải model chat): cấp nguồn tìm kiếm web có cấu trúc cho tool web_search/fetch_url của AI Copilot. Gói Search + Fetch miễn phí.',
+    keyNote: 'Search + Fetch miễn phí',
+    baseUrl: '',
+    kind: 'tinyfish',
+  },
 ]
 
 export function getProviderMeta(id: string): AiProviderMeta | undefined {
@@ -153,7 +166,7 @@ export function getProviderMeta(id: string): AiProviderMeta | undefined {
 /** Metadata public trả về cho frontend — KHÔNG chứa baseUrl/kind nội bộ. */
 export function publicProviderMeta() {
   return SUPPORTED_PROVIDERS.map(
-    ({ id, name, keyUrl, models, defaultModel, description, keyNote }) => ({
+    ({ id, name, keyUrl, models, defaultModel, description, keyNote, kind }) => ({
       id,
       name,
       keyUrl,
@@ -161,6 +174,9 @@ export function publicProviderMeta() {
       defaultModel,
       description,
       ...(keyNote ? { keyNote } : {}),
+      // TinyFish là Search/Fetch API, không phải model chat → frontend ẩn khỏi
+      // các ô chọn provider chat (AI Chat, Copilot, Studio).
+      supportsChat: kind !== 'tinyfish',
     }),
   )
 }
