@@ -44,6 +44,7 @@ const CAPABILITIES: Record<string, Capability[]> = {
   gemini: ['chat', 'image', 'voice', 'video'],
   openai: ['chat', 'image', 'voice', 'video'],
   pollinations: ['image'], // FLUX schnell — miễn phí không giới hạn
+  vyceai: ['chat', 'image'], // chat giá rẻ + ảnh Grok Imagine 2 (trừ balance)
   xai: ['chat'],
   anthropic: ['chat'],
   deepseek: ['chat'],
@@ -102,6 +103,7 @@ export class VideogenService {
       'gemini',
       'openai',
       'pollinations',
+      'vyceai',
       'xai',
       'anthropic',
       'deepseek',
@@ -425,8 +427,16 @@ export class VideogenService {
     workspaceId: string,
     ip?: string,
   ) {
-    const model = 'gpt-image-1'
-    const size = ratio === '16:9' ? '1536x1024' : ratio === '1:1' ? '1024x1024' : '1024x1536'
+    // Model ảnh riêng theo provider (mặc định gpt-image-1 của OpenAI).
+    const model = meta.imageModel ?? 'gpt-image-1'
+    const body: Record<string, unknown> = { model, prompt, n: 1 }
+    if (meta.id === 'vyceai') {
+      // Grok Imagine 2 qua VyceAI: bỏ qua `size`, dùng `aspect_ratio` ("9:16" → 720x1280).
+      body.aspect_ratio = ratio === '16:9' ? '16:9' : ratio === '1:1' ? '1:1' : '9:16'
+    } else {
+      body.size = ratio === '16:9' ? '1536x1024' : ratio === '1:1' ? '1024x1024' : '1024x1536'
+      body.response_format = 'b64_json'
+    }
     const res = await fetchTimeout(
       `${meta.baseUrl}/images/generations`,
       {
@@ -435,13 +445,7 @@ export class VideogenService {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model,
-          prompt,
-          size,
-          response_format: 'b64_json',
-          n: 1,
-        }),
+        body: JSON.stringify(body),
       },
       IMAGE_TIMEOUT_MS,
     )
@@ -462,7 +466,7 @@ export class VideogenService {
       provider: meta.id,
       model,
       url: d.b64_json ? `data:image/png;base64,${d.b64_json}` : (d.url as string),
-      mime: 'image/png',
+      mime: d.b64_json ? 'image/png' : /\.jpe?g(\?|$)/i.test(d.url ?? '') ? 'image/jpeg' : 'image/png',
     }
   }
 
