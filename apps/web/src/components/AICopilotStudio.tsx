@@ -321,6 +321,15 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
             currentMeta={currentMeta}
           />
         </div>
+        {/* Badge nguồn tìm kiếm web của agent: TinyFish khi đã kết nối key ở AI Pro */}
+        {connections.some((c) => c.provider === 'tinyfish' && c.status === 'active') && (
+          <span
+            className="flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-xl bg-teal-400/15 text-teal-300 border border-teal-400/30 whitespace-nowrap"
+            title="Tool web_search/fetch_url của agent đang dùng TinyFish Search & Fetch API thay vì cào web thủ công"
+          >
+            🔍 Web search: TinyFish
+          </span>
+        )}
       </div>
 
       {/* Suggested Quick Prompts */}
