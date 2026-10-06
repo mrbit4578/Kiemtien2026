@@ -134,14 +134,47 @@ Nguyên tắc ràng buộc (bắt buộc tuân thủ):
     return m ? m[0] : null
   }
 
+  /**
+   * Trích JSON object đầu tiên trong text (cân bằng ngoặc, bỏ qua ngoặc nằm
+   * trong string) — chịu được text thừa trước/sau JSON mà model hay thêm.
+   */
+  private extractFirstJsonObject(text: string): string | null {
+    const start = text.indexOf('{')
+    if (start < 0) return null
+    let depth = 0
+    let inString = false
+    let escaped = false
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (ch === '\\') escaped = true
+        else if (ch === '"') inString = false
+        continue
+      }
+      if (ch === '"') inString = true
+      else if (ch === '{') depth++
+      else if (ch === '}') {
+        depth--
+        if (depth === 0) return text.slice(start, i + 1)
+      }
+    }
+    return null
+  }
+
   private parseAutoBuildJson(raw: string): Record<string, any> {
     const cleaned = raw.replace(/```json\s*/gi, '').replace(/```/g, '').trim()
-    const m = cleaned.match(/\{[\s\S]*\}/)
-    if (!m) throw new BadRequestException('AI không trả về JSON hợp lệ — hãy thử lại.')
+    const candidate = this.extractFirstJsonObject(cleaned)
+    if (!candidate) throw new BadRequestException('AI không trả về JSON hợp lệ — hãy thử lại.')
     try {
-      return JSON.parse(m[0])
+      return JSON.parse(candidate)
     } catch {
-      throw new BadRequestException('AI không trả về JSON hợp lệ — hãy thử lại.')
+      // Sửa lỗi thường gặp của model: dấu phẩy thừa trước } hoặc ]
+      try {
+        return JSON.parse(candidate.replace(/,(\s*[}\]])/g, '$1'))
+      } catch {
+        throw new BadRequestException('AI không trả về JSON hợp lệ — hãy thử lại.')
+      }
     }
   }
 
@@ -184,21 +217,38 @@ Nguyên tắc ràng buộc (bắt buộc tuân thủ):
     if (!meta) throw new BadRequestException('Provider không được hỗ trợ.')
     const model = dto.model?.trim() || meta.defaultModel
 
-    // 2. AI phân tích + sinh brief/script theo schema JSON (1 call duy nhất).
-    const aiRes = await this.ai.chat(
-      workspaceId,
-      {
-        provider: meta.id,
-        model,
-        maxTokens: 2048,
-        messages: [
-          { role: 'system', content: VideoService.AUTO_BUILD_SYSTEM },
-          { role: 'user', content: `NỘI DUNG NGUỒN:\n${content}` },
-        ],
-      } as any,
-      undefined,
-    )
-    const data = this.parseAutoBuildJson(aiRes.content ?? '')
+    // 2. AI phân tích + sinh brief/script theo schema JSON.
+    //    Model đôi khi glitch trả về text không phải JSON (đặc biệt model nhỏ):
+    //    nhờ AI tự sửa lại 1 lần thay vì bắt user bấm lại nút.
+    const chatOnce = (messages: Array<{ role: string; content: string }>) =>
+      this.ai.chat(
+        workspaceId,
+        { provider: meta.id, model, maxTokens: 2048, messages } as any,
+        undefined,
+      )
+    let aiRes = await chatOnce([
+      { role: 'system', content: VideoService.AUTO_BUILD_SYSTEM },
+      { role: 'user', content: `NỘI DUNG NGUỒN:\n${content}` },
+    ])
+    let data: Record<string, any>
+    try {
+      data = this.parseAutoBuildJson(aiRes.content ?? '')
+    } catch {
+      aiRes = await chatOnce([
+        {
+          role: 'system',
+          content:
+            'Bạn là trợ lý dựng video faceless. Trả về DUY NHẤT một JSON hợp lệ, không markdown, không giải thích thêm.',
+        },
+        {
+          role: 'user',
+          content:
+            `Bạn vừa trả về nội dung KHÔNG phải JSON hợp lệ:\n${(aiRes.content ?? '').slice(0, 4000)}\n\n` +
+            'Trả lại DUY NHẤT JSON hợp lệ đúng schema đã cho trước đó, không thêm bất kỳ text nào khác.',
+        },
+      ])
+      data = this.parseAutoBuildJson(aiRes.content ?? '')
+    }
 
     // 3. Guardrail G0 originality — tool TỪ CHỐI khi góc trượt O1–O5.
     const briefResult = await videoBriefTool.execute(
