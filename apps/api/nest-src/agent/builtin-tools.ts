@@ -31,68 +31,113 @@ function htmlToText(html: string): string {
     .trim()
 }
 
+/**
+ * Backend tìm kiếm/đọc web qua TinyFish (inject từ AgentService).
+ * Trả về null khi chưa kết nối key hoặc gọi API thất bại → tool tự fallback.
+ */
+export interface TinyFishWebBackend {
+  search: (
+    query: string,
+  ) => Promise<Array<{ title: string; url: string; snippet: string }> | null>
+  fetchUrl: (url: string) => Promise<string | null>
+}
+
 /** Tìm kiếm web qua DuckDuckGo HTML (không cần API key) — cùng pattern với RagService. */
-export const webSearchTool: ToolDefinition = {
-  name: 'web_search',
-  description:
-    'Tìm kiếm thông tin mới trên web (tin tức, giá cả, tài liệu). Dùng khi câu hỏi cần kiến thức cập nhật sau thời điểm training của model.',
-  parameters: {
-    type: 'object',
-    properties: {
-      query: {
-        type: 'string',
-        description: 'Câu truy vấn tìm kiếm',
-        minLength: 2,
-        maxLength: 300,
-      },
-    },
-    required: ['query'],
-    additionalProperties: false,
-  },
-  execute: async (args) => {
-    const query = args['query'] as string
-    try {
-      const res = await fetchTimeout(
-        `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
-        { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OpenRemoteHub/1.0)' } },
-        TOOL_FETCH_TIMEOUT_MS,
-      )
-      if (!res.ok) return 'Tìm kiếm web thất bại, hãy trả lời bằng kiến thức có sẵn.'
-      const html = await res.text()
-      const out: string[] = []
-      const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g
-      let m: RegExpExecArray | null
-      while ((m = re.exec(html)) && out.length < 5) {
-        const title = m[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
-        if (title) out.push(`- ${title} (${m[1]})`)
-      }
-      return out.length > 0 ? out.join('\n') : 'Không tìm thấy kết quả phù hợp.'
-    } catch {
-      return 'Tìm kiếm web thất bại (lỗi mạng), hãy trả lời bằng kiến thức có sẵn.'
+async function searchDuckDuckGo(query: string): Promise<string> {
+  try {
+    const res = await fetchTimeout(
+      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OpenRemoteHub/1.0)' } },
+      TOOL_FETCH_TIMEOUT_MS,
+    )
+    if (!res.ok) return 'Tìm kiếm web thất bại, hãy trả lời bằng kiến thức có sẵn.'
+    const html = await res.text()
+    const out: string[] = []
+    const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(html)) && out.length < 5) {
+      const title = m[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+      if (title) out.push(`- ${title} (${m[1]})`)
     }
-  },
+    return out.length > 0 ? out.join('\n') : 'Không tìm thấy kết quả phù hợp.'
+  } catch {
+    return 'Tìm kiếm web thất bại (lỗi mạng), hãy trả lời bằng kiến thức có sẵn.'
+  }
+}
+
+export function makeWebSearchTool(tinyfish?: TinyFishWebBackend | null): ToolDefinition {
+  return {
+    name: 'web_search',
+    description:
+      'Tìm kiếm thông tin mới trên web (tin tức, giá cả, tài liệu). Dùng khi câu hỏi cần kiến thức cập nhật sau thời điểm training của model.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Câu truy vấn tìm kiếm',
+          minLength: 2,
+          maxLength: 300,
+        },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    execute: async (args) => {
+      const query = args['query'] as string
+      // Ưu tiên TinyFish Search API (kết quả có cấu trúc, ổn định cho agent)
+      // khi workspace đã kết nối key ở AI Pro; lỗi thì rớt xuống DuckDuckGo.
+      if (tinyfish) {
+        try {
+          const results = await tinyfish.search(query)
+          if (results && results.length > 0) {
+            return results
+              .map(
+                (r) =>
+                  `- ${r.title} (${r.url})${r.snippet ? `\n  ${r.snippet}` : ''}`,
+              )
+              .join('\n')
+          }
+        } catch {
+          // rớt xuống DuckDuckGo bên dưới
+        }
+      }
+      return searchDuckDuckGo(query)
+    },
+  }
 }
 
 /** Đọc nội dung text của một URL — có SSRF guard fail-closed. */
-export const fetchUrlTool: ToolDefinition = {
-  name: 'fetch_url',
-  description:
-    'Đọc nội dung text của một trang web công khai (bài viết, tài liệu). Chỉ dùng cho URL công khai, không dùng cho URL nội bộ.',
-  parameters: {
-    type: 'object',
-    properties: {
-      url: {
-        type: 'string',
-        description: 'URL http/https công khai cần đọc',
-        minLength: 10,
-        maxLength: 2000,
+export function makeFetchUrlTool(tinyfish?: TinyFishWebBackend | null): ToolDefinition {
+  return {
+    name: 'fetch_url',
+    description:
+      'Đọc nội dung text của một trang web công khai (bài viết, tài liệu). Chỉ dùng cho URL công khai, không dùng cho URL nội bộ.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'URL http/https công khai cần đọc',
+          minLength: 10,
+          maxLength: 2000,
+        },
       },
+      required: ['url'],
+      additionalProperties: false,
     },
-    required: ['url'],
-    additionalProperties: false,
-  },
-  execute: async (args) => {
+    execute: async (args) => {
     const rawUrl = args['url'] as string
+    // Ưu tiên TinyFish Fetch API (render bằng trình duyệt thật, trả markdown
+    // sạch) khi đã kết nối key; lỗi thì rớt xuống fetch trực tiếp bên dưới.
+    if (tinyfish) {
+      try {
+        const text = await tinyfish.fetchUrl(rawUrl)
+        if (text && text.trim().length > 0) return text
+      } catch {
+        // rớt xuống fetch trực tiếp bên dưới
+      }
+    }
     try {
       // Transport pinned: DNS pinning + mỗi hop redirect đều re-validate.
       const res = await fetchPinnedWithRedirects(rawUrl, {
@@ -112,7 +157,8 @@ export const fetchUrlTool: ToolDefinition = {
       if (err instanceof SsrfBlockedError) return err.message
       return `Không đọc được trang (lỗi mạng/timeout): ${redactUrlSecrets(rawUrl)}`
     }
-  },
+    },
+  }
 }
 
 /** Giờ hiện tại (múi giờ Việt Nam). */
@@ -333,10 +379,12 @@ export function makeRenderStatusTool(
 export function buildBuiltinTools(deps: {
   knowledgeSearch: (query: string, topK: number) => Promise<Array<{ title: string; content: string; score: number }>>
   listConnectedAi: () => Promise<Array<{ provider: string; status: string }>>
+  /** Nguồn TinyFish khi workspace đã kết nối key ở AI Pro — null khi chưa có. */
+  tinyfish?: TinyFishWebBackend | null
 }): ToolDefinition[] {
   return [
-    webSearchTool,
-    fetchUrlTool,
+    makeWebSearchTool(deps.tinyfish),
+    makeFetchUrlTool(deps.tinyfish),
     currentTimeTool,
     makeKnowledgeSearchTool(deps.knowledgeSearch),
     makeListConnectedAiTool(deps.listConnectedAi),

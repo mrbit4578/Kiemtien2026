@@ -70,6 +70,8 @@ export interface AiProviderMeta {
   description: string
   /** Ghi chú ngắn về key (VD: "Key miễn phí") — optional */
   keyNote?: string
+  /** false với provider không phải model chat (VD: TinyFish) — ẩn khỏi ô chọn provider chat */
+  supportsChat?: boolean
 }
 
 /** GET /ai/connections — backend KHÔNG bao giờ trả key (kể cả đã mã hóa) */

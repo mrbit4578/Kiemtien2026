@@ -33,6 +33,7 @@ const PROVIDER_ACCENT: Record<string, string> = {
   muse: 'from-cyan-500 to-blue-600',
   groq: 'from-red-500 to-orange-400',
   moonshot: 'from-amber-400 to-yellow-300',
+  tinyfish: 'from-teal-400 to-cyan-300',
 }
 
 /** Code mau goi truc tiep API (chuan OpenAI) bang key cua user — cho tab "Quickstart". */
@@ -115,6 +116,9 @@ function KeyModal({
   const [sampleModel, setSampleModel] = useState(provider.defaultModel || 'grok-4.7')
   const [copied, setCopied] = useState(false)
   const samples = codeSamples('https://api.experientiallabs.ai/v1', sampleModel)
+  // Provider không phải model chat (VD: TinyFish) → ẩn tab Quickstart (code mẫu chat không phù hợp).
+  const showQuickstart = provider.models.length > 0
+  const activeTab = showQuickstart ? tab : 'key'
 
   const handleSave = async () => {
     setError(null)
@@ -156,12 +160,12 @@ function KeyModal({
         </div>
 
         <div className="flex gap-1 p-1 rounded-xl bg-dark-950/60 border border-white/10">
-          {(['key', 'code'] as const).map((t) => (
+          {(['key', ...(showQuickstart ? ['code'] as const : [])] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
               className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                tab === t ? 'bg-brand-emerald/20 text-brand-emerald' : 'text-slate-400 hover:text-white'
+                activeTab === t ? 'bg-brand-emerald/20 text-brand-emerald' : 'text-slate-400 hover:text-white'
               }`}
             >
               {t === 'key' ? 'Nhập key' : 'Quickstart'}
@@ -169,7 +173,7 @@ function KeyModal({
           ))}
         </div>
 
-        {tab === 'code' ? (
+        {activeTab === 'code' ? (
           <div className="space-y-3">
             <div>
               <label className="block text-[11px] font-bold text-slate-400 mb-1.5">Model</label>
@@ -322,7 +326,8 @@ export default function AiSettingsPage() {
           </h1>
           <p className="text-sm text-slate-400 mt-1">
             Dùng API key <span className="text-slate-200 font-semibold">của chính bạn</span> (gói Pro đã
-            đăng ký) cho Gemini, ChatGPT, Grok, Claude, DeepSeek và ExperientialLabs.
+            đăng ký) cho Gemini, ChatGPT, Grok, Claude, DeepSeek, ExperientialLabs… và TinyFish
+            (Search/Fetch API cho AI Copilot).
           </p>
         </div>
         <button

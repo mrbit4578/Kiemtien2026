@@ -322,7 +322,8 @@ export function InteractiveKnowledgeGraph() {
   const [providerId, setProviderId] = useState<string>('')
   const [model, setModel] = useState<string>('')
   const activeConns = connections.filter((c) => c.status === 'active')
-  const activeMeta = providers.filter((p) => activeConns.some((c) => c.provider === p.id))
+  // Ẩn provider không phải model chat (VD: TinyFish — Search/Fetch API).
+  const activeMeta = providers.filter((p) => p.supportsChat !== false && activeConns.some((c) => c.provider === p.id))
   const currentMeta = providers.find((p) => p.id === providerId)
 
   // Mặc định chọn provider active đầu tiên + model mặc định của nó

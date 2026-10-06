@@ -508,7 +508,8 @@ export default function AiChatPage() {
   }
 
   const activeConns = connections.filter((c) => c.status === 'active')
-  const activeMeta = providers.filter((p) => activeConns.some((c) => c.provider === p.id))
+  // Ẩn provider không phải model chat (VD: TinyFish — Search/Fetch API).
+  const activeMeta = providers.filter((p) => p.supportsChat !== false && activeConns.some((c) => c.provider === p.id))
   const currentMeta = providers.find((p) => p.id === providerId)
   const providerNameOf = (id: string) => providers.find((p) => p.id === id)?.name ?? id
 

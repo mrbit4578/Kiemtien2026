@@ -6,6 +6,7 @@ import { AuditLogService } from '../audit/audit.service'
 import { getProviderMeta, type AiProviderId } from '../ai/ai.providers'
 import { FALLBACK_PRIORITY } from '../ai/ai.service'
 import { ToolRegistry, type ToolDefinition } from './tool-registry'
+import { TinyFishService } from '../ai/tinyfish.service'
 import {
   runAgent,
   buildAgentSystemPrompt,
@@ -15,7 +16,14 @@ import {
   type AgentMessage,
   type ChatBackend,
 } from './agent-loop'
-import { buildBuiltinTools, makeRenderVideoTool, makeRenderStatusTool, makeRenderCancelTool, makeWooProductsTool } from './builtin-tools'
+import {
+  buildBuiltinTools,
+  makeRenderVideoTool,
+  makeRenderStatusTool,
+  makeRenderCancelTool,
+  makeWooProductsTool,
+  type TinyFishWebBackend,
+} from './builtin-tools'
 import { videoTools } from './video-tools'
 import type { AgentRunDto } from './dto'
 import { RenderService } from '../render/render.service'
@@ -43,13 +51,44 @@ export class AgentService {
     private readonly audit: AuditLogService,
     private readonly renderService: RenderService,
     private readonly wooService: WooCommerceService,
+    private readonly tinyFishService: TinyFishService,
   ) {}
+
+  /**
+   * Backend TinyFish cho tool web_search/fetch_url: dùng key đã kết nối ở AI
+   * Pro (cache trong 1 lần run agent). Chưa kết nối → null → tool tự fallback
+   * về DuckDuckGo / fetch trực tiếp như cũ.
+   */
+  private tinyFishBackend(workspaceId: string): TinyFishWebBackend {
+    let cachedKey: string | null | undefined
+    const getKey = async (): Promise<string | null> => {
+      if (cachedKey === undefined) {
+        cachedKey = await this.tinyFishService.getApiKey(workspaceId)
+      }
+      return cachedKey
+    }
+    return {
+      search: async (query: string) => {
+        const key = await getKey()
+        if (!key) return null
+        const { results } = await this.tinyFishService.search(key, query, { limit: 5 })
+        return results.map((r) => ({ title: r.title, url: r.url, snippet: r.snippet }))
+      },
+      fetchUrl: async (url: string) => {
+        const key = await getKey()
+        if (!key) return null
+        const [r] = await this.tinyFishService.fetchUrls(key, [url])
+        return r?.text?.trim() ? r.text : null
+      },
+    }
+  }
 
   private buildRegistry(workspaceId: string): ToolRegistry {
     const registry = new ToolRegistry()
     for (const tool of buildBuiltinTools({
       knowledgeSearch: (query, topK) => this.ragService.searchChunks(workspaceId, query, topK),
       listConnectedAi: () => this.aiService.list(workspaceId),
+      tinyfish: this.tinyFishBackend(workspaceId),
     })) {
       registry.register(tool)
     }
@@ -142,6 +181,11 @@ export class AgentService {
   async run(workspaceId: string, dto: AgentRunDto, ip?: string) {
     const meta = getProviderMeta(dto.provider)
     if (!meta) throw new BadRequestException('Provider không được hỗ trợ.')
+    if (meta.kind === 'tinyfish') {
+      throw new BadRequestException(
+        'TinyFish là Search/Fetch API (cấp dữ liệu cho tool web_search/fetch_url), không phải model chat. Hãy chọn một provider chat khác cho agent.',
+      )
+    }
 
     const { meta: runMeta, apiKey, connId, fallback } = await this.resolveAgentKey(workspaceId, dto.provider)
     // KHÔNG log apiKey ở bất cứ đâu trong hàm này
