@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
 import { AiService } from '../ai/ai.service'
+import { PollinationsService } from '../ai/pollinations.service'
 import {
   getProviderMeta,
   type AiProviderMeta,
@@ -27,6 +28,7 @@ import type { ScriptDto, ImageDto, VoiceDto, VoiceBatchDto, ClipDto } from './dt
  * Khả năng theo provider (key đã kết nối):
  * - gemini : chat + image (Nano Banana) + voice (Gemini TTS) + video (Veo 3.1)
  * - openai : chat + image (GPT Image) + voice (OpenAI TTS) + video (Sora 2)
+ * - pollinations : image (FLUX schnell, miễn phí không giới hạn) — ưu tiên đầu khi để auto
  * - xai / anthropic / deepseek / experientiallabs / apmix: chỉ chat
  *   (gateway OpenAI-compatible không đảm bảo có image/voice/video).
  */
@@ -41,6 +43,7 @@ type Capability = 'chat' | 'image' | 'voice' | 'video'
 const CAPABILITIES: Record<string, Capability[]> = {
   gemini: ['chat', 'image', 'voice', 'video'],
   openai: ['chat', 'image', 'voice', 'video'],
+  pollinations: ['image'], // FLUX schnell — miễn phí không giới hạn
   xai: ['chat'],
   anthropic: ['chat'],
   deepseek: ['chat'],
@@ -83,6 +86,7 @@ export class VideogenService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditLogService,
     private readonly ai: AiService,
+    private readonly pollinations: PollinationsService,
   ) {}
 
   // ─── Providers & capabilities ──────────────────────────────────────────
@@ -97,6 +101,7 @@ export class VideogenService {
     const all: AiProviderId[] = [
       'gemini',
       'openai',
+      'pollinations',
       'xai',
       'anthropic',
       'deepseek',
@@ -285,26 +290,76 @@ export class VideogenService {
     dto: ImageDto,
     ip?: string,
   ): Promise<{ provider: string; model: string; url: string; mime: string }> {
-    const { meta, apiKey } = await this.resolveProvider(
-      workspaceId,
-      dto.provider,
-      'image',
-    )
     const ratio = dto.aspectRatio ?? '9:16'
     const prompt =
       `${dto.prompt}. Vertical composition 9:16, cinematic lighting, ultra detailed, no text, no watermark.`
 
-    try {
-      if (meta.kind === 'gemini') {
-        return await this.imageGemini(meta, apiKey, prompt, ratio, workspaceId, ip)
+    // Thử theo thứ tự [requested?, pollinations, gemini, openai] (lọc trùng).
+    // Pollinations miễn phí không giới hạn → ưu tiên đầu khi để auto
+    // (Gemini sinh ảnh không có free tier — hay bị 429/quota 0).
+    // 429/quota → provider tiếp; lỗi khác → throw ngay.
+    const order = [dto.provider, 'pollinations', 'gemini', 'openai'].filter(
+      (p, i, arr): p is string => !!p && arr.indexOf(p) === i,
+    )
+    const tried: string[] = []
+    for (const id of order) {
+      let key: { meta: AiProviderMeta; apiKey: string }
+      try {
+        key = await this.ai.getChatKey(workspaceId, id as AiProviderId)
+      } catch {
+        tried.push(`${id} (chưa kết nối)`)
+        continue
       }
-      return await this.imageOpenAi(meta, apiKey, prompt, ratio, workspaceId, ip)
-    } catch (err) {
-      if (err instanceof HttpException) throw err
-      throw new HttpException(
-        `Không sinh được ảnh qua ${meta.name}. Hãy thử lại sau.`,
-        HttpStatus.BAD_GATEWAY,
-      )
+      try {
+        if (key.meta.kind === 'pollinations') {
+          return await this.imagePollinations(key.meta, key.apiKey, prompt, ratio, workspaceId, ip)
+        }
+        if (key.meta.kind === 'gemini') {
+          return await this.imageGemini(key.meta, key.apiKey, prompt, ratio, workspaceId, ip)
+        }
+        return await this.imageOpenAi(key.meta, key.apiKey, prompt, ratio, workspaceId, ip)
+      } catch (err) {
+        if (this.is429ish(err)) {
+          tried.push(`${key.meta.name} (hết quota)`)
+          continue
+        }
+        if (err instanceof HttpException) throw err
+        throw new HttpException(
+          `Không sinh được ảnh qua ${key.meta.name}. Hãy thử lại sau.`,
+          HttpStatus.BAD_GATEWAY,
+        )
+      }
+    }
+    throw new HttpException(
+      `Không sinh được ảnh.` +
+        (tried.length ? ` Đã thử: ${tried.join('; ')}.` : '') +
+        ' Hãy vào Cài đặt → AI Pro để kết nối key Pollinations (miễn phí không giới hạn), Gemini hoặc OpenAI.',
+      HttpStatus.BAD_GATEWAY,
+    )
+  }
+
+  private async imagePollinations(
+    meta: AiProviderMeta,
+    apiKey: string,
+    prompt: string,
+    ratio: string,
+    workspaceId: string,
+    ip?: string,
+  ) {
+    // 9:16 native qua width/height
+    const width = ratio === '16:9' ? 1344 : ratio === '1:1' ? 1024 : 768
+    const height = ratio === '16:9' ? 768 : ratio === '1:1' ? 1024 : 1344
+    const { buffer, mime, model } = await this.pollinations.generateImage(apiKey, prompt, {
+      width,
+      height,
+      model: 'flux',
+    })
+    await this.log(workspaceId, 'videogen_image', meta.id, { model, ratio }, ip)
+    return {
+      provider: meta.id,
+      model,
+      url: `data:${mime};base64,${buffer.toString('base64')}`,
+      mime,
     }
   }
 

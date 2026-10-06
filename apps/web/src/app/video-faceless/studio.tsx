@@ -636,7 +636,7 @@ export function VideoGenStudio({
             <div>
               <label className={labelCls}>🖼️ Sinh ảnh</label>
               <select value={imageProvider} onChange={(e) => setImageProvider(e.target.value)} className={inputCls}>
-                <option value="auto">Tự động (Gemini → OpenAI)</option>
+                <option value="auto">Tự động (Pollinations → Gemini → OpenAI)</option>
                 {providers
                   .filter((p) => p.connected && p.capabilities.includes('image'))
                   .map((p) => (

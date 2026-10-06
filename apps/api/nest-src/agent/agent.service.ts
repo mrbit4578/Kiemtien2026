@@ -174,9 +174,9 @@ export class AgentService {
   async run(workspaceId: string, dto: AgentRunDto, ip?: string) {
     const meta = getProviderMeta(dto.provider)
     if (!meta) throw new BadRequestException('Provider không được hỗ trợ.')
-    if (meta.kind === 'tinyfish') {
+    if (meta.kind === 'tinyfish' || meta.kind === 'pollinations') {
       throw new BadRequestException(
-        'TinyFish là Search/Fetch API (cấp dữ liệu cho tool web_search/fetch_url), không phải model chat. Hãy chọn một provider chat khác cho agent.',
+        `${meta.name} là API tiện ích, không phải model chat. Hãy chọn một provider chat khác cho agent.`,
       )
     }
 
