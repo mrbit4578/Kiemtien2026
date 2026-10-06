@@ -3,7 +3,7 @@ import { AiService } from '../ai/ai.service'
 import { RagService } from '../rag/rag.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditLogService } from '../audit/audit.service'
-import { getProviderMeta, type AiProviderId } from '../ai/ai.providers'
+import { getProviderMeta, type AiProviderId, type AiProviderMeta } from '../ai/ai.providers'
 import { FALLBACK_PRIORITY } from '../ai/ai.service'
 import { ToolRegistry, type ToolDefinition } from './tool-registry'
 import { TinyFishService } from '../ai/tinyfish.service'
@@ -180,8 +180,64 @@ export class AgentService {
       )
     }
 
-    const { meta: runMeta, apiKey, connId, fallback } = await this.resolveAgentKey(workspaceId, dto.provider)
+    const primary = await this.resolveAgentKey(workspaceId, dto.provider)
     // KHÔNG log apiKey ở bất cứ đâu trong hàm này
+
+    // Combo fallback khi CHẠY (giống ai.chat): provider chính lỗi phía server
+    // giữa chừng (429/5xx — VD: VyceAI rate limit/timeout) → thử key khác đã
+    // kết nối theo FALLBACK_PRIORITY. Lỗi do user/key hỏng thì báo thẳng.
+    const tried = new Set<string>([primary.meta.id])
+    let cur = primary
+    let fbInfo = primary.fallback
+    let lastErr: unknown = null
+    for (;;) {
+      try {
+        return await this.runOnce(workspaceId, dto, ip, cur.meta, cur.apiKey, cur.connId, fbInfo)
+      } catch (err) {
+        if (!this.isProviderSideError(err)) throw err
+        lastErr = err
+      }
+      // Tìm provider dự phòng KẾ TIẾP đã kết nối trước khi chạy lại
+      // (tránh chạy lại provider vừa lỗi khi key dự phòng chưa có)
+      let next: { meta: AiProviderMeta; apiKey: string; connId: string } | null = null
+      for (const id of FALLBACK_PRIORITY) {
+        if (tried.has(id)) continue
+        tried.add(id)
+        try {
+          next = await this.aiService.getChatKey(workspaceId, id)
+          break
+        } catch {
+          // Chưa kết nối provider này → thử provider tiếp theo
+        }
+      }
+      if (!next) break
+      fbInfo = { from: primary.meta.id, to: next.meta.id }
+      cur = { ...next, fallback: fbInfo }
+    }
+    const msg = lastErr instanceof Error ? lastErr.message : String(lastErr)
+    const safe = msg.split(cur.apiKey).join('[redacted]').slice(0, 500)
+    throw new HttpException(
+      `Agent chạy lỗi qua ${cur.meta.name}: ${safe}`,
+      HttpStatus.BAD_GATEWAY,
+    )
+  }
+
+  /** Lỗi phía provider/server giữa chừng (đáng thử provider khác): 429/5xx từ backend. */
+  private isProviderSideError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err)
+    return /Provider trả lỗi (429|5\d\d)\b/.test(msg)
+  }
+
+  /** Một lượt chạy agent với đúng 1 key. Lỗi 429/5xx được ném THÔ để run() thử provider khác. */
+  private async runOnce(
+    workspaceId: string,
+    dto: AgentRunDto,
+    ip: string | undefined,
+    runMeta: AiProviderMeta,
+    apiKey: string,
+    connId: string,
+    fallback: { from: string; to: string } | null,
+  ) {
 
     const registry = await this.buildRegistry(workspaceId)
     let tools = registry.list()
@@ -264,6 +320,8 @@ export class AgentService {
           HttpStatus.BAD_GATEWAY,
         )
       }
+      // Lỗi phía provider (429/5xx) → ném thô để run() tự thử provider dự phòng
+      if (this.isProviderSideError(err)) throw err
       // Sanitize: thay key bằng [redacted] nếu chẳng may lọt vào message
       const safe = message.split(apiKey).join('[redacted]').slice(0, 500)
       throw new HttpException(

@@ -33,6 +33,7 @@ const GEMINI_EMBED_MODEL = 'gemini-embedding-001'
 export const FALLBACK_PRIORITY: AiProviderId[] = [
   'openai',
   'gemini',
+  'vyceai',
   'muse',
   'experientiallabs',
   'apmix',

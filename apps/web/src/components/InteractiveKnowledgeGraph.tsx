@@ -342,6 +342,7 @@ export function InteractiveKnowledgeGraph() {
   }, [currentMeta, model])
   const [scanning, setScanning] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [scanNotice, setScanNotice] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [aiInsight, setAiInsight] = useState<string | null>(null)
   const [aiInsightFor, setAiInsightFor] = useState<string | null>(null)
@@ -399,6 +400,7 @@ export function InteractiveKnowledgeGraph() {
     if (!provider) return
     setScanning(true)
     setScanError(null)
+    setScanNotice(null)
     setScanSteps([
       { id: 'context', label: 'Thu thập ngữ cảnh', hint: 'ngách đã dùng + tín hiệu kaizen + graph hiện tại', status: 'running' },
       { id: 'propose', label: 'AI đề xuất ngách', hint: 'agent + web_search, đa dạng ≥6 nhóm chủ đề', status: 'pending' },
@@ -444,6 +446,10 @@ export function InteractiveKnowledgeGraph() {
         'Vòng quét',
       )
       const parsed = extractJsonArray(res.content)
+      if (res.fallback) {
+        const nm = (id: string) => providers.find((p) => p.id === id)?.name ?? id
+        setScanNotice(`${nm(res.fallback.from)} gặp lỗi nên đã tự động chuyển sang ${nm(res.fallback.to)}.`)
+      }
       if (!parsed || parsed.length === 0) {
         throw new Error('AI không trả về danh sách ngách hợp lệ. Hãy bấm quét lại.')
       }
@@ -912,6 +918,12 @@ export function InteractiveKnowledgeGraph() {
         <div className="mt-3 p-3 rounded-lg bg-red-950/30 border border-red-500/30 text-red-200 text-xs flex items-start gap-2">
           <span className="font-bold shrink-0">⚠</span>
           <span>{scanError}</span>
+        </div>
+      )}
+      {scanNotice && !scanError && (
+        <div className="mt-3 p-3 rounded-lg bg-amber-950/30 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2">
+          <span className="font-bold shrink-0">⚠</span>
+          <span>{scanNotice}</span>
         </div>
       )}
 
