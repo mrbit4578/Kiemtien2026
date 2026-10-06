@@ -118,13 +118,20 @@ export function AICopilotStudio() {
         mdl || model || undefined,
         { maxTurns: 10 },
       )
-      const trace: ReActStep[] = [
-        {
-          type: 'thought',
-          title: 'Tư duy phân tích (Thought)',
-          content: `Agent hoàn thành ${res.turns} vòng suy luận (Thought → Action → Observation) với model ${res.model}.`,
-        },
-      ]
+      const trace: ReActStep[] = []
+      if (res.fallback) {
+        const nm = (id: string) => providers.find((p) => p.id === id)?.name ?? id
+        trace.push({
+          type: 'observation',
+          title: 'Tự động chuyển provider (Observation)',
+          content: `${nm(res.fallback.from)} gặp lỗi nên đã tự động chuyển sang ${nm(res.fallback.to)}.`,
+        })
+      }
+      trace.push({
+        type: 'thought',
+        title: 'Tư duy phân tích (Thought)',
+        content: `Agent hoàn thành ${res.turns} vòng suy luận (Thought → Action → Observation) với model ${res.model}.`,
+      })
       res.toolCalls.forEach((tc, i) => {
         trace.push({
           type: 'action',
