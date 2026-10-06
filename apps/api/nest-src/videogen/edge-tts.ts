@@ -363,14 +363,16 @@ export function synthesizeEdge(
             succeed({ audio: Buffer.concat(audioParts), words, durationMs })
           }
         } else {
-          // Binary: 2 bytes đầu = độ dài headers (UInt16BE), sau đó là
-          // headers + '\r\n\r\n' (4 bytes) rồi tới audio bytes.
+          // Binary: 2 bytes đầu = độ dài headers (UInt16BE), sau đó là headers
+          // (kết thúc đúng ở headerLen, KHÔNG có \r\n\r\n), rồi tới audio bytes
+          // ngay lập tức. Bản cũ cộng thêm 4 đã ăn mất frame sync MP3 đầu mỗi
+          // chunk khiến toàn bộ file voice bị hỏng không decode được.
           if (m.data.length < 2) return
           const headerLen = m.data.readUInt16BE(0)
           if (m.data.length < 2 + headerLen) return
           const headers = m.data.subarray(2, 2 + headerLen).toString('utf8')
           if (headers.includes('Path:audio')) {
-            const audioStart = 2 + headerLen + 4
+            const audioStart = 2 + headerLen
             if (m.data.length > audioStart) {
               audioParts.push(m.data.subarray(audioStart))
             }
