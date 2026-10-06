@@ -325,6 +325,92 @@ describe('GeminiBackend', () => {
       globalThis.fetch = origFetch
     }
   })
+
+  it('giữ thoughtSignature qua 2 turn (thiếu là Gemini 400 missing thought_signature)', async () => {
+    const bodies: any[] = []
+    const origFetch = globalThis.fetch
+    let call = 0
+    ;(globalThis as any).fetch = async (_url: string, init: any) => {
+      bodies.push(JSON.parse(init.body))
+      call++
+      if (call === 1) {
+        // Turn 1: model trả functionCall kèm thoughtSignature ở part level
+        return new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      functionCall: { name: 'get_current_time', args: {} },
+                      thoughtSignature: 'sig-abc-123',
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      // Turn 2: model trả lời sau khi có kết quả tool
+      return new Response(
+        JSON.stringify({ candidates: [{ content: { parts: [{ text: 'đã xong' }] } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    try {
+      const backend = new GeminiBackend('https://example.com', 'key', 'gemini-3.6-flash', 100)
+      // Turn 1 — parse: signature phải được giữ lại trong toolCall
+      const t1 = await backend.send([{ role: 'user', content: 'mấy giờ rồi?' }], [timeTool])
+      assert.equal(t1.toolCalls.length, 1)
+      assert.equal(t1.toolCalls[0].thoughtSignature, 'sig-abc-123')
+      // Turn 2 — serialize: signature phải echo lại ngang hàng functionCall
+      const history = [
+        { role: 'user', content: 'mấy giờ rồi?' },
+        { role: 'assistant', content: '', toolCalls: t1.toolCalls },
+        { role: 'tool', toolName: 'get_current_time', content: '21:00' },
+      ] as any
+      await backend.send(history, [timeTool])
+      const modelContent = bodies[1].contents.find((c: any) => c.role === 'model')
+      const fcPart = modelContent.parts.find((p: any) => p.functionCall)
+      assert.ok(fcPart, 'có part functionCall trong history gửi đi')
+      assert.equal(fcPart.thoughtSignature, 'sig-abc-123')
+      assert.equal(fcPart.functionCall.name, 'get_current_time')
+    } finally {
+      globalThis.fetch = origFetch
+    }
+  })
+
+  it('model không trả thoughtSignature (VD: gemini-2.5) → không gửi field thừa', async () => {
+    let sentBody: any = null
+    const origFetch = globalThis.fetch
+    ;(globalThis as any).fetch = async (_url: string, init: any) => {
+      sentBody = JSON.parse(init.body)
+      return new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ functionCall: { name: 'get_time', args: {} } }] } }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    try {
+      const backend = new GeminiBackend('https://example.com', 'key', 'gemini-2.5-flash', 100)
+      const t1 = await backend.send([{ role: 'user', content: 'hi' }], [timeTool])
+      assert.equal(t1.toolCalls[0].thoughtSignature, undefined)
+      const history = [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: '', toolCalls: t1.toolCalls },
+        { role: 'tool', toolName: 'get_time', content: 'ok' },
+      ] as any
+      await backend.send(history, [timeTool])
+      const modelContent = sentBody.contents.find((c: any) => c.role === 'model')
+      const fcPart = modelContent.parts.find((p: any) => p.functionCall)
+      assert.ok(!('thoughtSignature' in fcPart), 'không gửi thoughtSignature khi model không trả')
+    } finally {
+      globalThis.fetch = origFetch
+    }
+  })
 })
 
 describe('OpenAiCompatibleBackend — retry 400 tool_use_failed', () => {

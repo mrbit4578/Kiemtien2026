@@ -15,6 +15,12 @@ export interface ToolCallRequest {
   id: string
   name: string
   args: unknown
+  /**
+   * Gemini: thoughtSignature đi kèm functionCall — API bắt buộc phải echo lại
+   * nguyên vẹn ở mọi turn sau, thiếu là 400 "missing a thought_signature".
+   * Provider khác không có field này (undefined → bỏ qua khi serialize).
+   */
+  thoughtSignature?: string
 }
 
 export interface AgentMessage {
@@ -226,7 +232,13 @@ export class GeminiBackend implements ChatBackend {
         const parts: unknown[] = []
         if (m.content) parts.push({ text: m.content })
         for (const tc of m.toolCalls) {
-          parts.push({ functionCall: { name: tc.name, args: tc.args ?? {} } })
+          // thoughtSignature nằm ngang hàng functionCall ở part level (docs Gemini) —
+          // echo lại nguyên vẹn, thiếu là turn sau ăn 400.
+          const part: Record<string, unknown> = {
+            functionCall: { name: tc.name, args: tc.args ?? {} },
+          }
+          if (tc.thoughtSignature) part.thoughtSignature = tc.thoughtSignature
+          parts.push(part)
         }
         push('model', parts)
       } else if (m.role === 'tool') {
@@ -267,7 +279,13 @@ export class GeminiBackend implements ChatBackend {
     if (!res.ok) throw new Error(`Provider trả lỗi ${res.status}: ${text.slice(0, 300)}`)
     const data = JSON.parse(text) as {
       candidates?: Array<{
-        content?: { parts?: Array<{ text?: string; functionCall?: { name?: string; args?: unknown } }> }
+        content?: {
+          parts?: Array<{
+            text?: string
+            thoughtSignature?: string
+            functionCall?: { name?: string; args?: unknown; thoughtSignature?: string }
+          }>
+        }
       }>
     }
     const parts = data.candidates?.[0]?.content?.parts ?? []
@@ -276,7 +294,14 @@ export class GeminiBackend implements ChatBackend {
     parts.forEach((p, i) => {
       if (p.text) out += p.text
       if (p.functionCall?.name) {
-        toolCalls.push({ id: `call_${i}`, name: p.functionCall.name, args: p.functionCall.args ?? {} })
+        toolCalls.push({
+          id: `call_${i}`,
+          name: p.functionCall.name,
+          args: p.functionCall.args ?? {},
+          // thoughtSignature nằm ở part level (sibling của functionCall);
+          // đọc thêm dạng nested để phòng hờ variant khác.
+          thoughtSignature: p.thoughtSignature ?? p.functionCall.thoughtSignature,
+        })
       }
     })
     return { text: out, toolCalls }
