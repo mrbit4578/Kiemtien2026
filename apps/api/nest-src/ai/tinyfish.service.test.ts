@@ -109,6 +109,75 @@ describe('TinyFishService', () => {
     })
     assert.equal(await noSvc.getApiKey('ws1'), null)
   })
+
+  it('runAgent: POST đúng endpoint /run, parse result object', async () => {
+    const svc = makeService(async () => {
+      throw new Error('not used')
+    })
+    let seenUrl = ''
+    let seenBody: any = null
+    let seenKey = ''
+    restore = mockFetch((url, init) => {
+      seenUrl = url
+      seenBody = JSON.parse(init?.body ?? '{}')
+      seenKey = init?.headers?.['X-API-Key']
+      return {
+        status: 200,
+        body: JSON.stringify({
+          result: { title: 'Sản phẩm A', price: '100k' },
+          status: 'COMPLETED',
+        }),
+      }
+    })
+    const out = await svc.runAgent('k-test', 'https://example.com/shop', 'Trích 5 sản phẩm bán chạy')
+    assert.equal(seenUrl, 'https://agent.tinyfish.ai/v1/automation/run')
+    assert.equal(seenKey, 'k-test')
+    assert.equal(seenBody.url, 'https://example.com/shop')
+    assert.equal(seenBody.goal, 'Trích 5 sản phẩm bán chạy')
+    assert.ok(seenBody.agent_config.max_steps >= 1)
+    assert.ok(out.includes('Sản phẩm A'))
+    assert.ok(out.includes('100k'))
+  })
+
+  it('runAgent: result dạng text trong result.result', async () => {
+    const svc = makeService(async () => {
+      throw new Error('not used')
+    })
+    restore = mockFetch(() => ({
+      status: 200,
+      body: JSON.stringify({ result: { result: 'Đây là tóm tắt trang.' } }),
+    }))
+    const out = await svc.runAgent('k', 'https://example.com', 'Tóm tắt trang')
+    assert.equal(out, 'Đây là tóm tắt trang.')
+  })
+
+  it('runAgent: URL không hợp lệ → 400, không gọi API', async () => {
+    const svc = makeService(async () => {
+      throw new Error('not used')
+    })
+    let called = false
+    restore = mockFetch(() => {
+      called = true
+      return { status: 200, body: '{}' }
+    })
+    await assert.rejects(() => svc.runAgent('k', 'ftp://example.com', 'goal hợp lệ'), /http\(s\)/)
+    assert.equal(called, false)
+  })
+
+  it('runAgent: 402 hết tiền ví → message rõ, không lộ key', async () => {
+    const svc = makeService(async () => {
+      throw new Error('not used')
+    })
+    restore = mockFetch(() => ({ status: 402, body: '{"error":"insufficient funds"}' }))
+    await assert.rejects(
+      () => svc.runAgent('sk-tinyfish-SECRET', 'https://example.com', 'goal'),
+      (err: any) => {
+        const msg = String(err?.message ?? err)
+        assert.ok(!msg.includes('sk-tinyfish-SECRET'), 'key lộ trong message!')
+        return true
+      },
+    )
+  })
 })
 
 describe('tinyfish trong publicProviderMeta', () => {

@@ -40,6 +40,8 @@ export interface TinyFishWebBackend {
     query: string,
   ) => Promise<Array<{ title: string; url: string; snippet: string }> | null>
   fetchUrl: (url: string) => Promise<string | null>
+  /** Web Agent (metered): trả về text kết quả, hoặc null khi chưa kết nối key. */
+  runAgent: (url: string, goal: string) => Promise<string | null>
 }
 
 /** Tìm kiếm web qua DuckDuckGo HTML (không cần API key) — cùng pattern với RagService. */
@@ -161,8 +163,55 @@ export function makeFetchUrlTool(tinyfish?: TinyFishWebBackend | null): ToolDefi
   }
 }
 
-/** Giờ hiện tại (múi giờ Việt Nam). */
-export const currentTimeTool: ToolDefinition = {
+/**
+ * Web Agent qua TinyFish (METERED — trừ tiền ví TinyFish của user).
+ * Giao URL + mục tiêu, agent tự duyệt web nhiều bước (kể cả trang cần JS/tương
+ * tác) rồi trả kết quả. Chỉ dùng khi web_search/fetch_url không đủ.
+ */
+export function makeWebAgentTool(tinyfish?: TinyFishWebBackend | null): ToolDefinition | null {
+  if (!tinyfish) return null
+  return {
+    name: 'web_agent',
+    description:
+      'Giao việc cho web agent TinyFish: đưa 1 URL công khai + mục tiêu (tiếng Việt/Anh), ' +
+      'agent tự duyệt web nhiều bước trên trình duyệt thật (kể cả trang cần JavaScript/đăng nhập tay không vào được) ' +
+      'rồi trả kết quả text/JSON. LƯU Ý CHI PHÍ: mỗi lần gọi TRỪ TIỀN ví TinyFish của người dùng — ' +
+      'chỉ dùng khi web_search/fetch_url không lấy được dữ liệu cần thiết.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'URL http/https công khai cần agent xử lý',
+          minLength: 10,
+          maxLength: 2000,
+        },
+        goal: {
+          type: 'string',
+          description:
+            'Mục tiêu cụ thể cho agent (VD: "Trích giá và tên 5 sản phẩm bán chạy nhất trang này, trả về JSON")',
+          minLength: 10,
+          maxLength: 1000,
+        },
+      },
+      required: ['url', 'goal'],
+      additionalProperties: false,
+    },
+    execute: async (args, ctx) => {
+      const url = String(args['url'] ?? '').trim()
+      const goal = String(args['goal'] ?? '').trim()
+      if (!/^https?:\/\//i.test(url)) return 'URL không hợp lệ (phải bắt đầu bằng http(s)://).'
+      try {
+        const out = await tinyfish.runAgent(url, goal)
+        return out ?? 'Web agent không trả về kết quả.'
+      } catch (err) {
+        return `Web agent thất bại: ${(err as Error).message}`
+      }
+    },
+  }
+}
+
+/** Giờ hiện tại (múi giờ Việt Nam). */export const currentTimeTool: ToolDefinition = {
   name: 'get_current_time',
   description: 'Lấy ngày giờ hiện tại (múi giờ Asia/Ho_Chi_Minh). Dùng khi câu hỏi liên quan đến thời gian.',
   parameters: { type: 'object', properties: {}, additionalProperties: false },
@@ -382,9 +431,12 @@ export function buildBuiltinTools(deps: {
   /** Nguồn TinyFish khi workspace đã kết nối key ở AI Pro — null khi chưa có. */
   tinyfish?: TinyFishWebBackend | null
 }): ToolDefinition[] {
+  const webAgent = makeWebAgentTool(deps.tinyfish)
   return [
     makeWebSearchTool(deps.tinyfish),
     makeFetchUrlTool(deps.tinyfish),
+    // web_agent chỉ đăng ký khi đã kết nối key TinyFish (metered — tránh gọi nhầm tốn tiền).
+    ...(webAgent ? [webAgent] : []),
     currentTimeTool,
     makeKnowledgeSearchTool(deps.knowledgeSearch),
     makeListConnectedAiTool(deps.listConnectedAi),

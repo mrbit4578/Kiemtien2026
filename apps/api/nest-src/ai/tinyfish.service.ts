@@ -28,10 +28,13 @@ export interface TinyFishFetchResult {
 
 const SEARCH_URL = 'https://api.search.tinyfish.ai'
 const FETCH_URL = 'https://api.fetch.tinyfish.ai'
+const AGENT_RUN_URL = 'https://agent.tinyfish.ai/v1/automation/run'
 const SEARCH_TIMEOUT_MS = 20_000
 const FETCH_TIMEOUT_MS = 45_000
+const AGENT_TIMEOUT_MS = 180_000
 const MAX_SNIPPET_CHARS = 300
 const MAX_FETCH_CHARS = 12_000
+const MAX_AGENT_CHARS = 8_000
 
 @Injectable()
 export class TinyFishService {
@@ -130,5 +133,63 @@ export class TinyFishService {
       title: (r.title ?? '').trim(),
       text: (r.text ?? '').trim().slice(0, MAX_FETCH_CHARS),
     })).filter((r) => r.text)
+  }
+
+  /**
+   * Web Agent (METERED — trừ tiền ví TinyFish): giao URL + mục tiêu tiếng Việt/Anh,
+   * agent tự duyệt web nhiều bước trên trình duyệt thật rồi trả kết quả.
+   * Dùng bản đồng bộ /run (blocking). Giới hạn bước/thời gian để kiểm soát chi phí.
+   */
+  async runAgent(
+    apiKey: string,
+    url: string,
+    goal: string,
+    opts?: { maxSteps?: number; maxDurationSeconds?: number },
+  ): Promise<string> {
+    const cleanUrl = url.trim()
+    if (!/^https?:\/\//i.test(cleanUrl)) {
+      throw new HttpException('URL web agent phải bắt đầu bằng http(s)://', HttpStatus.BAD_REQUEST)
+    }
+    const res = await fetchTimeout(
+      AGENT_RUN_URL,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+        body: JSON.stringify({
+          url: cleanUrl,
+          goal: goal.trim().slice(0, 1000),
+          agent_config: {
+            max_steps: Math.min(Math.max(opts?.maxSteps ?? 15, 1), 30),
+            max_duration_seconds: Math.min(Math.max(opts?.maxDurationSeconds ?? 120, 30), 300),
+          },
+        }),
+      },
+      AGENT_TIMEOUT_MS,
+    )
+    const text = await res.text()
+    if (!res.ok) throw this.apiError(res.status, text, apiKey, 'chạy web agent')
+    let data: { result?: unknown; status?: string; error?: unknown }
+    try {
+      data = JSON.parse(text)
+    } catch {
+      throw new HttpException('TinyFish trả về không đúng định dạng.', HttpStatus.BAD_GATEWAY)
+    }
+    if (data.error) {
+      throw new HttpException(
+        `Web agent báo lỗi: ${this.sanitize(JSON.stringify(data.error).slice(0, 300), apiKey)}`,
+        HttpStatus.BAD_GATEWAY,
+      )
+    }
+    // result: object JSON trực tiếp, hoặc text/list nằm trong result.result
+    const payload = data.result ?? data
+    let out: string
+    if (typeof payload === 'string') out = payload
+    else if (payload && typeof payload === 'object' && 'result' in (payload as Record<string, unknown>)) {
+      const inner = (payload as Record<string, unknown>)['result']
+      out = typeof inner === 'string' ? inner : JSON.stringify(inner)
+    } else out = JSON.stringify(payload)
+    out = out.trim().slice(0, MAX_AGENT_CHARS)
+    if (!out) throw new HttpException('Web agent không trả về kết quả.', HttpStatus.BAD_GATEWAY)
+    return out
   }
 }
