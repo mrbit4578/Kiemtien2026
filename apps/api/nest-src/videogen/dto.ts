@@ -1,7 +1,12 @@
 import { IsString, IsOptional, IsInt, Min, Max, IsIn, MaxLength, IsArray, ArrayMinSize, ArrayMaxSize, ValidateNested } from 'class-validator'
 import { Type } from 'class-transformer'
+import { AI_PROVIDER_IDS } from '../ai/dto'
 
-const PROVIDERS = ['gemini', 'openai', 'xai', 'anthropic', 'deepseek', 'experientiallabs', 'apmix', 'muse', 'groq', 'moonshot', 'edge'] as const
+// Provider được chọn ở Studio: mọi provider AI Pro (trừ TinyFish — search/fetch,
+// không sinh nội dung) + 'edge' (Edge TTS miễn phí, voice-only).
+// Derive từ AI_PROVIDER_IDS để thêm provider mới không phải sửa 2 nơi
+// (từng gây lỗi "Provider không được hỗ trợ" / 400 khi thiếu).
+const PROVIDERS = [...AI_PROVIDER_IDS.filter((id) => id !== 'tinyfish'), 'edge'] as const
 
 export class ScriptDto {
   /** Chủ đề video */
