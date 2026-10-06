@@ -181,7 +181,7 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     name: 'VyceAI',
     keyUrl: 'https://vyceai.com/dashboard-v2',
     models: ['deepseek-v4-flash', 'deepseek-v4.1', 'gpt-6-luna', 'claude-sonnet-4-6', 'agnes-3.0-flash'],
-    defaultModel: 'deepseek-v4-flash',
+    defaultModel: 'claude-sonnet-4-6', // model viết tốt nhất cho kịch bản TV (hay duyệt trừ $60)
     description:
       'Gateway chuẩn OpenAI: chat giá rẻ (DeepSeek, GPT-6 Luna, Claude Sonnet 4.6...) + tạo ảnh Grok Imagine 2 (9:16 native). Trừ balance theo dùng.',
     keyNote: 'Trừ balance theo dùng',

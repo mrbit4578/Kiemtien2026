@@ -28,7 +28,7 @@ import type { ScriptDto, ImageDto, VoiceDto, VoiceBatchDto, ClipDto } from './dt
  * Khả năng theo provider (key đã kết nối):
  * - gemini : chat + image (Nano Banana) + voice (Gemini TTS) + video (Veo 3.1)
  * - openai : chat + image (GPT Image) + voice (OpenAI TTS) + video (Sora 2)
- * - pollinations : image (FLUX schnell, miễn phí không giới hạn) — ưu tiên đầu khi để auto
+ * - pollinations : image (FLUX schnell, miễn phí không giới hạn) — fallback free khi để auto
  * - xai / anthropic / deepseek / experientiallabs / apmix: chỉ chat
  *   (gateway OpenAI-compatible không đảm bảo có image/voice/video).
  */
@@ -57,7 +57,7 @@ const CAPABILITIES: Record<string, Capability[]> = {
 }
 
 /** Thứ tự ưu tiên khi user để provider='auto' */
-const AUTO_ORDER: AiProviderId[] = ['gemini', 'openai']
+const AUTO_ORDER: AiProviderId[] = ['vyceai', 'gemini', 'openai']
 
 export interface SceneOut {
   text: string
@@ -143,7 +143,7 @@ export class VideogenService {
   }
 
   /** Chọn provider: ưu tiên provider được chỉ định (nếu đủ capability + đã kết nối),
-   *  nếu không thì tự fallback sang AUTO_ORDER (Gemini → OpenAI) thay vì báo lỗi. */
+   *  nếu không thì tự fallback sang AUTO_ORDER (VyceAI → Gemini → OpenAI) thay vì báo lỗi. */
   private async resolveProvider(
     workspaceId: string,
     requested: string | undefined,
@@ -296,11 +296,10 @@ export class VideogenService {
     const prompt =
       `${dto.prompt}. Vertical composition 9:16, cinematic lighting, ultra detailed, no text, no watermark.`
 
-    // Thử theo thứ tự [requested?, pollinations, gemini, openai] (lọc trùng).
-    // Pollinations miễn phí không giới hạn → ưu tiên đầu khi để auto
-    // (Gemini sinh ảnh không có free tier — hay bị 429/quota 0).
+    // Thử theo thứ tự [requested?, vyceai, pollinations, gemini, openai] (lọc trùng).
+    // hay duyệt: ưu tiên model tốt nhất (VyceAI Grok Imagine 2, trừ $60), Pollinations free làm fallback.
     // 429/quota → provider tiếp; lỗi khác → throw ngay.
-    const order = [dto.provider, 'pollinations', 'gemini', 'openai'].filter(
+    const order = [dto.provider, 'vyceai', 'pollinations', 'gemini', 'openai'].filter(
       (p, i, arr): p is string => !!p && arr.indexOf(p) === i,
     )
     const tried: string[] = []
@@ -335,7 +334,7 @@ export class VideogenService {
     throw new HttpException(
       `Không sinh được ảnh.` +
         (tried.length ? ` Đã thử: ${tried.join('; ')}.` : '') +
-        ' Hãy vào Cài đặt → AI Pro để kết nối key Pollinations (miễn phí không giới hạn), Gemini hoặc OpenAI.',
+        ' Hãy vào Cài đặt → AI Pro để kết nối key VyceAI (tốt nhất), Pollinations (miễn phí), Gemini hoặc OpenAI.',
       HttpStatus.BAD_GATEWAY,
     )
   }
