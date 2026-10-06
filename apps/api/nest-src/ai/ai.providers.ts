@@ -16,6 +16,7 @@ export type AiProviderId =
   | 'moonshot'
   | 'tinyfish'
   | 'pollinations'
+  | 'vyceai'
 
 type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic' | 'tinyfish' | 'pollinations'
 
@@ -35,6 +36,11 @@ export interface AiProviderMeta {
   baseUrl: string
   /** @internal — chỉ dùng ở service */
   kind: ProviderKind
+  /**
+   * @internal — model tạo ảnh riêng của provider (cho Studio image()).
+   * Mặc định 'gpt-image-1' (OpenAI). VD: VyceAI dùng 'grok-imagine-2'.
+   */
+  imageModel?: string
 }
 
 export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
@@ -169,6 +175,19 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     keyNote: 'Tạo ảnh miễn phí không giới hạn',
     baseUrl: 'https://gen.pollinations.ai',
     kind: 'pollinations',
+  },
+  {
+    id: 'vyceai',
+    name: 'VyceAI',
+    keyUrl: 'https://vyceai.com/dashboard-v2',
+    models: ['deepseek-v4-flash', 'deepseek-v4.1', 'gpt-6-luna', 'claude-sonnet-4-6', 'agnes-3.0-flash'],
+    defaultModel: 'deepseek-v4-flash',
+    description:
+      'Gateway chuẩn OpenAI: chat giá rẻ (DeepSeek, GPT-6 Luna, Claude Sonnet 4.6...) + tạo ảnh Grok Imagine 2 (9:16 native). Trừ balance theo dùng.',
+    keyNote: 'Trừ balance theo dùng',
+    baseUrl: 'https://vyceai.com/v1',
+    kind: 'openai-compatible',
+    imageModel: 'grok-imagine-2',
   },
 ]
 

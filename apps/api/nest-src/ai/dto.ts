@@ -15,7 +15,7 @@ import {
 import { Type } from 'class-transformer'
 import type { AiProviderId } from './ai.providers'
 
-export const AI_PROVIDER_IDS = ['gemini', 'openai', 'xai', 'anthropic', 'deepseek', 'experientiallabs', 'apmix', 'muse', 'groq', 'moonshot', 'tinyfish', 'pollinations'] as const
+export const AI_PROVIDER_IDS = ['gemini', 'openai', 'xai', 'anthropic', 'deepseek', 'experientiallabs', 'apmix', 'muse', 'groq', 'moonshot', 'tinyfish', 'pollinations', 'vyceai'] as const
 
 /** POST /ai/connections — KHÔNG bao giờ log apiKey. */
 export class ConnectAiDto {

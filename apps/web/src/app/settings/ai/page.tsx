@@ -35,6 +35,7 @@ const PROVIDER_ACCENT: Record<string, string> = {
   moonshot: 'from-amber-400 to-yellow-300',
   tinyfish: 'from-teal-400 to-cyan-300',
   pollinations: 'from-lime-400 to-green-500',
+  vyceai: 'from-indigo-400 to-violet-500',
 }
 
 /** Code mau goi truc tiep API (chuan OpenAI) bang key cua user — cho tab "Quickstart". */
