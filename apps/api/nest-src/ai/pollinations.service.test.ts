@@ -2,7 +2,8 @@ import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { HttpException } from '@nestjs/common'
 import { PollinationsService } from './pollinations.service'
-import { publicProviderMeta, getProviderMeta } from './ai.providers'
+import { publicProviderMeta, getProviderMeta, SUPPORTED_PROVIDERS } from './ai.providers'
+import { AI_PROVIDER_IDS } from './dto'
 
 process.env.TOKEN_ENCRYPTION_KEY = 'test-only-key-32-chars-xxxxxxxxx'
 
@@ -119,5 +120,12 @@ describe('pollinations provider meta', () => {
     assert.ok(pub, 'có trong public meta')
     assert.equal(pub!.supportsChat, false)
     assert.match(pub!.description, /miễn phí/i)
+  })
+
+  it('mọi provider trong SUPPORTED_PROVIDERS đều có trong AI_PROVIDER_IDS (kẻo DTO chặn oan)', () => {
+    const ids = new Set<string>(AI_PROVIDER_IDS as unknown as string[])
+    for (const p of SUPPORTED_PROVIDERS) {
+      assert.ok(ids.has(p.id), `thiếu '${p.id}' trong AI_PROVIDER_IDS → ConnectAiDto sẽ báo "Provider không được hỗ trợ"`)
+    }
   })
 })
