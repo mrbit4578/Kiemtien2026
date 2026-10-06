@@ -15,8 +15,9 @@ export type AiProviderId =
   | 'groq'
   | 'moonshot'
   | 'tinyfish'
+  | 'pollinations'
 
-type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic' | 'tinyfish'
+type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic' | 'tinyfish' | 'pollinations'
 
 export interface AiProviderMeta {
   id: AiProviderId
@@ -157,6 +158,18 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     baseUrl: '',
     kind: 'tinyfish',
   },
+  {
+    id: 'pollinations',
+    name: 'Pollinations.ai',
+    keyUrl: 'https://enter.pollinations.ai',
+    models: [],
+    defaultModel: '',
+    description:
+      'Tạo ảnh AI miễn phí không giới hạn (FLUX): cấp nguồn sinh ảnh cho bước "Sinh ảnh" của Studio. Key miễn phí, không cần thẻ — đăng ký ~1 phút.',
+    keyNote: 'Tạo ảnh miễn phí không giới hạn',
+    baseUrl: 'https://gen.pollinations.ai',
+    kind: 'pollinations',
+  },
 ]
 
 export function getProviderMeta(id: string): AiProviderMeta | undefined {
@@ -174,9 +187,10 @@ export function publicProviderMeta() {
       defaultModel,
       description,
       ...(keyNote ? { keyNote } : {}),
-      // TinyFish là Search/Fetch API, không phải model chat → frontend ẩn khỏi
-      // các ô chọn provider chat (AI Chat, Copilot, Studio).
-      supportsChat: kind !== 'tinyfish',
+      // TinyFish (search/fetch) và Pollinations (tạo ảnh) là API tiện ích,
+      // không phải model chat → frontend ẩn khỏi các ô chọn provider chat
+      // (AI Chat, Copilot, Knowledge Graph).
+      supportsChat: kind !== 'tinyfish' && kind !== 'pollinations',
     }),
   )
 }

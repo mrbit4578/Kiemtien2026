@@ -95,6 +95,9 @@ export class AiService {
         case 'tinyfish':
           valid = await this.validateTinyFish(apiKey)
           break
+        case 'pollinations':
+          valid = await this.validatePollinations(apiKey)
+          break
         default:
           valid = await this.validateOpenAiCompatible(meta, apiKey)
       }
@@ -170,6 +173,21 @@ export class AiService {
       `https://api.search.tinyfish.ai?query=${encodeURIComponent('tinyfish')}&limit=1`,
       { headers: { 'X-API-Key': apiKey } },
       VALIDATE_TIMEOUT_MS,
+    )
+    if (res.status === 401 || res.status === 403) return false
+    return res.ok
+  }
+
+  /**
+   * Pollinations là API tạo ảnh (không phải LLM chat) — validate bằng 1 ảnh
+   * thumbnail rẻ nhất (gói free không giới hạn nên không tốn gì).
+   * 401/403 → key sai; timeout/lỗi mạng → 502 (thử lại sau), không kết luận key sai.
+   */
+  private async validatePollinations(apiKey: string): Promise<boolean> {
+    const res = await fetchTimeout(
+      `https://gen.pollinations.ai/image/${encodeURIComponent('ok')}?model=flux&width=64&height=64&nologo=true`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+      60_000,
     )
     if (res.status === 401 || res.status === 403) return false
     return res.ok
@@ -380,10 +398,11 @@ export class AiService {
   async chat(workspaceId: string, dto: ChatDto, ip?: string) {
     const meta = getProviderMeta(dto.provider)
     if (!meta) throw new BadRequestException('Provider không được hỗ trợ.')
-    // TinyFish là Search/Fetch API cho agent, không phải model chat.
-    if (meta.kind === 'tinyfish') {
+    // TinyFish (Search/Fetch) và Pollinations (tạo ảnh) là API tiện ích cho agent,
+    // không phải model chat.
+    if (meta.kind === 'tinyfish' || meta.kind === 'pollinations') {
       throw new BadRequestException(
-        'TinyFish là Search/Fetch API (cấp dữ liệu cho tool web_search/fetch_url của AI Copilot), không phải model chat. Hãy chọn một provider chat khác.',
+        `${meta.name} là API tiện ích (${meta.kind === 'tinyfish' ? 'tìm kiếm web cho tool web_search/fetch_url của AI Copilot' : 'tạo ảnh cho bước "Sinh ảnh" của Studio'}), không phải model chat. Hãy chọn một provider chat khác.`,
       )
     }
 
