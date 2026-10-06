@@ -55,40 +55,33 @@ export class AgentService {
   ) {}
 
   /**
-   * Backend TinyFish cho tool web_search/fetch_url: dùng key đã kết nối ở AI
-   * Pro (cache trong 1 lần run agent). Chưa kết nối → null → tool tự fallback
-   * về DuckDuckGo / fetch trực tiếp như cũ.
+   * Backend TinyFish cho tool web_search/fetch_url/web_agent.
+   * Kiểm tra key 1 lần cho cả run: có key → backend đầy đủ; chưa kết nối →
+   * null → web_search/fetch_url tự fallback như cũ, web_agent không đăng ký.
    */
-  private tinyFishBackend(workspaceId: string): TinyFishWebBackend {
-    let cachedKey: string | null | undefined
-    const getKey = async (): Promise<string | null> => {
-      if (cachedKey === undefined) {
-        cachedKey = await this.tinyFishService.getApiKey(workspaceId)
-      }
-      return cachedKey
-    }
+  private async tinyFishBackend(workspaceId: string): Promise<TinyFishWebBackend | null> {
+    const apiKey = await this.tinyFishService.getApiKey(workspaceId)
+    if (!apiKey) return null
     return {
       search: async (query: string) => {
-        const key = await getKey()
-        if (!key) return null
-        const { results } = await this.tinyFishService.search(key, query, { limit: 5 })
+        const { results } = await this.tinyFishService.search(apiKey, query, { limit: 5 })
         return results.map((r) => ({ title: r.title, url: r.url, snippet: r.snippet }))
       },
       fetchUrl: async (url: string) => {
-        const key = await getKey()
-        if (!key) return null
-        const [r] = await this.tinyFishService.fetchUrls(key, [url])
+        const [r] = await this.tinyFishService.fetchUrls(apiKey, [url])
         return r?.text?.trim() ? r.text : null
       },
+      runAgent: async (url: string, goal: string) =>
+        this.tinyFishService.runAgent(apiKey, url, goal),
     }
   }
 
-  private buildRegistry(workspaceId: string): ToolRegistry {
+  private async buildRegistry(workspaceId: string): Promise<ToolRegistry> {
     const registry = new ToolRegistry()
     for (const tool of buildBuiltinTools({
       knowledgeSearch: (query, topK) => this.ragService.searchChunks(workspaceId, query, topK),
       listConnectedAi: () => this.aiService.list(workspaceId),
-      tinyfish: this.tinyFishBackend(workspaceId),
+      tinyfish: await this.tinyFishBackend(workspaceId),
     })) {
       registry.register(tool)
     }
@@ -127,9 +120,9 @@ export class AgentService {
   }
 
   /** GET /ai/agent/tools — metadata tools cho frontend (không chứa secret). */
-  listTools(): Array<Pick<ToolDefinition, 'name' | 'description' | 'parameters'>> {
+  async listTools(): Promise<Array<Pick<ToolDefinition, 'name' | 'description' | 'parameters'>>> {
     // workspaceId rỗng: các factory chỉ dùng khi execute, list metadata không cần
-    return this.buildRegistry('').list().map((t) => ({
+    return (await this.buildRegistry('')).list().map((t) => ({
       name: t.name,
       description: t.description,
       parameters: t.parameters,
@@ -190,7 +183,7 @@ export class AgentService {
     const { meta: runMeta, apiKey, connId, fallback } = await this.resolveAgentKey(workspaceId, dto.provider)
     // KHÔNG log apiKey ở bất cứ đâu trong hàm này
 
-    const registry = this.buildRegistry(workspaceId)
+    const registry = await this.buildRegistry(workspaceId)
     let tools = registry.list()
     if (dto.tools && dto.tools.length > 0) {
       const unknown = dto.tools.filter((n) => !registry.has(n))
