@@ -102,4 +102,24 @@ describe('video auto-build', () => {
     const svc = makeService(prisma, async () => ({ content: 'xin chào, tôi không trả JSON' }))
     await assert.rejects(() => svc.autoBuildFromSource('ws1', { content: 'nguồn test' } as any), /JSON hợp lệ/)
   })
+
+  it('lần đầu AI glitch không trả JSON → tự nhờ AI sửa lại 1 lần, không bắt user bấm lại', async () => {
+    const prisma = basePrisma()
+    let calls = 0
+    const svc = makeService(prisma, async () => {
+      calls++
+      return calls === 1 ? { content: 'Xin lỗi, để tôi phân tích cho bạn…' } : { content: GOOD_JSON }
+    })
+    const res = await svc.autoBuildFromSource('ws1', { content: 'nguồn test' } as any)
+    assert.equal(res.projectId, 'p1')
+    assert.equal(calls, 2)
+  })
+
+  it('parseAutoBuildJson: chịu được text thừa + dấu phẩy thừa', async () => {
+    const prisma = basePrisma()
+    const messy = 'Đây là kết quả phân tích:\n' + GOOD_JSON.replace(',"risk"', ',"risk"').replace(/}$/, ',}') + '\nHy vọng hữu ích!'
+    const svc = makeService(prisma, async () => ({ content: messy }))
+    const res = await svc.autoBuildFromSource('ws1', { content: 'nguồn test' } as any)
+    assert.equal(res.projectId, 'p1')
+  })
 })
