@@ -622,7 +622,7 @@ export function VideoGenStudio({
               <select value={chatProvider} onChange={(e) => setChatProvider(e.target.value)} className={inputCls}>
                 <option value="auto">Tự động</option>
                 {providers
-                  .filter((p) => p.connected)
+                  .filter((p) => p.connected && p.capabilities.includes('chat'))
                   .map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
