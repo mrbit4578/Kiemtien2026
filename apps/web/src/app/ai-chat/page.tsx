@@ -51,6 +51,7 @@ import type {
   RagStrategy,
   AgentRunResponse,
 } from '../../lib/types'
+import { TinyFishSearchBadge } from '../../components/TinyFishSearchBadge'
 
 /** Thời gian tương đối tiếng Việt: "5 phút trước", "2 giờ trước"… */
 function timeAgo(iso: string): string {
@@ -605,6 +606,8 @@ export default function AiChatPage() {
         <h1 className="text-2xl font-extrabold text-white tracking-tight flex items-center gap-2">
           <Sparkles className="w-6 h-6 text-brand-violet" />
           AI Chat Pro
+          {/* Badge nguồn tìm kiếm web của agent (chế độ Agent): TinyFish khi đã kết nối key ở AI Pro */}
+          <TinyFishSearchBadge />
         </h1>
         <div className="flex items-center gap-2">
           {/* Đoạn chat mới */}

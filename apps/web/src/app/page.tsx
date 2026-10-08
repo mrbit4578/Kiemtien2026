@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import { InteractiveKnowledgeGraph } from '../components/InteractiveKnowledgeGraph'
 import { AutoEarningWizard } from '../components/AutoEarningWizard'
+import { TinyFishSearchBadge } from '../components/TinyFishSearchBadge'
 import { useSession } from '../context/SessionContext'
 import { useConnections } from '../lib/hooks'
 
@@ -115,6 +116,9 @@ export default function HomePage() {
               <TrendingUp className="w-4 h-4 text-brand-amber" />
               <span>Chiến Dịch Hoa Hồng Cao</span>
             </Link>
+
+            {/* Badge nguồn tìm kiếm web của agent: TinyFish khi đã kết nối key ở AI Pro */}
+            <TinyFishSearchBadge />
           </div>
         </div>
       </div>
