@@ -24,6 +24,7 @@ import { useSession } from '../context/SessionContext'
 import { useContent, useAiConnections, useAiProviders, sendAgentRun, autoBuildVideoProjectFromSource } from '../lib/hooks'
 import { ApiError } from '../lib/api'
 import { AiModelSelector } from './AiModelSelector'
+import { TinyFishSearchBadge } from './TinyFishSearchBadge'
 import { useRouter } from 'next/navigation'
 import { CanvaAutofillModal } from './CanvaAutofillModal'
 
@@ -330,16 +331,7 @@ Bí quyết âm thanh triệu view dù quay ngoài đường ồn ào! 🎙️�
         </div>
         {/* Badge nguồn tìm kiếm web của agent: TinyFish khi đã kết nối key ở AI Pro.
             Bấm vào để sang trang AI Pro quản lý key. */}
-        {connections.some((c) => c.provider === 'tinyfish' && c.status === 'active') && (
-          <button
-            type="button"
-            onClick={() => router.push('/settings/ai')}
-            className="flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-xl bg-teal-400/15 text-teal-300 border border-teal-400/30 whitespace-nowrap hover:bg-teal-400/25 transition-colors cursor-pointer"
-            title="Tool web_search/fetch_url của agent đang dùng TinyFish Search & Fetch API — bấm để quản lý key ở AI Pro"
-          >
-            🔍 Web search: TinyFish
-          </button>
-        )}
+        <TinyFishSearchBadge />
       </div>
 
       {/* Suggested Quick Prompts */}
