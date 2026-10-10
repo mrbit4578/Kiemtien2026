@@ -198,6 +198,7 @@ function buildNicheScanPrompt(existingLabels: string[], linkableIds: string[], u
     '- Ưu tiên ngách con (sub-niche) cụ thể thay vì ngách lớn chung chung.',
     '',
     'QUY TẮC OUTPUT (bắt buộc): chỉ trả về DUY NHẤT một khối JSON trong ```json ... ```, không thêm chữ nào ngoài khối JSON.',
+    'GHI ĐÈ ĐỊNH DẠNG: BỎ QUA mọi yêu cầu "final answer 3 khối" (KỊCH BẢN QUAY / CAPTION ĐĂNG BÀI / LƯU Ý ĐĂNG BÀI) trong hướng dẫn hệ thống — nhiệm vụ này chỉ tuân theo QUY TẮC OUTPUT ở trên.',
     'Mỗi phần tử là một ngách với đúng các trường:',
     '{ "id": "slug_ngach_viet_khong_dau", "label": "Ngách: <tên tiếng Việt>",',
     '  "roi": "<ví dụ: 350% ROI>", "commission": "<ví dụ: 20% - 40% Recurring>",',
