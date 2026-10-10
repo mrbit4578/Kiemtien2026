@@ -260,7 +260,12 @@ export class AgentService {
     const backend = this.buildBackend(runMeta.kind, runMeta.baseUrl, apiKey, model, maxTokens)
 
     const messages: AgentMessage[] = [
-      { role: 'system', content: buildAgentSystemPrompt(tools.map((t) => t.name)) },
+      {
+        role: 'system',
+        content: buildAgentSystemPrompt(tools.map((t) => t.name), {
+          outputMode: dto.outputMode,
+        }),
+      },
       ...dto.messages.map((m): AgentMessage => ({ role: m.role, content: m.content })),
     ]
 
@@ -270,6 +275,7 @@ export class AgentService {
         tools,
         messages,
         maxTurns: dto.maxTurns ?? 6,
+        outputMode: dto.outputMode,
         workspaceId,
       })
 

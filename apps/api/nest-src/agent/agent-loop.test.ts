@@ -252,6 +252,17 @@ describe('buildAgentSystemPrompt', () => {
     assert.match(p, /TUYỆT ĐỐI KHÔNG dùng \*\*/)
   })
 
+  it('chế độ json: bỏ hoàn toàn section 3 khối, thay bằng yêu cầu JSON nghiêm ngặt', () => {
+    const p = buildAgentSystemPrompt(['web_search'], { outputMode: 'json' })
+    assert.match(p, /DỮ LIỆU CÓ CẤU TRÚC/)
+    // Không còn các tiêu đề khối (section JSON chỉ nhắc tên để cấm, không phải để dùng)
+    assert.doesNotMatch(p, /^## KỊCH BẢN QUAY$/m)
+    assert.doesNotMatch(p, /^## CAPTION ĐĂNG BÀI$/m)
+    assert.doesNotMatch(p, /^## LƯU Ý ĐĂNG BÀI$/m)
+    // Vẫn giữ guardrails an toàn
+    assert.match(p, /KHÔNG hứa hẹn thu nhập chắc chắn/)
+  })
+
   it('có doctrine video faceless: original-first, evidence-first, permission-first', () => {
     const p = buildAgentSystemPrompt(['web_search'])
     assert.match(p, /Original-first/)

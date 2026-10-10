@@ -52,4 +52,12 @@ export class AgentRunDto {
   @IsString({ each: true })
   @MaxLength(64, { each: true })
   tools?: string[]
+
+  /**
+   * Chế độ output của agent: 'content' (mặc định — format 3 khối cho nội dung đăng bài)
+   * hoặc 'json' (dữ liệu có cấu trúc — system prompt bỏ hoàn toàn section 3 khối).
+   */
+  @IsOptional()
+  @IsIn(['content', 'json'])
+  outputMode?: 'content' | 'json'
 }

@@ -439,6 +439,8 @@ export interface AgentRunOptions {
   maxTurns?: number
   /** Timeout mỗi tool. Mặc định 20s. */
   toolTimeoutMs?: number
+  /** Chế độ output: 'content' (mặc định) hoặc 'json' (bỏ format 3 khối). */
+  outputMode?: AgentOutputMode
   onEvent?: (event: AgentEvent) => void
 }
 
@@ -492,11 +494,21 @@ async function runToolWithTimeout(
  * - Dedupe: cùng một turn mà model gọi trùng tool+args thì chỉ chạy một lần,
  *   lần sau tái dùng kết quả (đỡ tốn thời gian và quota).
  */
-const FINAL_TURN_NUDGE: AgentMessage = {
-  role: 'user',
-  content:
-    'Đây là lượt cuối cùng của bạn. Hãy tổng hợp mọi thông tin đã thu thập ' +
-    'và trả lời final answer NGAY theo đúng định dạng yêu cầu — không gọi thêm tool nào nữa.',
+/**
+ * Nudge lượt cuối — ép model tổng hợp và trả lời ngay thay vì gọi thêm tool.
+ * Bản JSON nhắc đúng định dạng dữ liệu để model yếu không rơi về format 3 khối.
+ */
+function finalTurnNudge(jsonMode: boolean): AgentMessage {
+  return {
+    role: 'user',
+    content: jsonMode
+      ? 'Đây là lượt cuối cùng của bạn. Hãy tổng hợp mọi thông tin đã thu thập ' +
+        'và trả về output NGAY theo đúng định dạng mà nhiệm vụ quy định ' +
+        '(ví dụ: một khối JSON trong ```json ... ```) — không gọi thêm tool nào nữa, ' +
+        'không thêm chữ nào ngoài khối output.'
+      : 'Đây là lượt cuối cùng của bạn. Hãy tổng hợp mọi thông tin đã thu thập ' +
+        'và trả lời final answer NGAY theo đúng định dạng yêu cầu — không gọi thêm tool nào nữa.',
+  }
 }
 
 export async function runAgent(
@@ -509,9 +521,10 @@ export async function runAgent(
   const trace: ToolCallTrace[] = []
 
   let lastText = ''
+  const jsonMode = opts.outputMode === 'json'
   for (let turn = 1; turn <= maxTurns; turn++) {
     opts.onEvent?.({ type: 'turn', turn })
-    if (turn === maxTurns && maxTurns > 1) history.push({ ...FINAL_TURN_NUDGE })
+    if (turn === maxTurns && maxTurns > 1) history.push(finalTurnNudge(jsonMode))
     const assistant = await opts.backend.send(history, opts.tools)
     lastText = assistant.text
 
@@ -579,7 +592,46 @@ export async function runAgent(
  * Cấu trúc học từ audit các system prompt Claude: identity, sứ mệnh, bối cảnh
  * nền tảng, khung tư duy, cách dùng tools, định dạng output, guardrails.
  */
-export function buildAgentSystemPrompt(toolNames: string[]): string {
+/** Chế độ output của agent: 'content' = nội dung đăng bài (format 3 khối), 'json' = dữ liệu có cấu trúc. */
+export type AgentOutputMode = 'content' | 'json'
+
+/** Section định dạng output cho task sáng tạo nội dung (mặc định). */
+const CONTENT_FORMAT_SECTION = [
+  '## Định dạng final answer — BẮT BUỘC khi giao nội dung video/đăng bài hoàn chỉnh',
+  'Final answer gồm đúng 3 khối, đúng thứ tự, đúng tiêu đề khối (hệ thống tách tự động theo tiêu đề này):',
+  '',
+  '## KỊCH BẢN QUAY',
+  'Kịch bản quay/dựng đầy đủ: phân cảnh, lời thoại/voice-over, text trên màn hình, thời lượng từng đoạn. Người dùng dùng khối này để quay video — KHÔNG đăng nguyên văn.',
+  '',
+  '## CAPTION ĐĂNG BÀI',
+  'Caption đăng trực tiếp lên mạng xã hội: text thuần + emoji + xuống dòng. TUYỆT ĐỐI KHÔNG dùng **, ##, tiêu đề phụ, phân cảnh, timestamp, "Voice-over" hay bất kỳ dấu vết kịch bản nào.',
+  'Cấu trúc caption: 1 câu HOOK mở đầu + 2–3 câu nội dung ngắn + 1 CTA duy nhất + hashtag vừa đủ (5–8 cái).',
+  'CTA ghi "link trong bio" (caption Instagram/TikTok không bấm được link) — KHÔNG dán URL trần vào caption.',
+  '',
+  '## LƯU Ý ĐĂNG BÀI',
+  'Checklist tuân thủ trước khi đăng (gạch đầu dòng, ngắn): disclosure affiliate/tài trợ nếu có; label AI bắt buộc nếu dùng voice/hình AI chân thực; nguồn nhạc đã có quyền thương mại; claim rủi ro cao đã xác minh hoặc đã hạ wording. Nếu không có gì đặc biệt, ghi 1 dòng "Không có lưu ý đặc biệt — vẫn kiểm tra lại G1–G8."',
+  '',
+  'Trước 3 khối trên, cho phép tối đa 4 dòng ngắn: GIỜ ĐĂNG GỢI Ý / KÊNH PHÙ HỢP / NẤC PHỄU (Attention-Trust-Offer). Không thêm mục nào khác.',
+]
+
+/**
+ * Section định dạng output cho task dữ liệu có cấu trúc (VD: quét ngách trả về JSON).
+ * Thay thế HOÀN TOÀN section 3 khối — model yếu không còn bị xung đột chỉ dẫn
+ * (trước đây khiến quét ngách với model free luôn trả về 3 khối thay vì JSON).
+ */
+const JSON_FORMAT_SECTION = [
+  '## Định dạng output — DỮ LIỆU CÓ CẤU TRÚC (nghiêm ngặt)',
+  'Nhiệm vụ này yêu cầu output là DỮ LIỆU CÓ CẤU TRÚC, KHÔNG phải nội dung đăng bài.',
+  '- TUYỆT ĐỐI KHÔNG dùng định dạng 3 khối (KỊCH BẢN QUAY / CAPTION ĐĂNG BÀI / LƯU Ý ĐĂNG BÀI) — các khối đó KHÔNG tồn tại trong nhiệm vụ này.',
+  '- Chỉ trả về đúng định dạng mà nhiệm vụ quy định (ví dụ: một khối JSON trong ```json ... ```), không thêm chữ nào ngoài khối đó.',
+  '- Không thêm lời chào, giải thích, gợi ý bước tiếp theo, hay checklist vào output.',
+]
+
+export function buildAgentSystemPrompt(
+  toolNames: string[],
+  opts?: { outputMode?: AgentOutputMode },
+): string {
+  const jsonMode = opts?.outputMode === 'json'
   return [
     '## Danh tính',
     'Bạn là trợ lý tăng trưởng AI của nền tảng Kiemtien2026, chạy ở chế độ agent: bạn có thể gọi các công cụ (tools) để lấy thông tin trước khi trả lời.',
@@ -632,22 +684,7 @@ export function buildAgentSystemPrompt(toolNames: string[]): string {
     '- Trả lời bằng tiếng Việt, xưng mình/bạn; ngắn gọn, đi thẳng vào việc; hành động cụ thể quan trọng hơn lý thuyết.',
     '- Khi tư vấn chiến lược, luôn kết thúc bằng 1–3 bước hành động tiếp theo người dùng có thể làm ngay trong Kiemtien2026 (ví dụ: "tạo 3 hook trong Content Studio", "đẩy video này lên queue publish TikTok").',
     '',
-    '## Định dạng final answer — BẮT BUỘC khi giao nội dung video/đăng bài hoàn chỉnh',
-    'Khi nhiệm vụ của người dùng KHÔNG quy định định dạng output riêng: final answer gồm đúng 3 khối, đúng thứ tự, đúng tiêu đề khối (hệ thống tách tự động theo tiêu đề này).',
-    'Khi nhiệm vụ của người dùng ĐÃ quy định định dạng output riêng (ví dụ: chỉ trả về JSON): TUÂN THEO quy định của nhiệm vụ, BỎ QUA 3 khối dưới đây.',
-    '',
-    '## KỊCH BẢN QUAY',
-    'Kịch bản quay/dựng đầy đủ: phân cảnh, lời thoại/voice-over, text trên màn hình, thời lượng từng đoạn. Người dùng dùng khối này để quay video — KHÔNG đăng nguyên văn.',
-    '',
-    '## CAPTION ĐĂNG BÀI',
-    'Caption đăng trực tiếp lên mạng xã hội: text thuần + emoji + xuống dòng. TUYỆT ĐỐI KHÔNG dùng **, ##, tiêu đề phụ, phân cảnh, timestamp, "Voice-over" hay bất kỳ dấu vết kịch bản nào.',
-    'Cấu trúc caption: 1 câu HOOK mở đầu + 2–3 câu nội dung ngắn + 1 CTA duy nhất + hashtag vừa đủ (5–8 cái).',
-    'CTA ghi "link trong bio" (caption Instagram/TikTok không bấm được link) — KHÔNG dán URL trần vào caption.',
-    '',
-    '## LƯU Ý ĐĂNG BÀI',
-    'Checklist tuân thủ trước khi đăng (gạch đầu dòng, ngắn): disclosure affiliate/tài trợ nếu có; label AI bắt buộc nếu dùng voice/hình AI chân thực; nguồn nhạc đã có quyền thương mại; claim rủi ro cao đã xác minh hoặc đã hạ wording. Nếu không có gì đặc biệt, ghi 1 dòng "Không có lưu ý đặc biệt — vẫn kiểm tra lại G1–G8."',
-    '',
-    'Trước 3 khối trên, cho phép tối đa 4 dòng ngắn: GIỜ ĐĂNG GỢI Ý / KÊNH PHÙ HỢP / NẤC PHỄU (Attention-Trust-Offer). Không thêm mục nào khác.',
+    ...(jsonMode ? JSON_FORMAT_SECTION : CONTENT_FORMAT_SECTION),
     '',
     '## Doctrine video faceless — áp dụng khi làm nội dung từ nguồn viral',
     '- Original-first: dùng video viral làm TÍN HIỆU nghiên cứu (chủ đề, nhu cầu khán giả), KHÔNG tải lại, KHÔNG đọc lại lời, KHÔNG dựng lại montage của nguồn. Có tool video_brief để chốt góc — bắt buộc qua G0 originality test.',

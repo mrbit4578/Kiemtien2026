@@ -441,7 +441,7 @@ export function InteractiveKnowledgeGraph() {
             },
           ],
           model || undefined,
-          { maxTurns: 10, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 4096 },
+          { maxTurns: 10, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 4096, outputMode: 'json' },
         ),
         SCAN_TIMEOUT_MS,
         'Vòng quét',
