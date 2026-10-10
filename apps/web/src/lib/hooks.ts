@@ -344,7 +344,7 @@ export async function sendAgentRun(
   provider: string,
   messages: ChatMessage[],
   model?: string,
-  opts?: { maxTurns?: number; tools?: string[]; maxTokens?: number },
+  opts?: { maxTurns?: number; tools?: string[]; maxTokens?: number; outputMode?: 'content' | 'json' },
 ): Promise<AgentRunResponse> {
   // Chỉ gửi role+content — xem chú thích ở sendAiChat.
   const clean = messages.map((m) => ({ role: m.role, content: m.content }))
