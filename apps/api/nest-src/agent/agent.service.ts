@@ -222,10 +222,13 @@ export class AgentService {
     )
   }
 
-  /** Lỗi phía provider/server giữa chừng (đáng thử provider khác): 429/5xx từ backend. */
+  /**
+   * Lỗi phía provider/server giữa chừng (đáng thử provider khác): 429/5xx từ backend,
+   * hoặc provider trả 200 nhưng nội dung rỗng nhiều lần (VD: model free APInex quá tải).
+   */
   private isProviderSideError(err: unknown): boolean {
     const msg = err instanceof Error ? err.message : String(err)
-    return /Provider trả lỗi (429|5\d\d)\b/.test(msg)
+    return /Provider trả lỗi (429|5\d\d)\b|không trả về nội dung/.test(msg)
   }
 
   /** Một lượt chạy agent với đúng 1 key. Lỗi 429/5xx được ném THÔ để run() thử provider khác. */

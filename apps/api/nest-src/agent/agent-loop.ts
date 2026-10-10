@@ -48,6 +48,8 @@ export interface ChatBackend {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const PROVIDER_TIMEOUT_MS = 90_000
+/** Chờ giữa các lần thử lại khi provider trả 200 nhưng nội dung rỗng (glitch thoáng qua). */
+const EMPTY_CONTENT_RETRY_MS = 800
 
 function toolSchemaForPrompt(tool: ToolDefinition): Record<string, unknown> {
   return {
@@ -190,7 +192,18 @@ export class OpenAiCompatibleBackend implements ChatBackend {
           }
           return { id: tc.id ?? `call_${i}`, name: tc.function?.name ?? '', args }
         })
-        return { text: msg?.content ?? '', toolCalls }
+        const contentText = msg?.content ?? ''
+        // Một số provider (VD: model free của APInex lúc quá tải) thỉnh thoảng trả
+        // 200 nhưng nội dung rỗng và không có tool call — glitch thoáng qua, thử lại
+        // thay vì coi như agent đã trả lời xong (trước đây gây lỗi "AI không trả về
+        // danh sách ngách hợp lệ" ở vòng quét ngách).
+        if (!contentText && toolCalls.length === 0) {
+          lastErr = new Error('Provider không trả về nội dung (trả về rỗng).')
+          if (attempt >= maxAttempts) break
+          await new Promise((r) => setTimeout(r, EMPTY_CONTENT_RETRY_MS))
+          continue
+        }
+        return { text: contentText, toolCalls }
       }
       lastErr = new Error(`Provider trả lỗi ${res.status}: ${text.slice(0, 300)}`)
       if (attempt >= maxAttempts) break

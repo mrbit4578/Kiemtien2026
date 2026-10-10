@@ -774,32 +774,39 @@ export class AiService {
     maxTokens: number,
     connId: string,
   ) {
-    const res = await fetchTimeout(`${meta.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: messages.map((m) => ({ role: m.role, content: m.content })),
-        max_tokens: maxTokens,
-      }),
-    }, CHAT_TIMEOUT_MS)
-    const text = await res.text()
-    if (!res.ok) throw this.providerError(meta, apiKey, res, text, connId)
-    const data = JSON.parse(text) as {
-      choices?: Array<{ message?: { content?: string } }>
-      usage?: Record<string, unknown>
+    // Một số provider (VD: model free của APInex lúc quá tải) thỉnh thoảng trả 200
+    // nhưng nội dung rỗng — glitch thoáng qua, thử lại vài lần trước khi báo lỗi
+    // (trước đây gây cảm giác "lúc được lúc không" rồi nhảy sang provider dự phòng).
+    const maxAttempts = 3
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const res = await fetchTimeout(`${meta.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: messages.map((m) => ({ role: m.role, content: m.content })),
+          max_tokens: maxTokens,
+        }),
+      }, CHAT_TIMEOUT_MS)
+      const text = await res.text()
+      if (!res.ok) throw this.providerError(meta, apiKey, res, text, connId)
+      const data = JSON.parse(text) as {
+        choices?: Array<{ message?: { content?: string } }>
+        usage?: Record<string, unknown>
+      }
+      const content = data.choices?.[0]?.message?.content ?? ''
+      if (content) return { content, usage: data.usage }
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 800))
+      }
     }
-    const content = data.choices?.[0]?.message?.content ?? ''
-    if (!content) {
-      throw new HttpException(
-        `${meta.name} không trả về nội dung.`,
-        HttpStatus.BAD_GATEWAY,
-      )
-    }
-    return { content, usage: data.usage }
+    throw new HttpException(
+      `${meta.name} không trả về nội dung.`,
+      HttpStatus.BAD_GATEWAY,
+    )
   }
 
   private async chatAnthropic(
