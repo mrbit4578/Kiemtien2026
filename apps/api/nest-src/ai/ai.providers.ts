@@ -18,6 +18,7 @@ export type AiProviderId =
   | 'pollinations'
   | 'vyceai'
   | 'koto'
+  | 'apinex'
 
 type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic' | 'tinyfish' | 'pollinations'
 
@@ -200,6 +201,24 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
       'Chat chuẩn OpenAI từ Mutowa (Nhật): Super Heavy 2 có context 2M token — hợp phân tích codebase/tài liệu dài, viết kịch bản. Tạo key trong app KOTO: Settings → Developer API → New key.',
     keyNote: 'Dùng credits tài khoản KOTO',
     baseUrl: 'https://api.mutowa.com/v1',
+    kind: 'openai-compatible',
+  },
+  {
+    id: 'apinex',
+    name: 'APInex',
+    keyUrl: 'https://apinex.bond/',
+    models: [
+      'free/qwen-3.8-max',
+      'free/deepseek-v4.1-flash',
+      'free/gpt-6-luna',
+      'free/kimi-k3',
+      'free/gemini-3.8-flash',
+    ],
+    defaultModel: 'free/qwen-3.8-max',
+    description:
+      'Gateway chuẩn OpenAI với nhiều model FREE (Qwen 3.8 Max, DeepSeek V4.1, GPT-6 Luna, Kimi K3, Gemini 3.8...), context 1M. Tạo key tại apinex.bond → API Keys.',
+    keyNote: 'Nhiều model miễn phí',
+    baseUrl: 'https://api.apinex.bond/v1',
     kind: 'openai-compatible',
   },
 ]
