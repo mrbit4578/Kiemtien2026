@@ -17,6 +17,7 @@ export type AiProviderId =
   | 'tinyfish'
   | 'pollinations'
   | 'vyceai'
+  | 'koto'
 
 type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic' | 'tinyfish' | 'pollinations'
 
@@ -188,6 +189,18 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
     baseUrl: 'https://vyceai.com/v1',
     kind: 'openai-compatible',
     imageModel: 'grok-imagine-2',
+  },
+  {
+    id: 'koto',
+    name: 'KOTO (Mutowa)',
+    keyUrl: 'https://koto.mutowa.com/',
+    models: ['KOTO-super-1.2', 'KOTO-super-heavy-2', 'KOTO-flash-1.2'],
+    defaultModel: 'KOTO-super-1.2',
+    description:
+      'Chat chuẩn OpenAI từ Mutowa (Nhật): Super Heavy 2 có context 2M token — hợp phân tích codebase/tài liệu dài, viết kịch bản. Tạo key trong app KOTO: Settings → Developer API → New key.',
+    keyNote: 'Dùng credits tài khoản KOTO',
+    baseUrl: 'https://api.mutowa.com/v1',
+    kind: 'openai-compatible',
   },
 ]
 
