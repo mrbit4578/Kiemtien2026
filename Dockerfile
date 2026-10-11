@@ -82,4 +82,8 @@ RUN chmod +x /usr/local/bin/concat-cli \
 
 # Render tự inject PORT; main.ts đọc process.env.PORT (fallback 4000).
 EXPOSE 4000
-CMD ["node", "dist/main.js"]
+# Migrate DB (idempotent) trước khi start API trong mọi môi trường chạy image
+# này. Lý do để ở đây thay vì render.yaml: gói free của Render không hỗ trợ
+# preDeployCommand, và service docker không được phép có startCommand trong
+# blueprint → CMD là nơi duy nhất còn lại. Dùng exec để node giữ PID 1.
+CMD ["sh", "-c", "sh scripts/migrate-with-retry.sh && exec node dist/main.js"]

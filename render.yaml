@@ -57,9 +57,8 @@ services:
     dockerContext: .
     # Chạy trong image đã build, trước khi deploy (giống service node).
     # WORKDIR trong image là /app/apps/api nên path tính từ đó.
-    # Gói free KHÔNG hỗ trợ preDeployCommand → gộp migrate vào startCommand
-    # (image đã có pnpm + prisma schema/migrations; idempotent).
-    startCommand: sh scripts/migrate-with-retry.sh && node dist/main.js
+    # Gói free KHÔNG hỗ trợ preDeployCommand, và blueprint cấm startCommand
+    # với docker runtime → migrate đã chuyển vào CMD của Dockerfile (idempotent).
     healthCheckPath: /rag/strategies
     envVars:
       - key: NODE_ENV
