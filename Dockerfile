@@ -86,4 +86,6 @@ EXPOSE 4000
 # này. Lý do để ở đây thay vì render.yaml: gói free của Render không hỗ trợ
 # preDeployCommand, và service docker không được phép có startCommand trong
 # blueprint → CMD là nơi duy nhất còn lại. Dùng exec để node giữ PID 1.
-CMD ["sh", "-c", "sh scripts/migrate-with-retry.sh && exec node dist/main.js"]
+# SKIP_MIGRATE=true để bỏ qua migrate khi DB đã đủ migrations nhưng advisory
+# lock bị kẹt (P1002) — chỉ dùng tạm, gỡ khi cần migrate thật.
+CMD ["sh", "-c", "if [ \"$SKIP_MIGRATE\" != \"true\" ]; then sh scripts/migrate-with-retry.sh; fi && exec node dist/main.js"]
