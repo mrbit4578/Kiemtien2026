@@ -19,8 +19,9 @@ services:
     # Migrate DB trước mỗi lần deploy (idempotent), rồi mới start server.
     # Script tự retry 5 lần (mỗi lần cách 20s) nếu Neon kẹt advisory lock (P1002)
     # — deploy tự hồi phục, không cần bấm Manual Deploy tay.
-    preDeployCommand: sh apps/api/scripts/migrate-with-retry.sh
-    startCommand: pnpm --filter @orh/api start
+    # Gói free KHÔNG hỗ trợ preDeployCommand → gộp migrate vào startCommand
+    # (chạy mỗi lần start/wake, idempotent nên an toàn).
+    startCommand: sh apps/api/scripts/migrate-with-retry.sh && pnpm --filter @orh/api start
     healthCheckPath: /rag/strategies
     envVars:
       - key: NODE_VERSION
@@ -54,7 +55,9 @@ services:
     dockerContext: .
     # Chạy trong image đã build, trước khi deploy (giống service node).
     # WORKDIR trong image là /app/apps/api nên path tính từ đó.
-    preDeployCommand: sh scripts/migrate-with-retry.sh
+    # Gói free KHÔNG hỗ trợ preDeployCommand → gộp migrate vào startCommand
+    # (image đã có pnpm + prisma schema/migrations; idempotent).
+    startCommand: sh scripts/migrate-with-retry.sh && node dist/main.js
     healthCheckPath: /rag/strategies
     envVars:
       - key: NODE_ENV
