@@ -12,6 +12,7 @@ services:
   - type: web
     name: kiemtien2026-api
     runtime: node
+    plan: free # gói free — không cần thẻ; service tự ngủ sau 15' không dùng
     rootDir: .
     # Ép NODE_ENV=development lúc build để pnpm cài đủ devDependencies
     # (@types/node, typescript...). Lúc chạy thật Render vẫn dùng NODE_ENV=production.
@@ -51,6 +52,7 @@ services:
   - type: web
     name: kiemtien2026-api-docker
     runtime: docker
+    plan: free # gói free — không cần thẻ; service tự ngủ sau 15' không dùng
     dockerfilePath: ./Dockerfile
     dockerContext: .
     # Chạy trong image đã build, trước khi deploy (giống service node).
