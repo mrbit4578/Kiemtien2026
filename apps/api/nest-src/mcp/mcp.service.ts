@@ -3,8 +3,8 @@ import { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import { VideoService } from '../video/video.service'
 import { AiService } from '../ai/ai.service'
+import { PrismaService } from '../prisma/prisma.service'
 
-const WORKSPACE_ID = () => process.env.MCP_WORKSPACE_ID ?? ''
 const MAX_TEXT = 8000
 
 function textResult(text: string, isError = false) {
@@ -23,11 +23,31 @@ export class McpService {
   constructor(
     private readonly video: VideoService,
     private readonly ai: AiService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  /**
+   * Tìm workspace đang dùng cho MCP: ưu tiên MCP_WORKSPACE_ID, nếu workspace
+   * đó không có kết nối UTIM active thì tự tìm workspace nào có.
+   */
+  private async resolveWorkspaceId(): Promise<string> {
+    const preferred = process.env.MCP_WORKSPACE_ID ?? ''
+    if (preferred) {
+      const conn = await this.prisma.aiConnection.findUnique({
+        where: { workspaceId_provider: { workspaceId: preferred, provider: 'utim' } },
+      })
+      if (conn?.status === 'active') return preferred
+    }
+    const anyConn = await this.prisma.aiConnection.findFirst({
+      where: { provider: 'utim', status: 'active' },
+      orderBy: { updatedAt: 'desc' },
+    })
+    if (!anyConn) throw new Error('Chưa có workspace nào kết nối UTIM.')
+    return anyConn.workspaceId
+  }
 
   buildServer(): McpServer {
     const server = new McpServer({ name: 'kiemtien2026', version: '1.0.0' })
-    const workspaceId = WORKSPACE_ID()
 
     server.registerTool(
       'auto_build_video',
@@ -41,6 +61,7 @@ export class McpService {
       },
       async ({ content }) => {
         try {
+          const workspaceId = await this.resolveWorkspaceId()
           const project = await this.video.autoBuildFromSource(workspaceId, { content })
           return textResult(JSON.stringify(project, null, 2))
         } catch (e) {
@@ -62,6 +83,7 @@ export class McpService {
       },
       async ({ message, model }) => {
         try {
+          const workspaceId = await this.resolveWorkspaceId()
           const res = await this.ai.chat(workspaceId, {
             provider: 'utim',
             model: model ?? 'claude-opus-5.5',
