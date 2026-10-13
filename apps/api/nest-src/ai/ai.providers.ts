@@ -19,6 +19,7 @@ export type AiProviderId =
   | 'vyceai'
   | 'koto'
   | 'apinex'
+  | 'utim'
 
 type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic' | 'tinyfish' | 'pollinations'
 
@@ -219,6 +220,18 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
       'Gateway chuẩn OpenAI với nhiều model FREE (Qwen 3.8 Max, DeepSeek V4.1, GPT-6 Luna, Kimi K3, Gemini 3.8...), context 1M. Tạo key tại apinex.bond → API Keys.',
     keyNote: 'Nhiều model miễn phí',
     baseUrl: 'https://api.apinex.bond/v1',
+    kind: 'openai-compatible',
+  },
+  {
+    id: 'utim',
+    name: 'UTIM',
+    keyUrl: 'https://utim.dev/api-keys',
+    models: ['Atria-Dawn-Preview', 'claude-opus-4.6', 'claude-opus-5.5'],
+    defaultModel: 'claude-opus-5.5',
+    description:
+      'Terminal AI agent (utim.dev): 3 model reasoning FREE — hợp chọn ngách, tối ưu context, dựng kịch bản. Tạo key tại utim.dev → API keys (đăng nhập tài khoản UTIM của bạn).',
+    keyNote: 'Model miễn phí',
+    baseUrl: 'https://api.utim.dev/v1',
     kind: 'openai-compatible',
   },
 ]
