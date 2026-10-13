@@ -446,7 +446,10 @@ export function InteractiveKnowledgeGraph() {
             },
           ],
           model || undefined,
-          { maxTurns: SCAN_MAX_TURNS, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 4096, outputMode: 'json' },
+          // maxTokens 8000: model reasoning (claude-opus-5.5) dùng ~2-3k tokens cho
+          // reasoning, chỉ còn ~1k cho JSON output → 4096 cũ khiến JSON bị cắt cụt,
+          // parse fail với lỗi "AI không trả về danh sách ngách hợp lệ".
+          { maxTurns: SCAN_MAX_TURNS, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 8000, outputMode: 'json' },
         ),
         SCAN_TIMEOUT_MS,
         'Vòng quét',
