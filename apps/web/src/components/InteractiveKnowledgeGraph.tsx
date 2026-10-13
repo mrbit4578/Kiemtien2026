@@ -375,9 +375,14 @@ export function InteractiveKnowledgeGraph() {
   // Áp dụng từ tài liệu nn-llm-agent-v1: vòng lặp agent gồm các bước hiển thị
   // được (perceive → propose → score → diversify), guard bắt buộc
   // (timeout, giới hạn ứng viên) và human-in-the-loop (người duyệt cuối).
-  const SCAN_TIMEOUT_MS = 3 * 60 * 1000
+  // Timeout 10 phút: model reasoning (VD: claude-opus-5.5 qua UTIM) mỗi turn
+  // có thể mất 30-60s, cộng web_search — 3 phút không đủ là lỗi thiết kế cũ.
+  const SCAN_TIMEOUT_MS = 10 * 60 * 1000
   const SCAN_MAX_CANDIDATES = 24
   const SCAN_TOP_K = 10
+  // Số turn agent cho vòng quét: 6 là đủ để đề xuất ngách chất lượng,
+  // 10 turns cũ khiến model reasoning chạy quá lâu mà chất lượng không tăng tương xứng.
+  const SCAN_MAX_TURNS = 6
 
   interface ScanStep {
     id: string
@@ -441,7 +446,7 @@ export function InteractiveKnowledgeGraph() {
             },
           ],
           model || undefined,
-          { maxTurns: 10, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 4096, outputMode: 'json' },
+          { maxTurns: SCAN_MAX_TURNS, tools: ['web_search', 'fetch_url', 'get_current_time'], maxTokens: 4096, outputMode: 'json' },
         ),
         SCAN_TIMEOUT_MS,
         'Vòng quét',
