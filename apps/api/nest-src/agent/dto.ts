@@ -36,7 +36,7 @@ export class AgentRunDto {
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Max(4096)
+  @Max(16000)
   maxTokens?: number
 
   /** Số vòng think→act→observe tối đa. Mặc định 6, trần 12. */
