@@ -186,7 +186,8 @@ function buildNicheScanPrompt(existingLabels: string[], linkableIds: string[], u
       : []
   return [
     'Bạn là chuyên gia nghiên cứu thị trường MMO/affiliate Việt Nam.',
-    'Nhiệm vụ: dùng web_search để tìm các xu hướng kiếm tiền online / tiếp thị liên kết ĐANG LÊN tại Việt Nam trong năm 2026,',
+    'Nhiệm vụ: dùng web_search TỐI ĐA 2 LẦN để tìm các xu hướng kiếm tiền online / tiếp thị liên kết ĐANG LÊN tại Việt Nam trong năm 2026,',
+    'sau đó TỔNG HỢP NGAY thành đề xuất — đừng tìm kiếm thêm, đừng chần chừ.',
     'rồi đề xuất 10–12 NGÁCH MỚI tiềm năng nhất mà chưa có trong danh sách sau:',
     existingLabels.map((l) => `- ${l}`).join('\n'),
     ...banList,
@@ -380,9 +381,9 @@ export function InteractiveKnowledgeGraph() {
   const SCAN_TIMEOUT_MS = 10 * 60 * 1000
   const SCAN_MAX_CANDIDATES = 24
   const SCAN_TOP_K = 10
-  // Số turn agent cho vòng quét: 6 là đủ để đề xuất ngách chất lượng,
-  // 10 turns cũ khiến model reasoning chạy quá lâu mà chất lượng không tăng tương xứng.
-  const SCAN_MAX_TURNS = 6
+  // Số turn agent cho vòng quét: 4 là đủ (2 lần web_search + tổng hợp),
+  // giảm độ trễ so với 6 turns mà chất lượng đề xuất không giảm đáng kể.
+  const SCAN_MAX_TURNS = 4
 
   interface ScanStep {
     id: string
