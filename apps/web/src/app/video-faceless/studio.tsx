@@ -212,7 +212,7 @@ export function VideoGenStudio({
   const providerOptions = (cap: 'chat' | 'image' | 'voice' | 'video') => (
     <>
       <option value="auto">
-        {cap === 'voice' ? 'Tự động (Gemini → OpenAI → Edge)' : 'Tự động (VyceAI → Gemini → OpenAI)'}
+        {cap === 'voice' ? 'Tự động (Gemini → OpenAI → Novita → Edge)' : 'Tự động (VyceAI → Gemini → OpenAI)'}
       </option>
       {providers
         .filter((p) => p.connected && p.capabilities.includes(cap))
@@ -636,7 +636,7 @@ export function VideoGenStudio({
             <div>
               <label className={labelCls}>🖼️ Sinh ảnh</label>
               <select value={imageProvider} onChange={(e) => setImageProvider(e.target.value)} className={inputCls}>
-                <option value="auto">Tự động (VyceAI → Pollinations → Gemini → OpenAI)</option>
+                <option value="auto">Tự động (VyceAI → Pollinations → Gemini → OpenAI → Novita)</option>
                 {providers
                   .filter((p) => p.connected && p.capabilities.includes('image'))
                   .map((p) => (
@@ -649,7 +649,7 @@ export function VideoGenStudio({
             <div>
               <label className={labelCls}>🎙️ Giọng đọc</label>
               <select value={voiceProvider} onChange={(e) => setVoiceProvider(e.target.value)} className={inputCls}>
-                <option value="auto">Tự động (Gemini → OpenAI → Edge)</option>
+                <option value="auto">Tự động (Gemini → OpenAI → Novita → Edge)</option>
                 {providers
                   .filter((p) => p.connected && p.capabilities.includes('voice'))
                   .map((p) => (
