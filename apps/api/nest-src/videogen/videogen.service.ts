@@ -29,6 +29,7 @@ import type { ScriptDto, ImageDto, VoiceDto, VoiceBatchDto, ClipDto } from './dt
  * - gemini : chat + image (Nano Banana) + voice (Gemini TTS) + video (Veo 3.1)
  * - openai : chat + image (GPT Image) + voice (OpenAI TTS) + video (Sora 2)
  * - pollinations : image (FLUX schnell, miễn phí không giới hạn) — fallback free khi để auto
+ * - novita : chat + image (FLUX.1 Schnell qua /v3beta) + voice (MiniMax Speech-2.8-HD qua /v3)
  * - xai / anthropic / deepseek / experientiallabs / apmix: chỉ chat
  *   (gateway OpenAI-compatible không đảm bảo có image/voice/video).
  */
@@ -45,6 +46,7 @@ const CAPABILITIES: Record<string, Capability[]> = {
   openai: ['chat', 'image', 'voice', 'video'],
   pollinations: ['image'], // FLUX schnell — miễn phí không giới hạn
   vyceai: ['chat', 'image'], // chat giá rẻ + ảnh Grok Imagine 2 (trừ balance)
+  novita: ['chat', 'image', 'voice'], // ảnh FLUX.1 Schnell + voice MiniMax Speech-2.8-HD (API riêng, không qua /v3/openai)
   xai: ['chat'],
   anthropic: ['chat'],
   deepseek: ['chat'],
@@ -112,6 +114,7 @@ export class VideogenService {
       'muse',
       'groq',
       'moonshot',
+      'novita',
     ]
     interface ProviderInfo {
       id: string
@@ -177,7 +180,7 @@ export class VideogenService {
       `Không có key nào dùng được để ${needVi[need]}.` +
         (tried.length ? ` Đã thử: ${tried.join('; ')}.` : '') +
         ' Hãy vào Cài đặt → AI Pro để kết nối key ' +
-        (need === 'chat' ? '(bất kỳ)' : 'Gemini hoặc OpenAI') +
+        (need === 'chat' ? '(bất kỳ)' : 'Gemini, OpenAI hoặc Novita') +
         '.',
     )
   }
@@ -296,10 +299,10 @@ export class VideogenService {
     const prompt =
       `${dto.prompt}. Vertical composition 9:16, cinematic lighting, ultra detailed, no text, no watermark.`
 
-    // Thử theo thứ tự [requested?, vyceai, pollinations, gemini, openai] (lọc trùng).
+    // Thử theo thứ tự [requested?, vyceai, pollinations, gemini, openai, novita] (lọc trùng).
     // hay duyệt: ưu tiên model tốt nhất (VyceAI Grok Imagine 2, trừ $60), Pollinations free làm fallback.
     // 429/quota → provider tiếp; lỗi khác → throw ngay.
-    const order = [dto.provider, 'vyceai', 'pollinations', 'gemini', 'openai'].filter(
+    const order = [dto.provider, 'vyceai', 'pollinations', 'gemini', 'openai', 'novita'].filter(
       (p, i, arr): p is string => !!p && arr.indexOf(p) === i,
     )
     const tried: string[] = []
@@ -312,6 +315,9 @@ export class VideogenService {
         continue
       }
       try {
+        if (key.meta.id === 'novita') {
+          return await this.imageNovita(key.meta, key.apiKey, prompt, ratio, workspaceId, ip)
+        }
         if (key.meta.kind === 'pollinations') {
           return await this.imagePollinations(key.meta, key.apiKey, prompt, ratio, workspaceId, ip)
         }
@@ -469,6 +475,66 @@ export class VideogenService {
     }
   }
 
+  /** Novita image: FLUX.1 Schnell đồng bộ qua /v3beta/flux-1-schnell.
+   *  API media của Novita nằm ở gốc api.novita.ai — KHÔNG qua baseUrl
+   *  OpenAI-compatible (/v3/openai); các route txt2img async cũ đã bị
+   *  khai tử (404). Trả URL ảnh trực tiếp (giống nhánh OpenAI khi có url).
+   *  Lưu ý: pool worker FLUX của Novita có lúc trả 429 "failed to schedule
+   *  worker" (test live 2026-10-22: 2/2 lần) — image() bắt 429 → fallback. */
+  private async imageNovita(
+    meta: AiProviderMeta,
+    apiKey: string,
+    prompt: string,
+    ratio: string,
+    workspaceId: string,
+    ip?: string,
+  ) {
+    const model = 'flux-1-schnell'
+    const width = ratio === '16:9' ? 1344 : ratio === '1:1' ? 1024 : 768
+    const height = ratio === '16:9' ? 768 : ratio === '1:1' ? 1024 : 1344
+    const apiRoot = meta.baseUrl.replace(/\/v3\/openai\/?$/, '')
+    const res = await fetchTimeout(
+      `${apiRoot}/v3beta/flux-1-schnell`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          prompt,
+          width,
+          height,
+          image_num: 1,
+          steps: 4,
+          seed: Math.floor(Math.random() * 1_000_000_000),
+        }),
+      },
+      IMAGE_TIMEOUT_MS,
+    )
+    const text = await res.text()
+    if (!res.ok) {
+      throw new HttpException(
+        `${meta.name} trả lỗi ${res.status}: ${this.sanitize(text, apiKey)}`,
+        HttpStatus.BAD_GATEWAY,
+      )
+    }
+    const data = JSON.parse(text) as {
+      images?: Array<{ image_url?: string; image_type?: string }>
+    }
+    const img = data.images?.[0]
+    if (!img?.image_url) {
+      throw new HttpException(`${meta.name} không trả về ảnh.`, HttpStatus.BAD_GATEWAY)
+    }
+    await this.log(workspaceId, 'videogen_image', meta.id, { model, ratio }, ip)
+    return {
+      provider: meta.id,
+      model,
+      url: img.image_url,
+      mime: img.image_type === 'jpeg' || img.image_type === 'jpg' ? 'image/jpeg' : 'image/png',
+    }
+  }
+
   // ─── 3. Giọng đọc ──────────────────────────────────────────────────────
 
   async voice(
@@ -497,9 +563,9 @@ export class VideogenService {
         mime: 'audio/mpeg',
       }
     }
-    // Thử theo thứ tự [requested?, gemini, openai, edge] (lọc trùng).
+    // Thử theo thứ tự [requested?, gemini, openai, novita, edge] (lọc trùng).
     // 429/quota → provider tiếp; lỗi khác → throw ngay.
-    const order = [dto.provider, 'gemini', 'openai', 'edge'].filter(
+    const order = [dto.provider, 'gemini', 'openai', 'novita', 'edge'].filter(
       (p, i, arr): p is string => !!p && arr.indexOf(p) === i,
     )
     for (const id of order) {
@@ -535,6 +601,29 @@ export class VideogenService {
         continue // chưa kết nối → thử provider tiếp
       }
       try {
+        if (key.meta.id === 'novita') {
+          const { mp3 } = await this.voiceNovitaRaw(key.meta, key.apiKey, {
+            text: dto.text,
+            voice: dto.voice,
+          })
+          await this.log(
+            workspaceId,
+            'videogen_voice',
+            key.meta.id,
+            {
+              model: 'minimax-speech-2.8-hd',
+              voice: dto.voice || 'Calm_Woman',
+              textLen: dto.text.length,
+            },
+            ip,
+          )
+          return {
+            provider: key.meta.id,
+            model: 'minimax-speech-2.8-hd',
+            audioBase64: mp3.toString('base64'),
+            mime: 'audio/mpeg',
+          }
+        }
         if (key.meta.kind === 'gemini') {
           const { pcm, rate } = await this.voiceGeminiRaw(key.meta, key.apiKey, {
             text: dto.text,
@@ -682,6 +771,56 @@ export class VideogenService {
       )
     }
     return { mp3: Buffer.from(await res.arrayBuffer()) }
+  }
+
+  /** Novita TTS (MiniMax Speech-2.8-HD) → MP3 thô (không log).
+   *  Endpoint media của Novita nằm ở gốc api.novita.ai/v3 — KHÔNG đi qua
+   *  baseUrl OpenAI-compatible (/v3/openai). Các bản speech-02/2.6 đã bị
+   *  Novita khai tử (404), chỉ còn 2.8-hd (test live 2026-10-22). */
+  private async voiceNovitaRaw(
+    meta: AiProviderMeta,
+    apiKey: string,
+    p: { text: string; voice?: string },
+  ): Promise<{ mp3: Buffer }> {
+    const model = 'minimax-speech-2.8-hd'
+    const apiRoot = meta.baseUrl.replace(/\/v3\/openai\/?$/, '')
+    const res = await fetchTimeout(
+      `${apiRoot}/v3/${model}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          text: p.text,
+          voice_setting: { voice_id: p.voice || 'Calm_Woman', speed: 1 },
+          audio_setting: { format: 'mp3' },
+          output_format: 'url',
+        }),
+      },
+      VOICE_TIMEOUT_MS,
+    )
+    const text = await res.text()
+    if (!res.ok) {
+      throw new HttpException(
+        `${meta.name} trả lỗi ${res.status}: ${this.sanitize(text, apiKey)}`,
+        HttpStatus.BAD_GATEWAY,
+      )
+    }
+    const data = JSON.parse(text) as { data?: { audio?: string } }
+    const audioUrl = data.data?.audio
+    if (!audioUrl) {
+      throw new HttpException(`${meta.name} không trả về audio.`, HttpStatus.BAD_GATEWAY)
+    }
+    const audioRes = await fetchTimeout(audioUrl, { method: 'GET' }, VOICE_TIMEOUT_MS)
+    if (!audioRes.ok) {
+      throw new HttpException(
+        `${meta.name}: tải file audio lỗi ${audioRes.status}.`,
+        HttpStatus.BAD_GATEWAY,
+      )
+    }
+    return { mp3: Buffer.from(await audioRes.arrayBuffer()) }
   }
 
   /** Edge TTS (miễn phí, không cần key) → MP3 + word boundaries. */
