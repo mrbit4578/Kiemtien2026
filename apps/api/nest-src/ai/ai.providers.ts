@@ -20,6 +20,7 @@ export type AiProviderId =
   | 'koto'
   | 'apinex'
   | 'utim'
+  | 'novita'
 
 type ProviderKind = 'gemini' | 'openai-compatible' | 'anthropic' | 'tinyfish' | 'pollinations'
 
@@ -232,6 +233,25 @@ export const SUPPORTED_PROVIDERS: AiProviderMeta[] = [
       'Terminal AI agent (utim.dev): 3 model reasoning FREE — hợp chọn ngách, tối ưu context, dựng kịch bản. Tạo key tại utim.dev → API keys (đăng nhập tài khoản UTIM của bạn).',
     keyNote: 'Model miễn phí',
     baseUrl: 'https://api.utim.dev/v1',
+    kind: 'openai-compatible',
+  },
+  {
+    id: 'novita',
+    name: 'Novita AI',
+    keyUrl: 'https://novita.ai/settings/key-management',
+    models: [
+      'deepseek/deepseek-v4.1-flash',
+      'deepseek/deepseek-v4-pro',
+      'qwen/qwen3.8-max',
+      'moonshotai/kimi-k3',
+      'zai-org/glm-5.2',
+      'minimax/minimax-m3',
+    ],
+    defaultModel: 'deepseek/deepseek-v4.1-flash',
+    description:
+      'Gateway chuẩn OpenAI của Novita AI: ~96 model (DeepSeek V4, Qwen 3.8, Kimi K3, GLM 5...) — nhanh, rẻ. Cùng một key dùng được cả Agent Sandbox của Novita. Tạo key tại novita.ai → Settings → Key Management.',
+    keyNote: 'Dùng credits Novita',
+    baseUrl: 'https://api.novita.ai/v3/openai',
     kind: 'openai-compatible',
   },
 ]
